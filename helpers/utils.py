@@ -1,0 +1,335 @@
+import numpy as np
+import zmq
+import pandas as pd
+from mediapipe.framework.formats import landmark_pb2
+from mediapipe.python.solutions import pose, hands
+
+
+class MergingHelper:
+    def __init__(self):
+
+        WRISTS = [15, 16, 17, 18, 19, 20, 21, 22]
+        HEAD = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
+        LEGS = [25, 26, 27, 28, 29, 30, 31, 32]
+        # self._non_used_landmark_ids = WRISTS + HEAD + LEGS
+        self._non_used_landmark_ids = []
+
+        self._n_landmarks_body = len(pose.PoseLandmark)  # 33
+        self._n_landmarks_hand = len(hands.HandLandmark)  # 21
+        self._l_hand_offset = self._n_landmarks_body - len(self._non_used_landmark_ids)
+        self._r_hand_offset = self._n_landmarks_body - len(self._non_used_landmark_ids) + self._n_landmarks_hand
+
+
+        self._bodyMapping = self._get_body_mapping()
+        self._lHandMapping = {idx: idx + self._l_hand_offset for idx in range(self._n_landmarks_hand)}
+        self._rHandMapping = {idx: idx + self._r_hand_offset for idx in range(self._n_landmarks_hand)}
+
+        l_mapping = {name: self._lHandMapping[hands.HandLandmark[name]] for name in hands.HandLandmark._member_names_}
+        r_mapping = {name: self._rHandMapping[hands.HandLandmark[name]] for name in hands.HandLandmark._member_names_}
+        b_mapping = {name: self._bodyMapping[pose.PoseLandmark[name]] for name in pose.PoseLandmark._member_names_}
+        l_mapping.update(
+            {'SHOULDER': b_mapping['LEFT_SHOULDER'], 'ELBOW': b_mapping['LEFT_ELBOW'], 'HIP': b_mapping['LEFT_HIP'],
+                'BODY_WRIST': b_mapping['LEFT_WRIST']})
+        r_mapping.update(
+            {'SHOULDER': b_mapping['RIGHT_SHOULDER'], 'ELBOW': b_mapping['RIGHT_ELBOW'], 'HIP': b_mapping['RIGHT_HIP'],
+                'BODY_WRIST': b_mapping['RIGHT_WRIST']})
+        # these are the attributes that can be accessed from outside:
+        self.map = {'Left': l_mapping, 'Right': r_mapping, 'Body': b_mapping}
+        self.pose_connections = self._get_pose_connections()
+
+    def _get_body_mapping(self):
+        body_mapping = {idx: idx for idx in range(self._n_landmarks_body)}
+        for idx in range(self._n_landmarks_body):
+            for non_used_landmark_id in self._non_used_landmark_ids:
+                if idx > non_used_landmark_id:
+                    body_mapping[idx] -= 1
+        for non_used_landmark_id in self._non_used_landmark_ids:
+            body_mapping[non_used_landmark_id] = None
+        return body_mapping
+
+    def _get_pose_connections(self):
+        # connect body:
+        pose_connections = set()
+        for connection in pose.POSE_CONNECTIONS:
+            if connection[0] not in self._non_used_landmark_ids and connection[1] not in self._non_used_landmark_ids:
+                pose_connections.add((self._bodyMapping[connection[0]], self._bodyMapping[connection[1]]))
+
+        # connect hands:
+        for connection in hands.HAND_CONNECTIONS:
+            pose_connections.add((self._lHandMapping[connection[0]], self._lHandMapping[connection[1]]))
+            pose_connections.add((self._rHandMapping[connection[0]], self._rHandMapping[connection[1]]))
+
+        # connect body to hands:
+        pose_connections.add(
+            (self._bodyMapping[pose.PoseLandmark['LEFT_ELBOW']], self._lHandMapping[hands.HandLandmark['WRIST']]))
+        pose_connections.add(
+            (self._bodyMapping[pose.PoseLandmark['RIGHT_ELBOW']], self._rHandMapping[hands.HandLandmark['WRIST']]))
+
+        return pose_connections
+
+    def _determine_LR(self, detection_result_hands):
+        # todo lowpass filter for left/right detection
+
+        LR_index = {'Left': None, 'Right': None}
+        if detection_result_hands.hand_landmarks:
+            if len(detection_result_hands.hand_landmarks) == 1:
+                if detection_result_hands.handedness[0][0].category_name == "Left":
+                    LR_index['Left'] = 0
+                else:
+                    LR_index['Right'] = 0
+            elif len(detection_result_hands.hand_landmarks) > 1:
+                if detection_result_hands.handedness[0][0].score > \
+                        detection_result_hands.handedness[1][0].score:
+                    if detection_result_hands.handedness[0][0].category_name == "Left":
+                        LR_index['Left'] = 0
+                        LR_index['Right'] = 1
+                    else:
+                        LR_index['Right'] = 0
+                        LR_index['Left'] = 1
+                else:
+                    if detection_result_hands.handedness[1][0].category_name == "Left":
+                        LR_index['Right'] = 0
+                        LR_index['Left'] = 1
+                    else:
+                        LR_index['Left'] = 0
+                        LR_index['Right'] = 1
+
+        return LR_index
+
+
+
+    def mergeLandmarks(self, detection_result_hands, detection_result_body):
+        # body landmarks:
+        pose_landmarks = landmark_pb2.NormalizedLandmarkList()
+        if len(detection_result_body.pose_landmarks) == 0:
+            for id in range(self._n_landmarks_body - len(self._non_used_landmark_ids)):
+                landmark = landmark_pb2.NormalizedLandmark(x=-1, y=-1, z=-1)
+                pose_landmarks.landmark.extend([landmark])
+        else:
+            for id, landmark in enumerate(detection_result_body.pose_landmarks[0]):
+                if id in self._non_used_landmark_ids:
+                    continue
+                pose_landmarks.landmark.extend(
+                    [landmark_pb2.NormalizedLandmark(x=landmark.x, y=landmark.y, z=landmark.z)])
+
+        LR_index = self._determine_LR(detection_result_hands)
+        for hand in ['Left', 'Right']:
+            if LR_index[hand] is None:
+                for i in range(self._n_landmarks_hand):
+                    landmark = landmark_pb2.NormalizedLandmark(x=-1, y=-1, z=-1)
+                    pose_landmarks.landmark.extend([landmark])
+            else:
+                for landmark in detection_result_hands.hand_landmarks[LR_index[hand]]:
+                    landmark = landmark_pb2.NormalizedLandmark(x=landmark.x, y=landmark.y, z=landmark.z)
+                    pose_landmarks.landmark.extend([landmark])
+        #
+        # x = pose_landmarks.landmark[self.map['Left']['WRIST']].x
+        # y = pose_landmarks.landmark[self.map['Left']['WRIST']].y
+        # if len(detection_result_body.pose_landmarks) == 0:
+        #     z = -1
+        # else:
+        #     z = detection_result_body.pose_landmarks[0][pose.PoseLandmark.LEFT_WRIST].z
+        # pose_landmarks.landmark.extend(
+        #     [landmark_pb2.NormalizedLandmark(x=x, y=y, z=z)])
+        #
+        # x = pose_landmarks.landmark[self.map['Right']['WRIST']].x
+        # y = pose_landmarks.landmark[self.y
+        # if len(detection_result_body.pose_landmarks) == 0:
+        #     z = -1
+        # else:
+        #     z = detection_result_body.pose_landmarks[0][pose.PoseLandmark.RIGHT_WRIST].z
+        # pose_landmarks.landmark.extend(
+        #     [landmark_pb2.NormalizedLandmark(x=x, y=y, z=z)])
+
+        return pose_landmarks
+
+
+class Comms:
+    def __init__(self, sendSocketAddr):
+        self._sendSocketAddr = sendSocketAddr
+        self._sendCTX = zmq.Context()
+        self.sendSock = self._sendCTX.socket(zmq.PUB)
+        self.sendSock.bind(self._sendSocketAddr)
+
+    def __del__(self):
+        try:
+            self.sendSock.unbind(self._sendSocketAddr)
+            self.sendSock.close()
+            self._sendCTX.term()
+
+        except Exception as e:
+            print(f'__del__: Socket closing error {e}')
+
+
+class AnglesHelper:
+    def __init__(self):
+        pass
+
+    # @staticmethod
+    # def angleBetweenVectors(v1, v2, alternate=False):
+    #
+    #     angle = np.rad2deg(np.arccos(np.clip(np.dot(v1[:2], v2[:2]) / (np.linalg.norm(v1[:2]) * np.linalg.norm(v2[:2])), -1, 1)))
+    #
+    #     if alternate: angle = -angle
+    #
+    #     return angle
+
+    @staticmethod
+    def angleBetweenVectors(v1, v2, alternate=False):
+
+        angle = np.rad2deg(np.arccos(np.clip(np.dot(v1, v2) / (np.linalg.norm(v1) * np.linalg.norm(v2)), -1, 1)))
+
+        if alternate: angle = -angle
+
+        return angle
+
+    def findPalm(self, output_df, i, side):
+        wrist = output_df.loc[i, (side, 'WRIST', ['x', 'y', 'z'])].values
+        index = output_df.loc[i, (side, 'INDEX_FINGER_MCP', ['x', 'y', 'z'])].values
+        pinky = output_df.loc[i, (side, 'PINKY_MCP', ['x', 'y', 'z'])].values
+
+        vec1 = index - wrist
+        vec2 = pinky - wrist
+        vec3 = index - pinky
+        normal1 = np.cross(vec1, vec2);
+        normal1 = normal1 / np.linalg.norm(normal1)  # defines the normal vector to the plane of the palm
+        normal2 = np.cross(vec3, vec1);
+        normal2 = normal2 / np.linalg.norm(normal2)  # defines the normal vector to the plane of the palm
+        normal3 = np.cross(vec3, vec2);
+        normal3 = normal3 / np.linalg.norm(normal3)  # defines the normal vector to the plane of the palm
+        normal = np.mean(np.stack([normal1, normal2, normal3]), axis=0)
+
+        self.rotMat = self.rotateFrame(normal)
+
+        return normal
+
+    @staticmethod
+    def rotateFrame(normal, baseFrame=[1, 0, 0]):
+        # Calculate the rotation axis and angle using the cross product
+        rotation_axis = np.cross(normal, baseFrame)
+        rotation_angle = np.arccos(np.dot(normal, baseFrame))
+
+        # Create the rotation matrix
+        c = np.cos(rotation_angle)
+        s = np.sin(rotation_angle)
+        t = 1 - c
+        x, y, z = rotation_axis
+
+        rotation_matrix = np.array([
+            [t * x * x + c, t * x * y - s * z, t * x * z + s * y],
+            [t * x * y + s * z, t * y * y + c, t * y * z - s * x],
+            [t * x * z - s * y, t * y * z + s * x, t * z * z + c]])
+
+        return rotation_matrix
+
+
+    def calculateIndex(self, output_df, i, side):
+        vec1 = output_df.loc[i, (side, 'INDEX_FINGER_MCP', ['x', 'y', 'z'])].values - output_df.loc[
+            i, (side, 'INDEX_FINGER_PIP', ['x', 'y', 'z'])].values
+        vec2 = output_df.loc[i, (side, 'INDEX_FINGER_DIP', ['x', 'y', 'z'])].values - output_df.loc[
+            i, (side, 'INDEX_FINGER_PIP', ['x', 'y', 'z'])].values
+        vec3 = output_df.loc[i, (side, 'INDEX_FINGER_MCP', ['x', 'y', 'z'])].values - output_df.loc[
+            i, (side, 'WRIST', ['x', 'y', 'z'])].values
+
+        pipAng = self.angleBetweenVectors(vec1, vec2)
+        mcpAng = self.angleBetweenVectors(vec1, vec3)
+
+        return max(pipAng, mcpAng)  # todo should be ~sum?
+
+    def calculateThumbAngles(self, output_df, i, side):
+        vec23 = output_df.loc[i, (side, 'THUMB_IP', ['x', 'y', 'z'])].values - output_df.loc[i, (side, 'THUMB_MCP', ['x', 'y', 'z'])].values
+        vec23 = vec23 / np.linalg.norm(vec23)
+
+        normal = self.findPalm(output_df, i, side)
+        rotMat = self.rotateFrame(normal)
+
+        thumbInBase = rotMat @ vec23  # this gives the thumb vector in the base frame, which then we can use to find the pitch and yaw
+        thumbPAng = 90 - np.rad2deg(np.arctan2(thumbInBase[2], np.linalg.norm(thumbInBase[0:2])))
+        thumbYAng = -np.rad2deg(np.arctan2(thumbInBase[1], thumbInBase[0]))
+
+        return (thumbPAng, thumbYAng)
+
+
+
+    def calculateMiddle(self, output_df, i, side):
+        vec1 = output_df.loc[i, (side, 'MIDDLE_FINGER_MCP', ['x', 'y', 'z'])].values - output_df.loc[i, (side, 'MIDDLE_FINGER_PIP', ['x', 'y', 'z'])].values
+        vec2 = output_df.loc[i, (side, 'MIDDLE_FINGER_DIP', ['x', 'y', 'z'])].values - output_df.loc[i, (side, 'MIDDLE_FINGER_PIP', ['x', 'y', 'z'])].values
+        vec3 = output_df.loc[i, (side, 'MIDDLE_FINGER_MCP', ['x', 'y', 'z'])].values - output_df.loc[i, (side, 'WRIST', ['x', 'y', 'z'])].values
+
+        pipAng = self.angleBetweenVectors(vec1, vec2)
+        mcpAng = self.angleBetweenVectors(vec1, vec3)
+
+        return max(pipAng, mcpAng) #todo sum?
+
+    def calculateRing(self, output_df, i, side):
+        vec1 = output_df.loc[i, (side, 'RING_FINGER_MCP', ['x', 'y', 'z'])].values - output_df.loc[i, (side, 'RING_FINGER_PIP', ['x', 'y', 'z'])].values
+        vec2 = output_df.loc[i, (side, 'RING_FINGER_DIP', ['x', 'y', 'z'])].values - output_df.loc[i, (side, 'RING_FINGER_PIP', ['x', 'y', 'z'])].values
+        vec3 = output_df.loc[i, (side, 'RING_FINGER_MCP', ['x', 'y', 'z'])].values - output_df.loc[i, (side, 'WRIST', ['x', 'y', 'z'])].values
+
+        pipAng = self.angleBetweenVectors(vec1, vec2)
+        mcpAng = self.angleBetweenVectors(vec1, vec3)
+
+        return max(pipAng, mcpAng)
+
+    def calculatePinky(self, output_df, i, side):
+        vec1 = output_df.loc[i, (side, 'PINKY_MCP', ['x', 'y', 'z'])].values - output_df.loc[i, (side, 'PINKY_PIP', ['x', 'y', 'z'])].values
+        vec2 = output_df.loc[i, (side, 'PINKY_DIP', ['x', 'y', 'z'])].values - output_df.loc[i, (side, 'PINKY_PIP', ['x', 'y', 'z'])].values
+        vec3 = output_df.loc[i, (side, 'PINKY_MCP', ['x', 'y', 'z'])].values - output_df.loc[i, (side, 'WRIST', ['x', 'y', 'z'])].values
+
+        pipAng = self.angleBetweenVectors(vec1, vec2)
+        mcpAng = self.angleBetweenVectors(vec1, vec3)
+
+        return max(pipAng, mcpAng) #todo sum?
+
+
+    def getArmAngles(self, output_df):
+        angle_names = ['indexAng', 'midAng', 'ringAng', 'pinkyAng', 'thumbFlex', 'thumbRot', 'elbowAngle', 'wristRot',
+                       'wristFlex']
+        hand_names = ['Left', 'Right']
+
+        columns = pd.MultiIndex.from_product([hand_names, angle_names])
+        angles_df = pd.DataFrame(index=output_df.index, columns=columns)
+        for side in ['Left', 'Right']:
+            for i in angles_df.index:
+                body_wrist = output_df.loc[i, (side, 'BODY_WRIST', ['x', 'y', 'z'])].values
+                hand_wrist = output_df.loc[i, (side, 'WRIST', ['x', 'y', 'z'])].values
+                index = output_df.loc[i, (side, 'INDEX_FINGER_MCP', ['x', 'y', 'z'])].values
+                pinky = output_df.loc[i, (side, 'PINKY_MCP', ['x', 'y', 'z'])].values
+                elbow = output_df.loc[i, (side, 'PINKY_MCP', ['x', 'y', 'z'])].values
+                shoulder = output_df.loc[i, (side, 'SHOULDER', ['x', 'y', 'z'])].values
+
+                ### Wrist ##########
+                # Calculate the normal vector to the plane formed by the palm
+                vec1 = index - hand_wrist
+                vec2 = pinky - hand_wrist
+
+                # Calculate the normal vector to the plane formed by the wrist, elbow, and shoulder
+                vec3 = body_wrist - elbow
+                vec4 = shoulder - elbow
+                palmNormal = np.cross(vec2, vec1)
+                elbowNormal = np.cross(vec3, vec4)
+
+                # wrist rotation angle is the angle between these two normal vectors
+                angles_df.loc[i, (side, 'wristRot')] = self.angleBetweenVectors(palmNormal, elbowNormal)  # , alternate=True)
+
+                # wrist flexion angle is angle between an in-plane palm vector and the forearm
+                inPalm = np.mean([index, pinky], axis=0) - hand_wrist
+                angles_df.loc[i, (side, 'wristFlex')] = self.angleBetweenVectors(inPalm, vec3)
+
+                ### Elbow ##########
+                vec1 = elbow - body_wrist  # wrist - elbow
+                vec2 = elbow - shoulder
+                angles_df.loc[i, (side, 'elbowAngle')] = self.angleBetweenVectors(vec1, vec2)
+
+                ### Hand ###########
+                angles_df.loc[i, (side, 'indexAng')] = self.calculateIndex(output_df, i, side)
+                angles_df.loc[i, (side, 'midAng')] = self.calculateMiddle(output_df, i, side)
+                angles_df.loc[i, (side, 'ringAng')] = self.calculateRing(output_df, i, side)
+                angles_df.loc[i, (side, 'pinkyAng')] = self.calculatePinky(output_df, i, side)
+                (angles_df.loc[i, (side, 'thumbFlex')], angles_df.loc[i, (side, 'thumbRot')]) = self.calculateThumbAngles(output_df, i, side)
+
+        return angles_df
+
+
+
+

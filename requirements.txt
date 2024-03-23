@@ -1,0 +1,8 @@
+mediapipe==0.10.9
+opencv-python
+imageio[ffmpeg]
+numpy
+pandas
+pyarrow
+tqdm
+zmq

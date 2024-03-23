@@ -1,0 +1,116 @@
+# Upper Extremity Prosthesis Control Data Generation
+
+## Installation
+
+Follow the steps below to set up your environment:
+
+1. Create a new conda environment with Python 3.8:
+
+```bash
+conda create -n datagen python=3.8
+```
+
+2. Activate the newly created environment:
+
+```bash
+conda activate datagen
+```
+
+3. Install PyTorch based on your system: [PyTorch website](https://pytorch.org/get-started/locally/)
+
+4. Install the remaining dependencies from the `requirements.txt` file:
+
+```bash
+pip install -r requirements.txt
+```
+
+## Scripts
+
+### 1. Data Collection with `collect_data.py`
+
+The `collect_data.py` script is used to capture a video and EMG data. It has several command line arguments that you can
+use to customize its behavior:
+
+- `--data_dir`: This argument is required. It specifies the output directory where the video and EMG data will be saved.
+
+- `--save_type`: This argument is optional with a default value of 'normed'. It specifies the type of EMG data to save.
+  The options are 'normed', 'iEMG', and 'act'.
+
+- `--emg_sampling_rate`: This argument is optional with a default value of 1000. It specifies the sampling rate for the
+  EMG data.
+
+- `--dummy_emg`: This argument is optional. If used, the script will generate dummy EMG data for testing purposes
+  without the need for an EMG board.
+
+- `--camera`: This argument is optional with a default value of 0. It specifies the index of the camera to use for video
+  capture.
+
+Here is an example of how to run the script:
+
+```bash
+python collect_data.py --data_dir data/joris/test --save_type normed --emg_sampling_rate 1000 --dummy_emg --camera 0
+```
+
+### 2. Data Preprocessing with `preprocess_data.py`
+
+The `preprocess_data.py` script is used to first display a frame of the video and then crop it in width/height and time.
+EMG data is adapted accordingly.
+
+- `--data_dir`: This argument is required. It specifies the directory where the collected data is stored.
+
+- `--crop`: This argument is optional. If used, the script will crop the video. If not used, the script will show a
+  frame for visualization.
+
+- `--frame_number`: This argument is optional with a default value of 2. It specifies the frame number to visualize when
+  the `--crop` argument is not used.
+
+- `--x_start`, `--x_end`, `--y_start`, `--y_end`: These arguments are optional with a default value of -1. They specify
+  the coordinates for cropping the video when the `--crop` argument is used.
+
+- `--start_frame`, `--end_frame`: These arguments are optional with default values of 0 and -1 respectively. They
+  specify the start and end frames for cropping the video when the `--crop` argument is used.
+
+Here is an example of how to run the script for visualization:
+
+```bash
+python preprocess_data.py --data_dir data/joris/test --frame_number 2
+```
+
+And here is an example of how to run the script for cropping:
+
+```bash
+python preprocess_data.py --data_dir data/joris/test --crop --x_start 100 --x_end 500 --y_start 200 --y_end 600 --start_frame 10 --end_frame 100
+```
+
+### 3. Video Processing with `process_video.py`
+
+The `process_video.py` script is used to process the video data. It first gets the 2D poses, then raises them to 3D, and
+finally computes the angles and saves them to a dataframe. It has several command line arguments that you can use to
+customize its behavior:
+
+- `--data_dir`: This argument is required. It specifies the directory where the video data is stored.
+
+- `--visualize`: This argument is optional with a default value of True. If used, the script will visualize the output.
+
+Here is an example of how to run the script:
+
+```bash
+python process_video.py --data_dir data/joris/test --visualize True
+```
+
+### Data Output
+
+- aligned_emg.npy: EMG data aligned with the video data.
+- angles.parquet: Angles computed from the video data. To access individual angles:
+
+```python
+import pandas as pd
+from os.path import join
+data_dir = 'data/joris/test'
+angles = pd.read_parquet(join(data_dir, 'angles.parquet')
+# To get the index angel for the left hand in the first frame:
+left_hand_index_angle = angles.loc[0, ('Left', 'indexAng')]
+```
+
+Available angles: `['indexAng', 'midAng', 'ringAng', 'pinkyAng', 'thumbFlex', 'thumbRot', 'elbowAngle', 'wristRot',
+'wristFlex']`
