@@ -12,12 +12,29 @@ stop_video = False
 
 
 def signal_handler(sig, frame):
-    print('Recording stopped')
     global stop_video
     stop_video = True
 
 
 signal.signal(signal.SIGINT, signal_handler)
+
+def show_video():
+    cap = cv2.VideoCapture(0)
+    if not cap.isOpened():
+        print("Error: Cannot open camera.")
+        return
+
+    while True:
+        ret, frame = cap.read()
+        if ret:
+            cv2.imshow('Video', frame)
+            if cv2.waitKey(1) & 0xFF == ord('q'):  # Press 'q' to exit the video window
+                break
+        if stop_video:
+            break
+
+    cap.release()
+    cv2.destroyAllWindows()
 
 
 def capture_video(output_dir):
@@ -34,11 +51,11 @@ def capture_video(output_dir):
     out = cv2.VideoWriter(join(output_dir, 'video.mp4'), fourcc, 24.0, (frame_width, frame_height))
     timestamps = []
     while True:
-        timestamps.append(time.time())
+        frame_time = time.time()
         ret, frame = cap.read()
-        if not ret:
-            break
-        out.write(frame)
+        if ret:
+            timestamps.append(frame_time)
+            out.write(frame)
 
         if stop_video:
             break
@@ -47,8 +64,6 @@ def capture_video(output_dir):
     out.release()
     timestamps = np.array(timestamps)
     np.save(join(output_dir, 'video_timestamps.npy'), timestamps)
-
-    cv2.destroyAllWindows()
 
 
 def capture_EMG(save_type, output_dir, sampling_rate, dummy_emg=False):
@@ -98,7 +113,12 @@ if __name__ == '__main__':
     parser.add_argument('--emg_sampling_rate', type=int, default=1000, help='EMG sampling rate')
     parser.add_argument('--dummy_emg', action='store_true', help='Use this flag for testing without the EMG board')
     parser.add_argument('--camera', type=int, help='Camera Index', default=0)
+    parser.add_argument('--preview', action='store_true', help='Show the video preview')
     args = parser.parse_args()
+    if args.preview:
+        print('Preview started. No data is being saved! Press Ctrl+C to stop the video.')
+        show_video()
+        exit(0)
     os.makedirs(args.data_dir, exist_ok=True)
     video_thread = threading.Thread(target=capture_video, args=(args.data_dir,))
     emg_thread = threading.Thread(target=capture_EMG,
@@ -110,16 +130,24 @@ if __name__ == '__main__':
     emg_thread.join()
 
     video_timestamps = np.load(join(args.data_dir, 'video_timestamps.npy'))
-    cap = cv2.VideoCapture(join(args.data_dir, 'video.mp4'), args.camera)
+    cap = cv2.VideoCapture(join(args.data_dir, 'video.mp4'))
     fps = cap.get(cv2.CAP_PROP_FPS)
     video_length = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
-    print(f"Frame Rate: {fps}")
-    print(f"Video Length: {video_length}")
-    print(f'Video Size: W:{int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))} H:{int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))}')
-    print(f'Video Timestamps Length: {len(video_timestamps)}')
+
     emg_timestamps = np.load(join(args.data_dir, 'emg_timestamps.npy'))
     emg = np.load(join(args.data_dir, 'emg.npy'))
-    print(f'EMG Sampling Rate: {args.emg_sampling_rate}')
-    print(f'EMG Timestamps Length: {len(emg_timestamps)}')
-    print(f'EMG Shape: {emg.shape}')
-    print()
+    print('######################## STATS ########################')
+    print(f"Data Dir: {args.data_dir}\n")
+
+    print(f"Video Length: {video_length}")
+    print(f'Video Size: W:{int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))} H:{int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))}')
+    print(f'EMG Shape: {emg.shape}\n')
+
+    print(f"Requested Frame Rate: {fps}")
+    print(f"Actual Frame Rate: {video_length / (video_timestamps[-1] - video_timestamps[0])}\n")
+
+    print(f'Requested EMG Sampling Rate: {args.emg_sampling_rate}')
+    print(f'Actual EMG Sampling Rate: {len(emg_timestamps) / (emg_timestamps[-1] - emg_timestamps[0])}')
+    print('########################################################')
+    cap.release()
+
