@@ -149,11 +149,13 @@ def get_motionbert_input(motionbert_df, probing_point, max_len):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='Capture a video.')
     parser.add_argument('--data_dir', type=str, required=True, help='Output directory')
+    parser.add_argument('--experiment_name', type=str, required=True, help='Experiment name')
     parser.add_argument('--visualize', action='store_true', help='Visualize the output')
     parser.add_argument('--intact_hand', type=str, default=None, help='Intact hand')
     args = parser.parse_args()
 
-    input_video_path = join(args.data_dir, "cropped_video.mp4")
+    experiment_dir = join(args.data_dir, 'experiments', args.experiment_name)
+    input_video_path = join(experiment_dir, "cropped_video.mp4")
 
     cap = cv2.VideoCapture(input_video_path)
 
@@ -163,7 +165,7 @@ if __name__ == "__main__":
 
     frames = range(0, int(n_frames))
     mediapipe_landmark_names = pose.PoseLandmark._member_names_
-    video_timestamps = np.load(join(args.data_dir, "cropped_timestamps.npy"))
+    video_timestamps = np.load(join(experiment_dir, "cropped_timestamps.npy"))
     mediapipe_df = get_mediapipe_df(cap, frames, video_timestamps, args.intact_hand)
 
     vid = imageio.get_reader(input_video_path, 'ffmpeg')
@@ -179,7 +181,7 @@ if __name__ == "__main__":
     cap.release()
 
     motionbert_df = get_motionbert_df(mediapipe_df, frames)
-    motionbert_df.to_parquet(join(args.data_dir, "motionbert_input.parquet"))
+    motionbert_df.to_parquet(join(experiment_dir, "motionbert_input.parquet"))
 
     mb = MotionBert()
     motionbert_input = get_motionbert_input(motionbert_df, mb.probing_point, mb.model.maxlen)
@@ -191,7 +193,7 @@ if __name__ == "__main__":
         for lm_i, landmark_name in enumerate(MOTIONBERT_MAP):
             motionbert_df.loc[i, idx[landmark_name, slice(None)]] = keypoints[lm_i]
 
-    motionbert_df.to_parquet(join(args.data_dir, "motionbert_output.parquet"))
+    motionbert_df.to_parquet(join(experiment_dir, "motionbert_output.parquet"))
     mergingHelper = MergingHelper()
     body_cols = MOTIONBERT_MAP
     side_cols = mergingHelper.map['Right'].keys()
@@ -223,14 +225,14 @@ if __name__ == "__main__":
         output_df.loc[:, idx['Left', col, slice(None)]] = mediapipe_df.loc[:, idx['Left', col, slice(None)]].values
         output_df.loc[:, idx['Right', col, slice(None)]] = mediapipe_df.loc[:, idx['Right', col, slice(None)]].values
 
-    output_df.to_parquet(join(args.data_dir, "output.parquet"))
+    output_df.to_parquet(join(experiment_dir, "output.parquet"))
 
     if args.visualize:
-        df2d = pd.read_parquet(join(args.data_dir, "motionbert_input.parquet"))
-        df3d = pd.read_parquet(join(args.data_dir, "motionbert_output.parquet"))
-        vis = Visualization(args.data_dir, df2d, df3d)
+        df2d = pd.read_parquet(join(experiment_dir, "motionbert_input.parquet"))
+        df3d = pd.read_parquet(join(experiment_dir, "motionbert_output.parquet"))
+        vis = Visualization(experiment_dir, df2d, df3d)
 
-    output_df = pd.read_parquet(join(args.data_dir, "output.parquet"))
+    output_df = pd.read_parquet(join(experiment_dir, "output.parquet"))
     anglesHelper = AnglesHelper()
     angles_df = anglesHelper.getArmAngles(output_df)
-    angles_df.to_parquet(join(args.data_dir, "angles.parquet"))
+    angles_df.to_parquet(join(experiment_dir, "angles.parquet"))

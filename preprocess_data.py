@@ -7,13 +7,13 @@ import matplotlib.pyplot as plt
 import numpy as np
 
 
-def crop_video(cap, input_path, start_frame, end_frame, x_start, x_end, y_start, y_end):
+def crop_video(cap, data_dir, out_dir, start_frame, end_frame, x_start, x_end, y_start, y_end):
     fourcc = cv2.VideoWriter_fourcc(*'mp4v')
     fps = cap.get(cv2.CAP_PROP_FPS)
     width = x_end - x_start
     height = y_end - y_start
 
-    output_path = join(input_path, f'cropped_video.mp4')
+    output_path = join(out_dir, f'cropped_video.mp4')
     out = cv2.VideoWriter(output_path, fourcc, fps, (width, height))
 
     frame_count = 0
@@ -32,12 +32,12 @@ def crop_video(cap, input_path, start_frame, end_frame, x_start, x_end, y_start,
     cap.release()
     out.release()
 
-    timestamps = np.load(os.path.join(input_path, 'video_timestamps.npy'))
+    timestamps = np.load(os.path.join(data_dir, 'video_timestamps.npy'))
 
     if end_frame == -1:
         end_frame = frame_count - 1
     timestamps = timestamps[start_frame:end_frame + 1]
-    np.save(os.path.join(input_path, f'cropped_timestamps.npy'), timestamps)
+    np.save(join(out_dir, f'cropped_timestamps.npy'), timestamps)
 
 
 def show_frame(cap, frame_number):
@@ -62,7 +62,7 @@ def show_frame(cap, frame_number):
     cap.release()
 
 
-def align_emg(data_dir):
+def align_emg(data_dir, out_dir):
     emg = np.load(join(data_dir, 'emg.npy'))
     video_timestamps = np.load(join(data_dir, 'cropped_timestamps.npy'))
     emg_timestamps = np.load(join(data_dir, 'emg_timestamps.npy'))
@@ -73,12 +73,13 @@ def align_emg(data_dir):
         idx = np.argmin(np.abs(emg_timestamps - timestamp))
         aligned_emg[i] = emg[idx]
 
-    np.save(join(data_dir, 'aligned_emg.npy'), aligned_emg)
+    np.save(join(out_dir, 'aligned_emg.npy'), aligned_emg)
 
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='Crop a video.')
     parser.add_argument('--data_dir', type=str, required=True, help='Data directory')
+    parser.add_argument('--experiment_name', type=str, required=True, help='Experiment name')
     parser.add_argument('--crop', action='store_true', help='Crop video, otherwise show frame.')
     parser.add_argument('--frame_number', type=int, default=2, help='Frame number to visualize')
     parser.add_argument('--x_start', type=int, default=-1, help='Start x coordinate for cropping')
@@ -112,10 +113,15 @@ if __name__ == '__main__':
         if y_end < 0 or y_end >= frame_height or y_end <= y_start:
             raise ValueError(f'Invalid y_end value: {y_end}')
 
-        crop_video(cap, args.data_dir, start_frame=args.start_frame, end_frame=args.end_frame, x_start=x_start,
+        out_dir = join(args.data_dir, 'experiments', args.experiment_name)
+        if os.path.exists(out_dir):
+            raise ValueError(f'Output directory {out_dir} already exists.')
+        os.makedirs(out_dir, exist_ok=True)
+
+        crop_video(cap, args.data_dir, out_dir, start_frame=args.start_frame, end_frame=args.end_frame, x_start=x_start,
                    x_end=x_end, y_start=y_start,
                    y_end=y_end)
-        align_emg(args.data_dir)
+        align_emg(args.data_dir, out_dir)
 
     else:
         show_frame(cap, frame_number=args.frame_number)
