@@ -16,7 +16,9 @@ random.seed(0)
 np.random.seed(0)
 torch.manual_seed(0)
 
-
+MOTIONBERT_MAP = ['HIPS', 'RIGHT_HIP', 'RIGHT_KNEE', 'RIGHT_ANKLE', 'LEFT_HIP', 'LEFT_KNEE', 'LEFT_ANKLE', 'SPINE',
+                  'CHEST', 'JAW', 'NOSE', 'LEFT_SHOULDER', 'LEFT_ELBOW', 'LEFT_WRIST', 'RIGHT_SHOULDER', 'RIGHT_ELBOW',
+                  'RIGHT_WRIST']
 
 class MotionBert:
     """

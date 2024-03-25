@@ -1,12 +1,15 @@
 import numpy as np
 import zmq
 import pandas as pd
+pd.options.mode.copy_on_write = True
 from mediapipe.framework.formats import landmark_pb2
 from mediapipe.python.solutions import pose, hands
 
 
 class MergingHelper:
     def __init__(self):
+        self.hand_keys = hands.HandLandmark._member_names_
+        self.body_keys = pose.PoseLandmark._member_names_
 
         WRISTS = [15, 16, 17, 18, 19, 20, 21, 22]
         HEAD = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
@@ -24,9 +27,9 @@ class MergingHelper:
         self._lHandMapping = {idx: idx + self._l_hand_offset for idx in range(self._n_landmarks_hand)}
         self._rHandMapping = {idx: idx + self._r_hand_offset for idx in range(self._n_landmarks_hand)}
 
-        l_mapping = {name: self._lHandMapping[hands.HandLandmark[name]] for name in hands.HandLandmark._member_names_}
-        r_mapping = {name: self._rHandMapping[hands.HandLandmark[name]] for name in hands.HandLandmark._member_names_}
-        b_mapping = {name: self._bodyMapping[pose.PoseLandmark[name]] for name in pose.PoseLandmark._member_names_}
+        l_mapping = {name: self._lHandMapping[hands.HandLandmark[name]] for name in self.hand_keys}
+        r_mapping = {name: self._rHandMapping[hands.HandLandmark[name]] for name in self.hand_keys}
+        b_mapping = {name: self._bodyMapping[pose.PoseLandmark[name]] for name in self.body_keys}
         l_mapping.update(
             {'SHOULDER': b_mapping['LEFT_SHOULDER'], 'ELBOW': b_mapping['LEFT_ELBOW'], 'HIP': b_mapping['LEFT_HIP'],
                 'BODY_WRIST': b_mapping['LEFT_WRIST']})
@@ -67,16 +70,24 @@ class MergingHelper:
 
         return pose_connections
 
-    def _determine_LR(self, detection_result_hands):
+    def _determine_LR(self, detection_result_hands, prior=None):
         # todo lowpass filter for left/right detection
 
         LR_index = {'Left': None, 'Right': None}
         if detection_result_hands.hand_landmarks:
             if len(detection_result_hands.hand_landmarks) == 1:
-                if detection_result_hands.handedness[0][0].category_name == "Left":
-                    LR_index['Left'] = 0
+                if prior is not None:
+                    if prior == 'Left':
+                        LR_index['Left'] = 0
+                    elif prior == 'Right':
+                        LR_index['Right'] = 0
+                    else:
+                        raise ValueError('Prior must be either "Left" or "Right"')
                 else:
-                    LR_index['Right'] = 0
+                    if detection_result_hands.handedness[0][0].category_name == "Left":
+                        LR_index['Left'] = 0
+                    else:
+                        LR_index['Right'] = 0
             elif len(detection_result_hands.hand_landmarks) > 1:
                 if detection_result_hands.handedness[0][0].score > \
                         detection_result_hands.handedness[1][0].score:
@@ -98,7 +109,7 @@ class MergingHelper:
 
 
 
-    def mergeLandmarks(self, detection_result_hands, detection_result_body):
+    def mergeLandmarks(self, detection_result_hands, detection_result_body, prior=None):
         # body landmarks:
         pose_landmarks = landmark_pb2.NormalizedLandmarkList()
         if len(detection_result_body.pose_landmarks) == 0:
@@ -112,7 +123,7 @@ class MergingHelper:
                 pose_landmarks.landmark.extend(
                     [landmark_pb2.NormalizedLandmark(x=landmark.x, y=landmark.y, z=landmark.z)])
 
-        LR_index = self._determine_LR(detection_result_hands)
+        LR_index = self._determine_LR(detection_result_hands, prior)
         for hand in ['Left', 'Right']:
             if LR_index[hand] is None:
                 for i in range(self._n_landmarks_hand):
@@ -206,8 +217,9 @@ class AnglesHelper:
 
         columns = pd.MultiIndex.from_product([hand_names, angle_names])
         angles_df = pd.DataFrame(index=output_df.index, columns=columns)
-        for side in ['Left', 'Right']:
-            for i in angles_df.index:
+
+        for i in angles_df.index:
+            for side in ['Left', 'Right']:
                 body_wrist = output_df.loc[i, (side, 'BODY_WRIST', ['x', 'y', 'z'])].values
                 hand_wrist = output_df.loc[i, (side, 'WRIST', ['x', 'y', 'z'])].values
                 index = output_df.loc[i, (side, 'INDEX_FINGER_MCP', ['x', 'y', 'z'])].values

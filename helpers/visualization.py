@@ -208,7 +208,7 @@ class Visualization():
         self.ax2 = fig.add_subplot(spec[2], projection='3d')
         self.ax2.set_title(f'3D Side View', fontweight='bold')
         self.ax2.set_box_aspect([1, 1, 1])
-        self.ax2.view_init(elev=0, azim=0)  # For better visualization
+        self.ax2.view_init(elev=70, azim=-90)  # For better visualization
         self.ax2.set_xticklabels([])
         self.ax2.set_yticklabels([])
         self.ax2.set_zticklabels([])
@@ -236,8 +236,6 @@ class Visualization():
                                   c=(0, 0, 1), linewidth=lw, zdir='z')
         self.crj2 = self.ax2.plot(xs1.take(self.r_joints), ys1.take(self.r_joints), zs1.take(self.r_joints),
                                   c=(1, 0, 0), linewidth=lw, zdir='z')
-
-
 
         logging.info("Plotting...")
         return fig 

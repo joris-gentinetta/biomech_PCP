@@ -6,19 +6,17 @@ import imageio
 import mediapipe as mp
 import numpy as np
 import pandas as pd
+pd.options.mode.copy_on_write = True
 from mediapipe.python.solutions import pose
 from tqdm import tqdm
 
-from helpers.MotionBert import MotionBert
+from helpers.MotionBert import MotionBert, MOTIONBERT_MAP
 from helpers.utils import MergingHelper, AnglesHelper
 from helpers.visualization import Visualization
 
-MOTIONBERT_MAP = ['HIPS', 'RIGHT_HIP', 'RIGHT_KNEE', 'RIGHT_ANKLE', 'LEFT_HIP', 'LEFT_KNEE', 'LEFT_ANKLE', 'SPINE',
-                  'CHEST', 'JAW', 'NOSE', 'LEFT_SHOULDER', 'LEFT_ELBOW', 'LEFT_WRIST', 'RIGHT_SHOULDER', 'RIGHT_ELBOW',
-                  'RIGHT_WRIST']
 
 
-def get_mediapipe_df(cap, frames, video_timestamps):
+def get_mediapipe_df(cap, frames, video_timestamps, intact_hand=None):
     body_model_path = 'models/mediapipe/pose_landmarker.task'
     hands_model_path = 'models/mediapipe/hand_landmarker.task'
     BaseOptions = mp.tasks.BaseOptions
@@ -58,7 +56,7 @@ def get_mediapipe_df(cap, frames, video_timestamps):
 
         body_results = body_model.detect_for_video(mp_image, int(1000 * video_timestamps[frame_id]))
         hands_results = hands_model.detect_for_video(mp_image, int(1000 * video_timestamps[frame_id]))
-        pose_landmarks = mergingHelper.mergeLandmarks(hands_results, body_results)
+        pose_landmarks = mergingHelper.mergeLandmarks(hands_results, body_results, prior=intact_hand)
 
         coordinates = [[lmk.x, lmk.y, lmk.z] for lmk in pose_landmarks.landmark]
         coordinates = np.asarray(coordinates)
@@ -151,7 +149,8 @@ def get_motionbert_input(motionbert_df, probing_point, max_len):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='Capture a video.')
     parser.add_argument('--data_dir', type=str, required=True, help='Output directory')
-    parser.add_argument('--visualize', type=bool, default=True, help='Visualize the output')
+    parser.add_argument('--visualize', action='store_true', help='Visualize the output')
+    parser.add_argument('--intact_hand', type=str, default=None, help='Intact hand')
     args = parser.parse_args()
 
     input_video_path = join(args.data_dir, "cropped_video.mp4")
@@ -165,7 +164,7 @@ if __name__ == "__main__":
     frames = range(0, int(n_frames))
     mediapipe_landmark_names = pose.PoseLandmark._member_names_
     video_timestamps = np.load(join(args.data_dir, "cropped_timestamps.npy"))
-    mediapipe_df = get_mediapipe_df(cap, frames, video_timestamps)
+    mediapipe_df = get_mediapipe_df(cap, frames, video_timestamps, args.intact_hand)
 
     vid = imageio.get_reader(input_video_path, 'ffmpeg')
     fps_in = vid.get_meta_data()['fps']
@@ -195,47 +194,41 @@ if __name__ == "__main__":
     motionbert_df.to_parquet(join(args.data_dir, "motionbert_output.parquet"))
     mergingHelper = MergingHelper()
     body_cols = MOTIONBERT_MAP
-    hand_cols = mergingHelper.map['Right'].keys()
+    side_cols = mergingHelper.map['Right'].keys()
 
     body_columns = pd.MultiIndex.from_product([['Body'], body_cols, ['x', 'y', 'z']])
-    right_hand_columns = pd.MultiIndex.from_product([['Right'], hand_cols, ['x', 'y', 'z']])
-    left_hand_columns = pd.MultiIndex.from_product([['Left'], hand_cols, ['x', 'y', 'z']])
+    right_side_columns = pd.MultiIndex.from_product([['Right'], side_cols, ['x', 'y', 'z']])
+    left_side_columns = pd.MultiIndex.from_product([['Left'], side_cols, ['x', 'y', 'z']])
 
-    columns = body_columns.append(right_hand_columns).append(left_hand_columns)
+    columns = body_columns.append(right_side_columns).append(left_side_columns)
     output_df = pd.DataFrame(index=frames, columns=columns)
 
-    # output_df = mediapipe_df
     for landmark_name in MOTIONBERT_MAP:
-        output_df.loc[:, idx['Body', landmark_name, 'x']] = motionbert_df.loc[:, idx[landmark_name, 'x']]
-        output_df.loc[:, idx['Body', landmark_name, 'y']] = motionbert_df.loc[:, idx[landmark_name, 'y']]
-        output_df.loc[:, idx['Body', landmark_name, 'z']] = motionbert_df.loc[:, idx[landmark_name, 'z']]
+        output_df.loc[:, idx['Body', landmark_name, slice(None)]] = motionbert_df.loc[:, idx[landmark_name, slice(None)]].values
 
-    output_df.loc[:, idx['Left', 'SHOULDER', slice(None)]] = mediapipe_df.loc[:,
-                                                             idx['Body', 'LEFT_SHOULDER', slice(None)]]
-    output_df.loc[:, idx['Left', 'ELBOW', slice(None)]] = mediapipe_df.loc[:, idx['Body', 'LEFT_ELBOW', slice(None)]]
-    output_df.loc[:, idx['Left', 'HIP', slice(None)]] = mediapipe_df.loc[:, idx['Body', 'LEFT_HIP', slice(None)]]
-    output_df.loc[:, idx['Left', 'BODY_WRIST', slice(None)]] = mediapipe_df.loc[:,
-                                                               idx['Body', 'LEFT_WRIST', slice(None)]]
+    output_df.loc[:, idx['Left', 'SHOULDER', slice(None)]] = output_df.loc[:, idx['Body', 'LEFT_SHOULDER', slice(None)]].values
+    output_df.loc[:, idx['Left', 'ELBOW', slice(None)]] = output_df.loc[:, idx['Body', 'LEFT_ELBOW', slice(None)]].values
+    output_df.loc[:, idx['Left', 'HIP', slice(None)]] = output_df.loc[:, idx['Body', 'LEFT_HIP', slice(None)]].values
+    output_df.loc[:, idx['Left', 'BODY_WRIST', slice(None)]] = output_df.loc[:,
+                                                               idx['Body', 'LEFT_WRIST', slice(None)]].values
 
     output_df.loc[:, idx['Right', 'SHOULDER', slice(None)]] = output_df.loc[:,
-                                                              idx['Body', 'RIGHT_SHOULDER', slice(None)]]
-    output_df.loc[:, idx['Right', 'ELBOW', slice(None)]] = output_df.loc[:, idx['Body', 'RIGHT_ELBOW', slice(None)]]
-    output_df.loc[:, idx['Right', 'HIP', slice(None)]] = output_df.loc[:, idx['Body', 'RIGHT_HIP', slice(None)]]
+                                                              idx['Body', 'RIGHT_SHOULDER', slice(None)]].values
+    output_df.loc[:, idx['Right', 'ELBOW', slice(None)]] = output_df.loc[:, idx['Body', 'RIGHT_ELBOW', slice(None)]].values
+    output_df.loc[:, idx['Right', 'HIP', slice(None)]] = output_df.loc[:, idx['Body', 'RIGHT_HIP', slice(None)]].values
     output_df.loc[:, idx['Right', 'BODY_WRIST', slice(None)]] = output_df.loc[:,
-                                                                idx['Body', 'RIGHT_WRIST', slice(None)]]
+                                                                idx['Body', 'RIGHT_WRIST', slice(None)]].values
 
-    for col in hand_cols:
-        output_df.loc[:, idx['Left', col, slice(None)]] = mediapipe_df.loc[:, idx['Left', col, slice(None)]]
-        output_df.loc[:, idx['Right', col, slice(None)]] = mediapipe_df.loc[:, idx['Right', col, slice(None)]]
+    for col in mergingHelper.hand_keys:
+        output_df.loc[:, idx['Left', col, slice(None)]] = mediapipe_df.loc[:, idx['Left', col, slice(None)]].values
+        output_df.loc[:, idx['Right', col, slice(None)]] = mediapipe_df.loc[:, idx['Right', col, slice(None)]].values
 
     output_df.to_parquet(join(args.data_dir, "output.parquet"))
 
     if args.visualize:
         df2d = pd.read_parquet(join(args.data_dir, "motionbert_input.parquet"))
         df3d = pd.read_parquet(join(args.data_dir, "motionbert_output.parquet"))
-
         vis = Visualization(args.data_dir, df2d, df3d)
-    print("Done")
 
     output_df = pd.read_parquet(join(args.data_dir, "output.parquet"))
     anglesHelper = AnglesHelper()
