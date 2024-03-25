@@ -122,24 +122,6 @@ class MergingHelper:
                 for landmark in detection_result_hands.hand_landmarks[LR_index[hand]]:
                     landmark = landmark_pb2.NormalizedLandmark(x=landmark.x, y=landmark.y, z=landmark.z)
                     pose_landmarks.landmark.extend([landmark])
-        #
-        # x = pose_landmarks.landmark[self.map['Left']['WRIST']].x
-        # y = pose_landmarks.landmark[self.map['Left']['WRIST']].y
-        # if len(detection_result_body.pose_landmarks) == 0:
-        #     z = -1
-        # else:
-        #     z = detection_result_body.pose_landmarks[0][pose.PoseLandmark.LEFT_WRIST].z
-        # pose_landmarks.landmark.extend(
-        #     [landmark_pb2.NormalizedLandmark(x=x, y=y, z=z)])
-        #
-        # x = pose_landmarks.landmark[self.map['Right']['WRIST']].x
-        # y = pose_landmarks.landmark[self.y
-        # if len(detection_result_body.pose_landmarks) == 0:
-        #     z = -1
-        # else:
-        #     z = detection_result_body.pose_landmarks[0][pose.PoseLandmark.RIGHT_WRIST].z
-        # pose_landmarks.landmark.extend(
-        #     [landmark_pb2.NormalizedLandmark(x=x, y=y, z=z)])
 
         return pose_landmarks
 
@@ -165,109 +147,46 @@ class AnglesHelper:
     def __init__(self):
         pass
 
-    # @staticmethod
-    # def angleBetweenVectors(v1, v2, alternate=False):
-    #
-    #     angle = np.rad2deg(np.arccos(np.clip(np.dot(v1[:2], v2[:2]) / (np.linalg.norm(v1[:2]) * np.linalg.norm(v2[:2])), -1, 1)))
-    #
-    #     if alternate: angle = -angle
-    #
-    #     return angle
-
     @staticmethod
-    def angleBetweenVectors(v1, v2, alternate=False):
+    def angleBetweenVectors(v1, v2):
 
         angle = np.rad2deg(np.arccos(np.clip(np.dot(v1, v2) / (np.linalg.norm(v1) * np.linalg.norm(v2)), -1, 1)))
 
-        if alternate: angle = -angle
-
         return angle
-
-    def findPalm(self, output_df, i, side):
-        wrist = output_df.loc[i, (side, 'WRIST', ['x', 'y', 'z'])].values
-        index = output_df.loc[i, (side, 'INDEX_FINGER_MCP', ['x', 'y', 'z'])].values
-        pinky = output_df.loc[i, (side, 'PINKY_MCP', ['x', 'y', 'z'])].values
-
-        vec1 = index - wrist
-        vec2 = pinky - wrist
-        vec3 = index - pinky
-        normal1 = np.cross(vec1, vec2);
-        normal1 = normal1 / np.linalg.norm(normal1)  # defines the normal vector to the plane of the palm
-        normal2 = np.cross(vec3, vec1);
-        normal2 = normal2 / np.linalg.norm(normal2)  # defines the normal vector to the plane of the palm
-        normal3 = np.cross(vec3, vec2);
-        normal3 = normal3 / np.linalg.norm(normal3)  # defines the normal vector to the plane of the palm
-        normal = np.mean(np.stack([normal1, normal2, normal3]), axis=0)
-
-        self.rotMat = self.rotateFrame(normal)
-
-        return normal
-
-    @staticmethod
-    def rotateFrame(normal, baseFrame=[1, 0, 0]):
-        # Calculate the rotation axis and angle using the cross product
-        rotation_axis = np.cross(normal, baseFrame)
-        rotation_angle = np.arccos(np.dot(normal, baseFrame))
-
-        # Create the rotation matrix
-        c = np.cos(rotation_angle)
-        s = np.sin(rotation_angle)
-        t = 1 - c
-        x, y, z = rotation_axis
-
-        rotation_matrix = np.array([
-            [t * x * x + c, t * x * y - s * z, t * x * z + s * y],
-            [t * x * y + s * z, t * y * y + c, t * y * z - s * x],
-            [t * x * z - s * y, t * y * z + s * x, t * z * z + c]])
-
-        return rotation_matrix
 
 
     def calculateIndex(self, output_df, i, side):
-        vec1 = output_df.loc[i, (side, 'INDEX_FINGER_MCP', ['x', 'y', 'z'])].values - output_df.loc[
-            i, (side, 'INDEX_FINGER_PIP', ['x', 'y', 'z'])].values
-        vec2 = output_df.loc[i, (side, 'INDEX_FINGER_DIP', ['x', 'y', 'z'])].values - output_df.loc[
-            i, (side, 'INDEX_FINGER_PIP', ['x', 'y', 'z'])].values
-        vec3 = output_df.loc[i, (side, 'INDEX_FINGER_MCP', ['x', 'y', 'z'])].values - output_df.loc[
-            i, (side, 'WRIST', ['x', 'y', 'z'])].values
+        vec1 = output_df.loc[i, (side, 'INDEX_FINGER_PIP', ['x', 'y', 'z'])].values - output_df.loc[i, (side, 'INDEX_FINGER_MCP', ['x', 'y', 'z'])].values
+        vec2 = output_df.loc[i, (side, 'WRIST', ['x', 'y', 'z'])].values - output_df.loc[i, (side, 'INDEX_FINGER_MCP', ['x', 'y', 'z'])].values
+        mcpAng = self.angleBetweenVectors(vec1, vec2)
 
-        pipAng = self.angleBetweenVectors(vec1, vec2)
-        mcpAng = self.angleBetweenVectors(vec1, vec3)
+        vec3 = -vec1
+        vec4 = output_df.loc[i, (side, 'INDEX_FINGER_DIP', ['x', 'y', 'z'])].values - output_df.loc[i, (side, 'INDEX_FINGER_PIP', ['x', 'y', 'z'])].values
+        pipAng = self.angleBetweenVectors(vec3, vec4)
 
-        return max(pipAng, mcpAng)  # todo should be ~sum?
-
-    def calculateThumbAngles(self, output_df, i, side):
-        vec23 = output_df.loc[i, (side, 'THUMB_IP', ['x', 'y', 'z'])].values - output_df.loc[i, (side, 'THUMB_MCP', ['x', 'y', 'z'])].values
-        vec23 = vec23 / np.linalg.norm(vec23)
-
-        normal = self.findPalm(output_df, i, side)
-        rotMat = self.rotateFrame(normal)
-
-        thumbInBase = rotMat @ vec23  # this gives the thumb vector in the base frame, which then we can use to find the pitch and yaw
-        thumbPAng = 90 - np.rad2deg(np.arctan2(thumbInBase[2], np.linalg.norm(thumbInBase[0:2])))
-        thumbYAng = -np.rad2deg(np.arctan2(thumbInBase[1], thumbInBase[0]))
-
-        return (thumbPAng, thumbYAng)
-
+        return max(pipAng, mcpAng)
 
 
     def calculateMiddle(self, output_df, i, side):
-        vec1 = output_df.loc[i, (side, 'MIDDLE_FINGER_MCP', ['x', 'y', 'z'])].values - output_df.loc[i, (side, 'MIDDLE_FINGER_PIP', ['x', 'y', 'z'])].values
-        vec2 = output_df.loc[i, (side, 'MIDDLE_FINGER_DIP', ['x', 'y', 'z'])].values - output_df.loc[i, (side, 'MIDDLE_FINGER_PIP', ['x', 'y', 'z'])].values
-        vec3 = output_df.loc[i, (side, 'MIDDLE_FINGER_MCP', ['x', 'y', 'z'])].values - output_df.loc[i, (side, 'WRIST', ['x', 'y', 'z'])].values
+        vec1 = output_df.loc[i, (side, 'MIDDLE_FINGER_PIP', ['x', 'y', 'z'])].values - output_df.loc[i, (side, 'MIDDLE_FINGER_MCP', ['x', 'y', 'z'])].values
+        vec2 = output_df.loc[i, (side, 'WRIST', ['x', 'y', 'z'])].values - output_df.loc[i, (side, 'MIDDLE_FINGER_MCP', ['x', 'y', 'z'])].values
+        mcpAng = self.angleBetweenVectors(vec1, vec2)
 
-        pipAng = self.angleBetweenVectors(vec1, vec2)
-        mcpAng = self.angleBetweenVectors(vec1, vec3)
+        vec3 = -vec1
+        vec4 = output_df.loc[i, (side, 'MIDDLE_FINGER_DIP', ['x', 'y', 'z'])].values - output_df.loc[i, (side, 'MIDDLE_FINGER_PIP', ['x', 'y', 'z'])].values
+        pipAng = self.angleBetweenVectors(vec3, vec4)
 
-        return max(pipAng, mcpAng) #todo sum?
+        return max(pipAng, mcpAng)
+
 
     def calculateRing(self, output_df, i, side):
-        vec1 = output_df.loc[i, (side, 'RING_FINGER_MCP', ['x', 'y', 'z'])].values - output_df.loc[i, (side, 'RING_FINGER_PIP', ['x', 'y', 'z'])].values
-        vec2 = output_df.loc[i, (side, 'RING_FINGER_DIP', ['x', 'y', 'z'])].values - output_df.loc[i, (side, 'RING_FINGER_PIP', ['x', 'y', 'z'])].values
-        vec3 = output_df.loc[i, (side, 'RING_FINGER_MCP', ['x', 'y', 'z'])].values - output_df.loc[i, (side, 'WRIST', ['x', 'y', 'z'])].values
+        vec1 = output_df.loc[i, (side, 'RING_FINGER_PIP', ['x', 'y', 'z'])].values - output_df.loc[i, (side, 'RING_FINGER_MCP', ['x', 'y', 'z'])].values
+        vec2 = output_df.loc[i, (side, 'WRIST', ['x', 'y', 'z'])].values - output_df.loc[i, (side, 'RING_FINGER_MCP', ['x', 'y', 'z'])].values
+        mcpAng = self.angleBetweenVectors(vec1, vec2)
 
-        pipAng = self.angleBetweenVectors(vec1, vec2)
-        mcpAng = self.angleBetweenVectors(vec1, vec3)
+        vec3 = -vec1
+        vec4 = output_df.loc[i, (side, 'RING_FINGER_DIP', ['x', 'y', 'z'])].values - output_df.loc[i, (side, 'RING_FINGER_PIP', ['x', 'y', 'z'])].values
+        pipAng = self.angleBetweenVectors(vec3, vec4)
 
         return max(pipAng, mcpAng)
 
@@ -281,9 +200,20 @@ class AnglesHelper:
 
         return max(pipAng, mcpAng) #todo sum?
 
+    def calculatePinky(self, output_df, i, side):
+        vec1 = output_df.loc[i, (side, 'PINKY_PIP', ['x', 'y', 'z'])].values - output_df.loc[i, (side, 'PINKY_MCP', ['x', 'y', 'z'])].values
+        vec2 = output_df.loc[i, (side, 'WRIST', ['x', 'y', 'z'])].values - output_df.loc[i, (side, 'PINKY_MCP', ['x', 'y', 'z'])].values
+        mcpAng = self.angleBetweenVectors(vec1, vec2)
+
+        vec3 = -vec1
+        vec4 = output_df.loc[i, (side, 'PINKY_DIP', ['x', 'y', 'z'])].values - output_df.loc[i, (side, 'PINKY_PIP', ['x', 'y', 'z'])].values
+        pipAng = self.angleBetweenVectors(vec3, vec4)
+
+        return max(pipAng, mcpAng)
+
 
     def getArmAngles(self, output_df):
-        angle_names = ['indexAng', 'midAng', 'ringAng', 'pinkyAng', 'thumbFlex', 'thumbRot', 'elbowAngle', 'wristRot',
+        angle_names = ['indexAng', 'midAng', 'ringAng', 'pinkyAng', 'thumbInPlaneAng', 'thumbOutPlaneAng', 'elbowAngle', 'wristRot',
                        'wristFlex']
         hand_names = ['Left', 'Right']
 
@@ -295,38 +225,60 @@ class AnglesHelper:
                 hand_wrist = output_df.loc[i, (side, 'WRIST', ['x', 'y', 'z'])].values
                 index = output_df.loc[i, (side, 'INDEX_FINGER_MCP', ['x', 'y', 'z'])].values
                 pinky = output_df.loc[i, (side, 'PINKY_MCP', ['x', 'y', 'z'])].values
-                elbow = output_df.loc[i, (side, 'PINKY_MCP', ['x', 'y', 'z'])].values
+                elbow = output_df.loc[i, (side, 'ELBOW', ['x', 'y', 'z'])].values
                 shoulder = output_df.loc[i, (side, 'SHOULDER', ['x', 'y', 'z'])].values
+                lower_arm = body_wrist - elbow
+                upper_arm = shoulder - elbow
+
 
                 ### Wrist ##########
                 # Calculate the normal vector to the plane formed by the palm
                 vec1 = index - hand_wrist
                 vec2 = pinky - hand_wrist
+                palmNormal = np.cross(vec1, vec2)  # comes out of palm for the right arm
 
-                # Calculate the normal vector to the plane formed by the wrist, elbow, and shoulder
-                vec3 = body_wrist - elbow
-                vec4 = shoulder - elbow
-                palmNormal = np.cross(vec2, vec1)
-                elbowNormal = np.cross(vec3, vec4)
+                elbowNormal = np.cross(upper_arm, lower_arm)  # goes inward for the right arm
 
-                # wrist rotation angle is the angle between these two normal vectors
-                angles_df.loc[i, (side, 'wristRot')] = self.angleBetweenVectors(palmNormal, elbowNormal)  # , alternate=True)
+                # project the palmNormal onto the plane where the normal vector is lower_arm:
+                palmNormal_proj = palmNormal - (np.dot(palmNormal, lower_arm) * lower_arm) / np.linalg.norm(lower_arm)**2
 
-                # wrist flexion angle is angle between an in-plane palm vector and the forearm
-                inPalm = np.mean([index, pinky], axis=0) - hand_wrist
-                angles_df.loc[i, (side, 'wristFlex')] = self.angleBetweenVectors(inPalm, vec3)
+                # wrist rotation is zero when palm points inwards
+                wrist_rot_abs_val = self.angleBetweenVectors(palmNormal_proj, elbowNormal)
+
+                # right hand: angle increases when hand turns counterclockwise when viewed from outside
+                # left hand: angle increases when hand turns clockwise when viewed from outside
+                wrist_rot_dir = 1 if np.dot(np.cross(lower_arm, elbowNormal), palmNormal_proj) > 0 else -1
+                if side == 'Left':
+                    wrist_rot_dir *= -1
+                angles_df.loc[i, (side, 'wristRot')] = wrist_rot_dir * wrist_rot_abs_val
+
+                # wrist flexion is zero when the palm is parallel to the lower arm
+                # it increases when the wrist is extended and decreases when it is flexed
+                angles_df.loc[i, (side, 'wristFlex')] = self.angleBetweenVectors(palmNormal, lower_arm) - 90
 
                 ### Elbow ##########
-                vec1 = elbow - body_wrist  # wrist - elbow
-                vec2 = elbow - shoulder
-                angles_df.loc[i, (side, 'elbowAngle')] = self.angleBetweenVectors(vec1, vec2)
+                # 0 when fully flexed, 180 when fully extended
+                angles_df.loc[i, (side, 'elbowAngle')] = self.angleBetweenVectors(lower_arm, upper_arm)
+
+                ### Thumb ###########
+                thumb = output_df.loc[i, (side, 'THUMB_TIP', ['x', 'y', 'z'])].values - output_df.loc[i, (side, 'THUMB_MCP', ['x', 'y', 'z'])].values
+                pinky_to_index = index - pinky
+
+                thumb_plane_proj = thumb - (np.dot(thumb, palmNormal) * palmNormal) / np.linalg.norm(palmNormal)**2
+                # zero when thumb is parallel the line between index and pinky, increases when thumb is pulled towards the pinky in the palm plane
+                angles_df.loc[i, (side, 'thumbInPlaneAng')] = self.angleBetweenVectors(thumb_plane_proj, pinky_to_index)
+
+                outplane_normal = np.cross(pinky_to_index, palmNormal)
+                thumb_out_plane_proj = thumb - (np.dot(thumb, outplane_normal) * outplane_normal) / np.linalg.norm(outplane_normal)**2
+                # zero when thumb is parallel the line between index and pinky, increases when thumb is pulled towards the pinky in the plane orthogonal to the palm
+                angles_df.loc[i, (side, 'thumbOutPlaneAng')] = self.angleBetweenVectors(thumb_out_plane_proj, pinky_to_index)
+
 
                 ### Hand ###########
                 angles_df.loc[i, (side, 'indexAng')] = self.calculateIndex(output_df, i, side)
                 angles_df.loc[i, (side, 'midAng')] = self.calculateMiddle(output_df, i, side)
                 angles_df.loc[i, (side, 'ringAng')] = self.calculateRing(output_df, i, side)
                 angles_df.loc[i, (side, 'pinkyAng')] = self.calculatePinky(output_df, i, side)
-                (angles_df.loc[i, (side, 'thumbFlex')], angles_df.loc[i, (side, 'thumbRot')]) = self.calculateThumbAngles(output_df, i, side)
 
         return angles_df
 

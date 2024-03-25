@@ -98,7 +98,7 @@ Here is an example of how to run the script:
 python process_video.py --data_dir data/joris/test --visualize True
 ```
 
-### Data Output
+## Data Output
 
 - aligned_emg.npy: EMG data aligned with the video data.
 - angles.parquet: Angles computed from the video data. To access individual angles:
@@ -112,5 +112,4 @@ angles = pd.read_parquet(join(data_dir, 'angles.parquet')
 left_hand_index_angle = angles.loc[0, ('Left', 'indexAng')]
 ```
 
-Available angles: `['indexAng', 'midAng', 'ringAng', 'pinkyAng', 'thumbFlex', 'thumbRot', 'elbowAngle', 'wristRot',
-'wristFlex']`
+Available angles: `['indexAng', 'midAng', 'ringAng', 'pinkyAng', 'thumbInPlaneAng', 'thumbOutPlaneAng', 'elbowAngle', 'wristRot', 'wristFlex']`
