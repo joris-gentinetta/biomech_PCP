@@ -126,7 +126,12 @@ class MergingHelper:
         LR_index = self._determine_LR(detection_result_hands, prior)
         for hand in ['Left', 'Right']:
             if LR_index[hand] is None:
-                for i in range(self._n_landmarks_hand):
+                if hand == 'Left':
+                    pose_landmarks.landmark.extend([pose_landmarks.landmark[int(pose.PoseLandmark['LEFT_WRIST'])]])
+                else:
+                    pose_landmarks.landmark.extend([pose_landmarks.landmark[int(pose.PoseLandmark['RIGHT_WRIST'])]])
+
+                for i in range(1, self._n_landmarks_hand):
                     landmark = landmark_pb2.NormalizedLandmark(x=-1, y=-1, z=-1)
                     pose_landmarks.landmark.extend([landmark])
             else:
