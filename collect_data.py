@@ -8,6 +8,10 @@ from os.path import join
 import cv2
 import numpy as np
 
+import sys
+sys.path.append('/home/haptix/haptix/haptix_controller/handsim/src/')
+from EMGClass import EMG
+
 stop_video = False
 
 
@@ -81,14 +85,15 @@ def capture_EMG(save_type, output_dir, sampling_rate, dummy_emg=False):
             emgHistory = np.concatenate((emgHistory, thisEMG), axis=0)
             time.sleep(delay_time)
     else:
-        from EMGClass import EMG
         emg = EMG()
         emg.startCommunication()
         emgHistory = np.empty((1, emg.numElectrodes))
 
         while not stop_video:
             emg_timestamps.append(time.time())
-            if save_type == 'normed':
+            if save_type == 'raw':
+                thisEMG = np.asarray(emg.rawEMG)
+            elif save_type == 'normed':
                 thisEMG = np.asarray(emg.normedEMG)
             elif save_type == 'iEMG':
                 thisEMG = np.asarray(emg.iEMG)
