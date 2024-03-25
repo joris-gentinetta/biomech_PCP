@@ -112,4 +112,23 @@ angles = pd.read_parquet(join(data_dir, 'angles.parquet')
 left_hand_index_angle = angles.loc[0, ('Left', 'indexAng')]
 ```
 
+### Angles Explanation
 Available angles: `['indexAng', 'midAng', 'ringAng', 'pinkyAng', 'thumbInPlaneAng', 'thumbOutPlaneAng', 'elbowAngle', 'wristRot', 'wristFlex']`
+
+- `indexAng`: This is the maximum angle between the Index Finger's Proximal Interphalangeal (PIP) joint and Metacarpophalangeal (MCP) joint, and the line between the MCP joint and the wrist. The angle is 0 when the finger is fully extended and increases as the finger is flexed.
+
+- `midAng`: This is the maximum angle between the Middle Finger's PIP joint and MCP joint, and the line between the MCP joint and the wrist. The angle is 0 when the finger is fully extended and increases as the finger is flexed.
+
+- `ringAng`: This is the maximum angle between the Ring Finger's PIP joint and MCP joint, and the line between the MCP joint and the wrist. The angle is 0 when the finger is fully extended and increases as the finger is flexed.
+
+- `pinkyAng`: This is the maximum angle between the Pinky Finger's PIP joint and MCP joint, and the line between the MCP joint and the wrist. The angle is 0 when the finger is fully extended and increases as the finger is flexed.
+
+- `thumbInPlaneAng`: This is the angle between the thumb and the line between the pinky and index fingers in the plane of the palm. The angle is 0 when the thumb is parallel to the line between the pinky and index fingers, and increases when the thumb is pulled towards the pinky in the palm plane.
+
+- `thumbOutPlaneAng`: This is the angle between the thumb and the line between the pinky and index fingers in the plane orthogonal to the palm. The angle is 0 when the thumb is parallel to the line between the pinky and index fingers, and increases when the thumb is pulled towards the pinky in the plane orthogonal to the palm.
+
+- `elbowAngle`: This is the angle between the lower arm and the upper arm at the elbow joint. The angle is 0 when the elbow is fully flexed and increases as the elbow is extended.
+
+- `wristRot`: This is the angle of rotation of the wrist. For the right hand, the angle is 0 when the palm points inwards and increases when the hand turns counterclockwise when viewed from outside. For the left hand, the angle is 0 when the palm points inwards and increases when the hand turns clockwise when viewed from outside.
+
+- `wristFlex`: This is the angle of flexion of the wrist. The angle is 0 when the palm is parallel to the lower arm, increases when the wrist is extended, and decreases when it is flexed.

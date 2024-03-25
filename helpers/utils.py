@@ -157,57 +157,44 @@ class AnglesHelper:
 
     def calculateIndex(self, output_df, i, side):
         vec1 = output_df.loc[i, (side, 'INDEX_FINGER_PIP', ['x', 'y', 'z'])].values - output_df.loc[i, (side, 'INDEX_FINGER_MCP', ['x', 'y', 'z'])].values
-        vec2 = output_df.loc[i, (side, 'WRIST', ['x', 'y', 'z'])].values - output_df.loc[i, (side, 'INDEX_FINGER_MCP', ['x', 'y', 'z'])].values
+        vec2 = output_df.loc[i, (side, 'INDEX_FINGER_MCP', ['x', 'y', 'z'])].values - output_df.loc[i, (side, 'WRIST', ['x', 'y', 'z'])].values
         mcpAng = self.angleBetweenVectors(vec1, vec2)
 
-        vec3 = -vec1
-        vec4 = output_df.loc[i, (side, 'INDEX_FINGER_DIP', ['x', 'y', 'z'])].values - output_df.loc[i, (side, 'INDEX_FINGER_PIP', ['x', 'y', 'z'])].values
-        pipAng = self.angleBetweenVectors(vec3, vec4)
+        vec4 = output_df.loc[i, (side, 'INDEX_FINGER_PIP', ['x', 'y', 'z'])].values - output_df.loc[i, (side, 'INDEX_FINGER_DIP', ['x', 'y', 'z'])].values
+        pipAng = self.angleBetweenVectors(vec1, vec4)
 
         return max(pipAng, mcpAng)
 
 
     def calculateMiddle(self, output_df, i, side):
         vec1 = output_df.loc[i, (side, 'MIDDLE_FINGER_PIP', ['x', 'y', 'z'])].values - output_df.loc[i, (side, 'MIDDLE_FINGER_MCP', ['x', 'y', 'z'])].values
-        vec2 = output_df.loc[i, (side, 'WRIST', ['x', 'y', 'z'])].values - output_df.loc[i, (side, 'MIDDLE_FINGER_MCP', ['x', 'y', 'z'])].values
+        vec2 = output_df.loc[i, (side, 'MIDDLE_FINGER_MCP', ['x', 'y', 'z'])].values - output_df.loc[i, (side, 'WRIST', ['x', 'y', 'z'])].values
         mcpAng = self.angleBetweenVectors(vec1, vec2)
 
-        vec3 = -vec1
-        vec4 = output_df.loc[i, (side, 'MIDDLE_FINGER_DIP', ['x', 'y', 'z'])].values - output_df.loc[i, (side, 'MIDDLE_FINGER_PIP', ['x', 'y', 'z'])].values
-        pipAng = self.angleBetweenVectors(vec3, vec4)
+        vec4 = output_df.loc[i, (side, 'MIDDLE_FINGER_PIP', ['x', 'y', 'z'])].values - output_df.loc[i, (side, 'MIDDLE_FINGER_DIP', ['x', 'y', 'z'])].values
+        pipAng = self.angleBetweenVectors(vec1, vec4)
 
         return max(pipAng, mcpAng)
 
 
     def calculateRing(self, output_df, i, side):
         vec1 = output_df.loc[i, (side, 'RING_FINGER_PIP', ['x', 'y', 'z'])].values - output_df.loc[i, (side, 'RING_FINGER_MCP', ['x', 'y', 'z'])].values
-        vec2 = output_df.loc[i, (side, 'WRIST', ['x', 'y', 'z'])].values - output_df.loc[i, (side, 'RING_FINGER_MCP', ['x', 'y', 'z'])].values
+        vec2 = output_df.loc[i, (side, 'RING_FINGER_MCP', ['x', 'y', 'z'])].values - output_df.loc[i, (side, 'WRIST', ['x', 'y', 'z'])].values
         mcpAng = self.angleBetweenVectors(vec1, vec2)
 
-        vec3 = -vec1
-        vec4 = output_df.loc[i, (side, 'RING_FINGER_DIP', ['x', 'y', 'z'])].values - output_df.loc[i, (side, 'RING_FINGER_PIP', ['x', 'y', 'z'])].values
-        pipAng = self.angleBetweenVectors(vec3, vec4)
+        vec4 = output_df.loc[i, (side, 'RING_FINGER_PIP', ['x', 'y', 'z'])].values - output_df.loc[i, (side, 'RING_FINGER_DIP', ['x', 'y', 'z'])].values
+        pipAng = self.angleBetweenVectors(vec1, vec4)
 
         return max(pipAng, mcpAng)
 
-    def calculatePinky(self, output_df, i, side):
-        vec1 = output_df.loc[i, (side, 'PINKY_MCP', ['x', 'y', 'z'])].values - output_df.loc[i, (side, 'PINKY_PIP', ['x', 'y', 'z'])].values
-        vec2 = output_df.loc[i, (side, 'PINKY_DIP', ['x', 'y', 'z'])].values - output_df.loc[i, (side, 'PINKY_PIP', ['x', 'y', 'z'])].values
-        vec3 = output_df.loc[i, (side, 'PINKY_MCP', ['x', 'y', 'z'])].values - output_df.loc[i, (side, 'WRIST', ['x', 'y', 'z'])].values
-
-        pipAng = self.angleBetweenVectors(vec1, vec2)
-        mcpAng = self.angleBetweenVectors(vec1, vec3)
-
-        return max(pipAng, mcpAng) #todo sum?
 
     def calculatePinky(self, output_df, i, side):
         vec1 = output_df.loc[i, (side, 'PINKY_PIP', ['x', 'y', 'z'])].values - output_df.loc[i, (side, 'PINKY_MCP', ['x', 'y', 'z'])].values
-        vec2 = output_df.loc[i, (side, 'WRIST', ['x', 'y', 'z'])].values - output_df.loc[i, (side, 'PINKY_MCP', ['x', 'y', 'z'])].values
+        vec2 = output_df.loc[i, (side, 'PINKY_MCP', ['x', 'y', 'z'])].values - output_df.loc[i, (side, 'WRIST', ['x', 'y', 'z'])].values
         mcpAng = self.angleBetweenVectors(vec1, vec2)
 
-        vec3 = -vec1
-        vec4 = output_df.loc[i, (side, 'PINKY_DIP', ['x', 'y', 'z'])].values - output_df.loc[i, (side, 'PINKY_PIP', ['x', 'y', 'z'])].values
-        pipAng = self.angleBetweenVectors(vec3, vec4)
+        vec4 = output_df.loc[i, (side, 'PINKY_PIP', ['x', 'y', 'z'])].values - output_df.loc[i, (side, 'PINKY_DIP', ['x', 'y', 'z'])].values
+        pipAng = self.angleBetweenVectors(vec1, vec4)
 
         return max(pipAng, mcpAng)
 
