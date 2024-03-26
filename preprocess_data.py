@@ -64,7 +64,7 @@ def show_frame(cap, frame_number):
 
 def align_emg(data_dir, out_dir):
     emg = np.load(join(data_dir, 'emg.npy'))
-    video_timestamps = np.load(join(data_dir, 'cropped_timestamps.npy'))
+    video_timestamps = np.load(join(out_dir, 'cropped_timestamps.npy'))
     emg_timestamps = np.load(join(data_dir, 'emg_timestamps.npy'))
 
     # Align EMG data with video timestamps

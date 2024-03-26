@@ -255,6 +255,6 @@ class Visualization():
                                         frames = self.number_frames, interval = 1, 
                                         blit = False, repeat = False, cache_frame_data = False)
         writervideo = animation.FFMpegWriter(fps=self.fps)
-        os.makedirs(os.path.join("../data", "output"), exist_ok=True)
+        os.makedirs(os.path.join("../data", "output"), exist_ok=True) # todo
         anim.save(join(self.data_dir, 'visualization.mp4'), writer = writervideo)
         logging.info('Video saved!')
