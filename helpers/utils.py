@@ -258,7 +258,7 @@ class AnglesHelper:
 
                 # wrist flexion is zero when the palm is parallel to the lower arm
                 # it increases when the wrist is extended and decreases when it is flexed
-                angles_df.loc[i, (side, 'wristFlex')] = self.angleBetweenVectors(palmNormal, lower_arm) - 90
+                angles_df.loc[i, (side, 'wristFlex')] = self.angleBetweenVectors(palmNormal, -lower_arm) - 90
 
                 ### Elbow ##########
                 # 0 when fully flexed, 180 when fully extended
