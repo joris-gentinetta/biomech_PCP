@@ -24,6 +24,7 @@ import numpy as np
 import matplotlib.animation as animation
 from matplotlib import rcParams
 rcParams['font.family'] = 'serif'
+rcParams['animation.ffmpeg_path'] = r'/home/haptix/anaconda3/bin/ffmpeg'
 import matplotlib.pyplot as plt
 from matplotlib import gridspec
 from os.path import join
@@ -254,7 +255,7 @@ class Visualization():
         anim = animation.FuncAnimation(fig, self.update_lines,
                                         frames = self.number_frames, interval = 1, 
                                         blit = False, repeat = False, cache_frame_data = False)
-        writervideo = animation.FFMpegWriter(fps=self.fps)
+        writervideo = animation.FFMpegWriter(fps=self.fps, codec="libx264")
         os.makedirs(os.path.join("../data", "output"), exist_ok=True) # todo
         anim.save(join(self.data_dir, 'visualization.mp4'), writer = writervideo)
         logging.info('Video saved!')
