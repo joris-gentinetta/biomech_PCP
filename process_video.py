@@ -157,75 +157,75 @@ if __name__ == "__main__":
     experiment_dir = join(args.data_dir, 'experiments', args.experiment_name)
     input_video_path = join(experiment_dir, "cropped_video.mp4")
 
-    cap = cv2.VideoCapture(input_video_path)
+    # cap = cv2.VideoCapture(input_video_path)
 
-    fps = cap.get(cv2.CAP_PROP_FPS)
-    n_frames = cap.get(cv2.CAP_PROP_FRAME_COUNT)
-    print(f"Number of frames: {n_frames}")
+    # fps = cap.get(cv2.CAP_PROP_FPS)
+    # n_frames = cap.get(cv2.CAP_PROP_FRAME_COUNT)
+    # print(f"Number of frames: {n_frames}")
 
-    frames = range(0, int(n_frames))
-    mediapipe_landmark_names = pose.PoseLandmark._member_names_
-    video_timestamps = np.load(join(experiment_dir, "cropped_timestamps.npy"))
-    mediapipe_df = get_mediapipe_df(cap, frames, video_timestamps, args.intact_hand)
+    # frames = range(0, int(n_frames))
+    # mediapipe_landmark_names = pose.PoseLandmark._member_names_
+    # video_timestamps = np.load(join(experiment_dir, "cropped_timestamps.npy"))
+    # mediapipe_df = get_mediapipe_df(cap, frames, video_timestamps, args.intact_hand)
 
-    vid = imageio.get_reader(input_video_path, 'ffmpeg')
-    fps_in = vid.get_meta_data()['fps']
-    vid_size = vid.get_meta_data()['size']
-    x_scale, y_scale = vid_size  # todo: check if this is correct
-    z_scale = x_scale
+    # vid = imageio.get_reader(input_video_path, 'ffmpeg')
+    # fps_in = vid.get_meta_data()['fps']
+    # vid_size = vid.get_meta_data()['size']
+    # x_scale, y_scale = vid_size  # todo: check if this is correct
+    # z_scale = x_scale
 
-    idx = pd.IndexSlice
-    mediapipe_df.loc[:, idx[:, :, 'x']] = mediapipe_df.loc[:, idx[:, :, 'x']] * x_scale
-    mediapipe_df.loc[:, idx[:, :, 'y']] = mediapipe_df.loc[:, idx[:, :, 'y']] * y_scale
-    mediapipe_df.loc[:, idx[:, :, 'z']] = mediapipe_df.loc[:, idx[:, :, 'z']] * z_scale
-    cap.release()
+    # idx = pd.IndexSlice
+    # mediapipe_df.loc[:, idx[:, :, 'x']] = mediapipe_df.loc[:, idx[:, :, 'x']] * x_scale
+    # mediapipe_df.loc[:, idx[:, :, 'y']] = mediapipe_df.loc[:, idx[:, :, 'y']] * y_scale
+    # mediapipe_df.loc[:, idx[:, :, 'z']] = mediapipe_df.loc[:, idx[:, :, 'z']] * z_scale
+    # cap.release()
 
-    motionbert_df = get_motionbert_df(mediapipe_df, frames)
-    motionbert_df.to_parquet(join(experiment_dir, "motionbert_input.parquet"))
+    # motionbert_df = get_motionbert_df(mediapipe_df, frames)
+    # motionbert_df.to_parquet(join(experiment_dir, "motionbert_input.parquet"))
 
-    mb = MotionBert()
-    motionbert_input = get_motionbert_input(motionbert_df, mb.probing_point, mb.model.maxlen)
+    # mb = MotionBert()
+    # motionbert_input = get_motionbert_input(motionbert_df, mb.probing_point, mb.model.maxlen)
 
-    idx = pd.IndexSlice
-    for i in tqdm(range(len(motionbert_df.index))):
-        keypoints = mb.get_3d_keypoints(
-            motionbert_input[i:i + mb.model.maxlen], vid_size)
-        for lm_i, landmark_name in enumerate(MOTIONBERT_MAP):
-            motionbert_df.loc[i, idx[landmark_name, slice(None)]] = keypoints[lm_i]
+    # idx = pd.IndexSlice
+    # for i in tqdm(range(len(motionbert_df.index))):
+    #     keypoints = mb.get_3d_keypoints(
+    #         motionbert_input[i:i + mb.model.maxlen], vid_size)
+    #     for lm_i, landmark_name in enumerate(MOTIONBERT_MAP):
+    #         motionbert_df.loc[i, idx[landmark_name, slice(None)]] = keypoints[lm_i]
 
-    motionbert_df.to_parquet(join(experiment_dir, "motionbert_output.parquet"))
-    mergingHelper = MergingHelper()
-    body_cols = MOTIONBERT_MAP
-    side_cols = mergingHelper.map['Right'].keys()
+    # motionbert_df.to_parquet(join(experiment_dir, "motionbert_output.parquet"))
+    # mergingHelper = MergingHelper()
+    # body_cols = MOTIONBERT_MAP
+    # side_cols = mergingHelper.map['Right'].keys()
 
-    body_columns = pd.MultiIndex.from_product([['Body'], body_cols, ['x', 'y', 'z']])
-    right_side_columns = pd.MultiIndex.from_product([['Right'], side_cols, ['x', 'y', 'z']])
-    left_side_columns = pd.MultiIndex.from_product([['Left'], side_cols, ['x', 'y', 'z']])
+    # body_columns = pd.MultiIndex.from_product([['Body'], body_cols, ['x', 'y', 'z']])
+    # right_side_columns = pd.MultiIndex.from_product([['Right'], side_cols, ['x', 'y', 'z']])
+    # left_side_columns = pd.MultiIndex.from_product([['Left'], side_cols, ['x', 'y', 'z']])
 
-    columns = body_columns.append(right_side_columns).append(left_side_columns)
-    output_df = pd.DataFrame(index=frames, columns=columns)
+    # columns = body_columns.append(right_side_columns).append(left_side_columns)
+    # output_df = pd.DataFrame(index=frames, columns=columns)
 
-    for landmark_name in MOTIONBERT_MAP:
-        output_df.loc[:, idx['Body', landmark_name, slice(None)]] = motionbert_df.loc[:, idx[landmark_name, slice(None)]].values
+    # for landmark_name in MOTIONBERT_MAP:
+    #     output_df.loc[:, idx['Body', landmark_name, slice(None)]] = motionbert_df.loc[:, idx[landmark_name, slice(None)]].values
 
-    output_df.loc[:, idx['Left', 'SHOULDER', slice(None)]] = output_df.loc[:, idx['Body', 'LEFT_SHOULDER', slice(None)]].values
-    output_df.loc[:, idx['Left', 'ELBOW', slice(None)]] = output_df.loc[:, idx['Body', 'LEFT_ELBOW', slice(None)]].values
-    output_df.loc[:, idx['Left', 'HIP', slice(None)]] = output_df.loc[:, idx['Body', 'LEFT_HIP', slice(None)]].values
-    output_df.loc[:, idx['Left', 'BODY_WRIST', slice(None)]] = output_df.loc[:,
-                                                               idx['Body', 'LEFT_WRIST', slice(None)]].values
+    # output_df.loc[:, idx['Left', 'SHOULDER', slice(None)]] = output_df.loc[:, idx['Body', 'LEFT_SHOULDER', slice(None)]].values
+    # output_df.loc[:, idx['Left', 'ELBOW', slice(None)]] = output_df.loc[:, idx['Body', 'LEFT_ELBOW', slice(None)]].values
+    # output_df.loc[:, idx['Left', 'HIP', slice(None)]] = output_df.loc[:, idx['Body', 'LEFT_HIP', slice(None)]].values
+    # output_df.loc[:, idx['Left', 'BODY_WRIST', slice(None)]] = output_df.loc[:,
+    #                                                            idx['Body', 'LEFT_WRIST', slice(None)]].values
 
-    output_df.loc[:, idx['Right', 'SHOULDER', slice(None)]] = output_df.loc[:,
-                                                              idx['Body', 'RIGHT_SHOULDER', slice(None)]].values
-    output_df.loc[:, idx['Right', 'ELBOW', slice(None)]] = output_df.loc[:, idx['Body', 'RIGHT_ELBOW', slice(None)]].values
-    output_df.loc[:, idx['Right', 'HIP', slice(None)]] = output_df.loc[:, idx['Body', 'RIGHT_HIP', slice(None)]].values
-    output_df.loc[:, idx['Right', 'BODY_WRIST', slice(None)]] = output_df.loc[:,
-                                                                idx['Body', 'RIGHT_WRIST', slice(None)]].values
+    # output_df.loc[:, idx['Right', 'SHOULDER', slice(None)]] = output_df.loc[:,
+    #                                                           idx['Body', 'RIGHT_SHOULDER', slice(None)]].values
+    # output_df.loc[:, idx['Right', 'ELBOW', slice(None)]] = output_df.loc[:, idx['Body', 'RIGHT_ELBOW', slice(None)]].values
+    # output_df.loc[:, idx['Right', 'HIP', slice(None)]] = output_df.loc[:, idx['Body', 'RIGHT_HIP', slice(None)]].values
+    # output_df.loc[:, idx['Right', 'BODY_WRIST', slice(None)]] = output_df.loc[:,
+    #                                                             idx['Body', 'RIGHT_WRIST', slice(None)]].values
 
-    for col in mergingHelper.hand_keys:
-        output_df.loc[:, idx['Left', col, slice(None)]] = mediapipe_df.loc[:, idx['Left', col, slice(None)]].values
-        output_df.loc[:, idx['Right', col, slice(None)]] = mediapipe_df.loc[:, idx['Right', col, slice(None)]].values
+    # for col in mergingHelper.hand_keys:
+    #     output_df.loc[:, idx['Left', col, slice(None)]] = mediapipe_df.loc[:, idx['Left', col, slice(None)]].values
+    #     output_df.loc[:, idx['Right', col, slice(None)]] = mediapipe_df.loc[:, idx['Right', col, slice(None)]].values
 
-    output_df.to_parquet(join(experiment_dir, "output.parquet"))
+    # output_df.to_parquet(join(experiment_dir, "output.parquet"))
 
     if args.visualize:
         df2d = pd.read_parquet(join(experiment_dir, "motionbert_input.parquet"))

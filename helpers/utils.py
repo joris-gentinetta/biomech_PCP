@@ -227,7 +227,12 @@ class AnglesHelper:
             for side in ['Left', 'Right']:
                 body_wrist = output_df.loc[i, (side, 'BODY_WRIST', ['x', 'y', 'z'])].values
                 hand_wrist = output_df.loc[i, (side, 'WRIST', ['x', 'y', 'z'])].values
+                thumb_tip = output_df.loc[i, (side, 'THUMB_TIP', ['x', 'y', 'z'])].values
+                thumb_ip = output_df.loc[i, (side, 'THUMB_IP', ['x', 'y', 'z'])].values
+                thumb_mcp = output_df.loc[i, (side, 'THUMB_MCP', ['x', 'y', 'z'])].values
+                thumb_cmc = output_df.loc[i, (side, 'THUMB_CMC', ['x', 'y', 'z'])].values
                 index = output_df.loc[i, (side, 'INDEX_FINGER_MCP', ['x', 'y', 'z'])].values
+                ring = output_df.loc[i, (side, 'RING_FINGER_MCP', ['x', 'y', 'z'])].values
                 pinky = output_df.loc[i, (side, 'PINKY_MCP', ['x', 'y', 'z'])].values
                 elbow = output_df.loc[i, (side, 'ELBOW', ['x', 'y', 'z'])].values
                 shoulder = output_df.loc[i, (side, 'SHOULDER', ['x', 'y', 'z'])].values
@@ -265,18 +270,39 @@ class AnglesHelper:
                 angles_df.loc[i, (side, 'elbowAngle')] = self.angleBetweenVectors(lower_arm, upper_arm)
 
                 ### Thumb ###########
-                thumb = output_df.loc[i, (side, 'THUMB_TIP', ['x', 'y', 'z'])].values - output_df.loc[i, (side, 'THUMB_MCP', ['x', 'y', 'z'])].values
-                pinky_to_index = index - pinky
+                # thumb = thumb_tip - thumb_cmc # defines the line of the thumb
+                # thumb_index = index - thumb_mcp
+                index_wrist = index - hand_wrist
+                thumb_cmc_angle = thumb_cmc - hand_wrist
+                thumb_distal = thumb_tip - thumb_ip
+                thumb_proximal = thumb_ip - thumb_mcp
+                thumb_base = thumb_mcp - thumb_cmc
+                thumb_link = thumb_tip - thumb_mcp
+                # pinky_to_index = index - pinky
+                cmc_to_ring = ring - thumb_cmc # defines the axis of rotation for the thumb
 
-                thumb_plane_proj = thumb - (np.dot(thumb, palmNormal) * palmNormal) / np.linalg.norm(palmNormal)**2
+                thumb_plane_normal = np.cross(cmc_to_ring, thumb_cmc_angle) # normal to the plane formed by the thumb and the axis of rotation
+                thumb_rot_angle = -3*(self.angleBetweenVectors(thumb_plane_normal, palmNormal) - 20) # angle between the normal to the thumb plane and the normal to the palm plane (negate for psyonic)
+
+                thumb_flex_angle = 3*(np.max(90 - np.asarray([self.angleBetweenVectors(thumb_distal, -thumb_proximal), self.angleBetweenVectors(thumb_link, index_wrist), self.angleBetweenVectors(thumb_base, index_wrist)])) - 50) # angle between the thumb and the index finger
+
                 # zero when thumb is parallel the line between index and pinky, increases when thumb is pulled towards the pinky in the palm plane
-                angles_df.loc[i, (side, 'thumbInPlaneAng')] = self.angleBetweenVectors(thumb_plane_proj, pinky_to_index)
+                angles_df.loc[i, (side, 'thumbInPlaneAng')] = thumb_flex_angle # thumb flexion angle
 
-                outplane_normal = np.cross(pinky_to_index, palmNormal)
-                thumb_out_plane_proj = thumb - (np.dot(thumb, outplane_normal) * outplane_normal) / np.linalg.norm(outplane_normal)**2
                 # zero when thumb is parallel the line between index and pinky, increases when thumb is pulled towards the pinky in the plane orthogonal to the palm
-                angles_df.loc[i, (side, 'thumbOutPlaneAng')] = self.angleBetweenVectors(thumb_out_plane_proj, pinky_to_index)
+                angles_df.loc[i, (side, 'thumbOutPlaneAng')] = thumb_rot_angle # thumb `rotation` angle
 
+                # thumb = output_df.loc[i, (side, 'THUMB_TIP', ['x', 'y', 'z'])].values - output_df.loc[i, (side, 'THUMB_MCP', ['x', 'y', 'z'])].values
+                # pinky_to_index = index - pinky
+
+                # thumb_plane_proj = thumb - (np.dot(thumb, palmNormal) * palmNormal) / np.linalg.norm(palmNormal)**2
+                # # zero when thumb is parallel the line between index and pinky, increases when thumb is pulled towards the pinky in the palm plane
+                # angles_df.loc[i, (side, 'thumbInPlaneAng')] = self.angleBetweenVectors(thumb_plane_proj, pinky_to_index)
+
+                # outplane_normal = np.cross(pinky_to_index, palmNormal)
+                # thumb_out_plane_proj = thumb - (np.dot(thumb, outplane_normal) * outplane_normal) / np.linalg.norm(outplane_normal)**2
+                # # zero when thumb is parallel the line between index and pinky, increases when thumb is pulled towards the pinky in the plane orthogonal to the palm
+                # angles_df.loc[i, (side, 'thumbOutPlaneAng')] = self.angleBetweenVectors(thumb_out_plane_proj, pinky_to_index)
 
                 ### Hand ###########
                 angles_df.loc[i, (side, 'indexAng')] = self.calculateIndex(output_df, i, side)
