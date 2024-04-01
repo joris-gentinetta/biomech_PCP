@@ -18,13 +18,13 @@
 
 import os
 import logging
-import pandas as pd
-import matplotlib.pyplot as plt
+import sys
 import numpy as np
 import matplotlib.animation as animation
-from matplotlib import rcParams
-rcParams['font.family'] = 'serif'
-rcParams['animation.ffmpeg_path'] = r'/home/haptix/anaconda3/bin/ffmpeg'
+if sys.platform != 'darwin':
+    from matplotlib import rcParams
+    rcParams['font.family'] = 'serif'
+    rcParams['animation.ffmpeg_path'] = r'/home/haptix/anaconda3/bin/ffmpeg'
 import matplotlib.pyplot as plt
 from matplotlib import gridspec
 from os.path import join
@@ -85,7 +85,7 @@ class Visualization():
             for i, joint in enumerate(joint_names):
                 for j, ax in enumerate(axes):
                     # joints[:, i, j] = np.asarray(self.df.iloc[:, self.df.columns.get_loc(f'{joint}.coordinate_{ax}')])
-                    joints[frame, i, j] = np.asarray(self.df_3d.loc[frame, (joint, ax)])
+                    joints[frame, i, j] = np.asarray(self.df_3d.loc[frame, ('Body', joint, ax)])
 
         return joints
 
@@ -94,6 +94,8 @@ class Visualization():
         Gets the 2d keyoints froms the CSV by reading the headers. 
         """   
         joint_names = ['HIPS', 'RIGHT_HIP', 'RIGHT_KNEE', 'RIGHT_ANKLE', 'LEFT_HIP', 'LEFT_KNEE', 'LEFT_ANKLE', 'SPINE', 'CHEST', 'JAW', 'NOSE', 'LEFT_SHOULDER', 'LEFT_ELBOW', 'LEFT_WRIST', 'RIGHT_SHOULDER', 'RIGHT_ELBOW', 'RIGHT_WRIST']
+        hands = []
+
         n_frames = len(self.df_2d.index)
 
         axes = ['x', 'y']
@@ -102,7 +104,7 @@ class Visualization():
             for i, joint in enumerate(joint_names):
                 for j, ax in enumerate(axes):
                     # joints[:, i, j] = np.asarray(self.df.iloc[:, self.df.columns.get_loc(f'{joint}.coordinate_{ax}')])
-                    joints[frame, i, j] = np.asarray(self.df_2d.loc[frame, (joint, ax)])
+                    joints[frame, i, j] = np.asarray(self.df_2d.loc[frame, ('Body', joint, ax)])
         return joints
 
     def update_lines(self, i):
@@ -161,7 +163,7 @@ class Visualization():
         axv.axis('off')
         
         # Linewidth for joints
-        lw=2
+        lw = 2
         
         # Fetch and plot 2D data
         xv1, yv1 = self.x1_2d[i][:, 0], self.x1_2d[i][:, 1]
