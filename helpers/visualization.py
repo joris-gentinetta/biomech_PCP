@@ -94,17 +94,43 @@ class Visualization():
         Gets the 2d keyoints froms the CSV by reading the headers. 
         """   
         joint_names = ['HIPS', 'RIGHT_HIP', 'RIGHT_KNEE', 'RIGHT_ANKLE', 'LEFT_HIP', 'LEFT_KNEE', 'LEFT_ANKLE', 'SPINE', 'CHEST', 'JAW', 'NOSE', 'LEFT_SHOULDER', 'LEFT_ELBOW', 'LEFT_WRIST', 'RIGHT_SHOULDER', 'RIGHT_ELBOW', 'RIGHT_WRIST']
-        hands = []
+        hands = [
+    'WRIST',
+    'THUMB_CMC',
+    'THUMB_MCP',
+    'THUMB_IP',
+    'THUMB_TIP',
+    'INDEX_FINGER_MCP',
+    'INDEX_FINGER_PIP',
+    'INDEX_FINGER_DIP',
+    'INDEX_FINGER_TIP',
+    'MIDDLE_FINGER_MCP',
+    'MIDDLE_FINGER_PIP',
+    'MIDDLE_FINGER_DIP',
+    'MIDDLE_FINGER_TIP',
+    'RING_FINGER_MCP',
+    'RING_FINGER_PIP',
+    'RING_FINGER_DIP',
+    'RING_FINGER_TIP',
+    'PINKY_MCP',
+    'PINKY_PIP',
+    'PINKY_DIP',
+    'PINKY_TIP'
+]
 
         n_frames = len(self.df_2d.index)
 
         axes = ['x', 'y']
-        joints = np.zeros((len(self.df_2d), len(joint_names), len(axes)))
+        joints = np.zeros((len(self.df_2d), len(joint_names) + 2 * len(hands), len(axes)))
         for frame in range(n_frames):
             for i, joint in enumerate(joint_names):
                 for j, ax in enumerate(axes):
-                    # joints[:, i, j] = np.asarray(self.df.iloc[:, self.df.columns.get_loc(f'{joint}.coordinate_{ax}')])
                     joints[frame, i, j] = np.asarray(self.df_2d.loc[frame, ('Body', joint, ax)])
+            for i, joint in enumerate(hands):
+                for j, ax in enumerate(axes):
+                    joints[frame, i + len(joint_names), j] = np.asarray(self.df_2d.loc[frame, ('Left', joint, ax)])
+                    joints[frame, i + len(joint_names) + len(hands), j] = np.asarray(self.df_2d.loc[frame, ('Right', joint, ax)])
+
         return joints
 
     def update_lines(self, i):
@@ -159,16 +185,19 @@ class Visualization():
         # Video frames plot
         axv = fig.add_subplot(spec[0])
         self.vplot = axv.imshow(self.video_frames[i])
+        axv.set_xlim(0, self.video_frames[i].shape[1])
+        axv.set_ylim(self.video_frames[i].shape[0], 0)
         axv.set_title(f'Original Video + 2D', fontweight = 'bold' )
         axv.axis('off')
         
         # Linewidth for joints
-        lw = 2
+        lw = 1
         
         # Fetch and plot 2D data
         xv1, yv1 = self.x1_2d[i][:, 0], self.x1_2d[i][:, 1]
         self.clj12d = axv.plot(xv1.take(self.l_joints2d), yv1.take(self.l_joints2d), c = (0,0,1), linewidth = lw)
-        self.crj12d = axv.plot(xv1.take(self.r_joints2d), yv1.take(self.r_joints2d), c = (1,0,0), linewidth = lw)   
+        self.crj12d = axv.plot(xv1.take(self.r_joints2d), yv1.take(self.r_joints2d), c = (1,0,0), linewidth = lw)
+
         
         
         # Fetch 3D data (Axes are different for plotting purposes)
@@ -211,7 +240,7 @@ class Visualization():
         self.ax2 = fig.add_subplot(spec[2], projection='3d')
         self.ax2.set_title(f'3D Side View', fontweight='bold')
         self.ax2.set_box_aspect([1, 1, 1])
-        self.ax2.view_init(elev=70, azim=-90)  # For better visualization
+        self.ax2.view_init(elev=70, azim=-90)
         self.ax2.set_xticklabels([])
         self.ax2.set_yticklabels([])
         self.ax2.set_zticklabels([])
@@ -247,7 +276,11 @@ class Visualization():
     def plotVideo(self):
         # Joints order for plotting for 2D and 3D sequences
         self.l_joints2d = [13, 12, 11, 8, 7, 0, 4, 5, 6]
-        self.r_joints2d = [10, 9, 8, 14, 15, 16, 15, 14, 8, 7, 0, 1, 2, 3]
+        self.r_joints2d = [16, 15, 14, 8, 9, 10, 9, 8, 14, 15, 16, 15, 14, 8, 7, 0, 1, 2, 3]
+        self.l_hand = [i + 17 for i in [0, 1, 2, 3, 4, 3, 2, 1, 0, 5, 6, 7, 8, 7, 6, 5, 9, 10, 11, 12, 11, 10, 9, 13, 17, 18, 19, 20, 19, 18, 17]]
+        self.r_hand = [i + 21 for i in self.l_hand]
+        self.l_joints2d = self.l_hand + self.l_joints2d
+        self.r_joints2d = self.r_hand + self.r_joints2d
                 
         self.l_joints = [5, 3, 1, 14, 15, 16, 7, 9, 11]
         self.r_joints = [0, 13, 14, 2, 4, 6, 4, 2, 14, 15, 16, 8, 10, 12]
