@@ -3,13 +3,15 @@ from os.path import join
 
 import cv2
 import imageio
+
 import mediapipe as mp
+from mediapipe.python.solutions import pose
 import numpy as np
+from math import sqrt, ceil
 import pandas as pd
 pd.options.mode.copy_on_write = True
 idx = pd.IndexSlice
 
-from mediapipe.python.solutions import pose
 from tqdm import tqdm
 
 from helpers.MotionBert import MotionBert, MOTIONBERT_MAP
@@ -51,7 +53,7 @@ def run_mediapipe(cap, frames, video_timestamps, intact_hand=None):
     while cap.isOpened():
         success, frame = cap.read()
         if not success:
-            print("Finished processing video.")
+            print("Finished MediaPipe processing.")
             break
         rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
         mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=rgb_frame)
@@ -73,20 +75,21 @@ def run_mediapipe(cap, frames, video_timestamps, intact_hand=None):
                 joints_df.loc[frame_id, (key, landmark_name, 'z')] = coordinates[
                 mergingHelper.map[key][landmark_name], 2]
 
+
         frame_id += 1
 
     return joints_df
 
 
 def interpolate_missing_joints(joints_df, frames):
-    new_columns = pd.MultiIndex.from_product([['Body'], ['HIPS', 'CHEST', 'SPINE', 'JAW'], ['x', 'y', 'z']])
+    new_columns = pd.MultiIndex.from_product([['Body'], ['HIPS', 'CHEST', 'SPINE', 'JAW', 'HEAD'], ['x', 'y', 'z']])
     joints_df = pd.concat([joints_df, pd.DataFrame(index=frames, columns=new_columns)], axis=1)
     for frame_id in frames:
         # use hand wrist instead of body wrist:
-        joints_df.loc[frame_id, idx["Body", "LEFT_WRIST", slice(None)]] = joints_df.loc[
-            idx[frame_id, ('Left', 'WRIST', slice(None))]].values
-        joints_df.loc[frame_id, idx["Body", "RIGHT_WRIST", slice(None)]] = joints_df.loc[
-            idx[frame_id, ('Right', 'WRIST', slice(None))]].values
+        joints_df.loc[frame_id, ("Body", "LEFT_WRIST", ['x', 'y'])] = joints_df.loc[
+            frame_id, ('Left', 'WRIST', ('x', 'y'))].values
+        joints_df.loc[frame_id, ("Body", "RIGHT_WRIST", ['x', 'y'])] = joints_df.loc[
+            frame_id, ('Right', 'WRIST', ['x', 'y'])].values
 
         # interpolate missing joints:
         joints_df.loc[frame_id, idx["Body", "HIPS", slice(None)]] = (joints_df.loc[idx[
@@ -102,14 +105,17 @@ def interpolate_missing_joints(joints_df, frames):
                                                                   joints_df.loc[
                                                                       idx[frame_id, ('Body', "HIPS", slice(None))]].values) / 2
         joints_df.loc[frame_id, idx["Body", "JAW", slice(None)]] = (joints_df.loc[idx[
-            frame_id, ('Body', 'NOSE', slice(None))]].values +
-                                                                joints_df.loc[
-                                                                    idx[frame_id, ('Body', "CHEST", slice(None))]].values) / 2
+            frame_id, ('Body', 'NOSE', slice(None))]].values * 2 + joints_df.loc[idx[frame_id, ('Body', "CHEST", slice(None))]].values) / 3
+        joints_df.loc[frame_id, idx["Body", "HEAD", slice(None)]] = (joints_df.loc[idx[
+            frame_id, ('Body', 'LEFT_EAR', slice(None))]].values + joints_df.loc[idx[frame_id, ('Body', "RIGHT_EAR", slice(None))]].values) / 2
+
+        joints_df.loc[frame_id, idx["Body", "HEAD", slice(None)]] = joints_df.loc[frame_id, idx["Body", "CHEST", slice(None)]].values + (joints_df.loc[frame_id, idx["Body", "HEAD", slice(None)]].values - joints_df.loc[frame_id, idx["Body", "CHEST", slice(None)]].values) * 1.4
+        joints_df.loc[frame_id, idx["Body", "CHEST", slice(None)]] = joints_df.loc[frame_id, idx["Body", "HIPS", slice(None)]].values + (joints_df.loc[frame_id, idx["Body", "CHEST", slice(None)]].values - joints_df.loc[frame_id, idx["Body", "HIPS", slice(None)]].values) * 2.8/2.4
+
     return joints_df
 
 
 def get_motionbert_input(joints_df, probing_point, max_len):
-    # TODO JAW SHOULD BE NOSE, NOSE SHOULD BE HEAD
     n_frames = len(joints_df.index)
     motionbert_input = np.zeros((n_frames, 17, 2))
     idx = pd.IndexSlice
@@ -174,35 +180,95 @@ if __name__ == "__main__":
 
     joints_df = interpolate_missing_joints(joints_df, frames)
     joints_df.to_parquet(join(experiment_dir, "mediapipe_output.parquet"))
+    #
+    # mb = MotionBert()
+    # motionbert_input = get_motionbert_input(joints_df, mb.probing_point, mb.model.maxlen)
+    #
+    # idx = pd.IndexSlice
+    # window_len = 10
+    # for i in tqdm(range(ceil(len(joints_df.index)/window_len))):
+    #     start = i*window_len
+    #     end = min((i+1)*window_len, len(joints_df.index))
+    #     keypoints = mb.get_3d_keypoints(
+    #         motionbert_input[start:(start + mb.model.maxlen)], vid_size)
+    #     for lm_i, landmark_name in enumerate(MOTIONBERT_MAP):
+    #         joints_df.loc[start:end - 1, idx['Body', landmark_name, slice(None)]] = keypoints[mb.probing_point:(mb.probing_point + end - start), lm_i] # todo investigate df indexing
+    #
+    # mergingHelper = MergingHelper()
+    # body_cols = MOTIONBERT_MAP
+    # side_cols = mergingHelper.map['Right'].keys()
+    #
+    # body_columns = pd.MultiIndex.from_product([['Body'], body_cols, ['x', 'y', 'z']])
+    # right_side_columns = pd.MultiIndex.from_product([['Right'], side_cols, ['x', 'y', 'z']])
+    # left_side_columns = pd.MultiIndex.from_product([['Left'], side_cols, ['x', 'y', 'z']])
+    #
+    # joints_df = update_left_right(joints_df)
+    #
+    # joints_df.to_parquet(join(experiment_dir, "motionbert_output.parquet"))
+    #
+    joints_df = pd.read_parquet(join(experiment_dir, "mediapipe_output.parquet"))
 
-    mb = MotionBert()
-    motionbert_input = get_motionbert_input(joints_df, mb.probing_point, mb.model.maxlen)
+    # get upper arm length and forearm length for the first 20 frames:
+    upper_arm_lengths = []
+    forearm_lengths = []
+    sides = [args.intact_hand.upper()] if args.intact_hand else ['RIGHT', 'LEFT']
+    for i in range(2):
+        for side in sides:
+            shoulder = joints_df.loc[i, ('Body', f'{side}_SHOULDER', ['x', 'y'])].values
+            elbow = joints_df.loc[i, ('Body', f'{side}_ELBOW', ['x', 'y'])].values
+            wrist = joints_df.loc[i, ('Body', f'{side}_WRIST', ['x', 'y'])].values
 
-    idx = pd.IndexSlice
-    for i in tqdm(range(len(joints_df.index))):
-        keypoints = mb.get_3d_keypoints(
-            motionbert_input[i:i + mb.model.maxlen], vid_size)
-        for lm_i, landmark_name in enumerate(MOTIONBERT_MAP):
-            joints_df.loc[i, idx[ 'Body', landmark_name, slice(None)]] = keypoints[lm_i]
+            upper_arm_lengths.append(np.linalg.norm(shoulder - elbow))
+            forearm_lengths.append(np.linalg.norm(elbow - wrist))
+    average_upper_arm_length = np.mean(np.array(upper_arm_lengths))
+    average_forearm_length = np.mean(np.array(forearm_lengths))
 
-    mergingHelper = MergingHelper()
-    body_cols = MOTIONBERT_MAP
-    side_cols = mergingHelper.map['Right'].keys()
+    for i in range(len(joints_df.index)):
+        shoulder = joints_df.loc[i, idx['Body', 'RIGHT_SHOULDER', slice(None)]].values - joints_df.loc[i, idx['Body', 'LEFT_SHOULDER', slice(None)]].values
+        spine = joints_df.loc[i, idx['Body', 'HIPS', slice(None)]].values - joints_df.loc[i, idx['Body', 'CHEST', slice(None)]].values
+        body_normal = np.cross(shoulder, spine)
+        body_normal = body_normal / np.linalg.norm(body_normal)
+        for side in ['RIGHT', 'LEFT']:
+            upper_arm = joints_df.loc[i, idx['Body', f'{side}_ELBOW', slice(None)]].values - joints_df.loc[i, idx['Body', f'{side}_SHOULDER', slice(None)]].values
+            forearm = joints_df.loc[i, idx['Body', f'{side}_WRIST', slice(None)]].values - joints_df.loc[i, idx['Body', f'{side}_ELBOW', slice(None)]].values
 
-    body_columns = pd.MultiIndex.from_product([['Body'], body_cols, ['x', 'y', 'z']])
-    right_side_columns = pd.MultiIndex.from_product([['Right'], side_cols, ['x', 'y', 'z']])
-    left_side_columns = pd.MultiIndex.from_product([['Left'], side_cols, ['x', 'y', 'z']])
+            # upper_arm_z_sign = np.sign(np.dot(upper_arm, body_normal))
+            # forearm_z_sign = np.sign(np.dot(upper_arm, body_normal))
+            upper_arm_z_sign = -1
+            forearm_z_sign = -1
 
-    joints_df = update_left_right(joints_df)
+            missing_len = average_upper_arm_length**2 - upper_arm[0]**2 - upper_arm[1]**2
+            if missing_len > 0:
+                upper_arm[2] = sqrt(missing_len)
+            else:
+                upper_arm[2] = 0
 
-    joints_df.to_parquet(join(experiment_dir, "motionbert_output.parquet"))
+            missing_len = average_forearm_length ** 2 - forearm[0] ** 2 - forearm[1] ** 2
+            if missing_len > 0:
+                forearm[2] = sqrt(missing_len)
+            else:
+                forearm[2] = 0
+
+            joints_df.loc[i, idx['Body', f'{side}_ELBOW', 'z']] = joints_df.loc[i, idx['Body', f'{side}_SHOULDER', 'z']] + upper_arm[2] * upper_arm_z_sign
+            joints_df.loc[i, idx['Body', f'{side}_WRIST', 'z']] = joints_df.loc[i, idx['Body', f'{side}_ELBOW', 'z']] + forearm[2] * forearm_z_sign
+            # todo update LR
+            # todo scaling depending on elbow z value (relative to shoulder / plane)
+            pass
+
+    joints_df.to_parquet(join(experiment_dir, "corrected.parquet"))
+
 
     if args.visualize:
         df2d = pd.read_parquet(join(experiment_dir, "mediapipe_output.parquet"))
-        df3d = pd.read_parquet(join(experiment_dir, "motionbert_output.parquet"))
+
+        df3d = pd.read_parquet(join(experiment_dir, "mediapipe_output.parquet"))
         vis = Visualization(experiment_dir, df2d, df3d)
 
-    motionbert_output = pd.read_parquet(join(experiment_dir, "motionbert_output.parquet"))
+        df3d = pd.read_parquet(join(experiment_dir, "corrected.parquet"))
+        vis = Visualization(experiment_dir, df2d, df3d, name_addition="_corrected")
+    #
+    # motionbert_output = pd.read_parquet(join(experiment_dir, "motionbert_output.parquet"))
+    corrected = pd.read_parquet(join(experiment_dir, "corrected.parquet"))
     anglesHelper = AnglesHelper()
-    angles_df = anglesHelper.getArmAngles(motionbert_output)
+    angles_df = anglesHelper.getArmAngles(corrected)
     angles_df.to_parquet(join(experiment_dir, "angles.parquet"))

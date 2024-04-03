@@ -32,12 +32,13 @@ logging.getLogger('matplotlib').setLevel(logging.WARNING)
 
 
 class Visualization():
-    def __init__(self, data_dir, df_2d, df_3d, alternative=True):
+    def __init__(self, data_dir, df_2d, df_3d, alternative=True, name_addition=""):
         """
         This function takes as an input the video and outputs a video 
         with the original video with the 2D joints and the 3D plot.  
         """
         self.data_dir = data_dir
+        self.name_addition = name_addition
         self.video_fnm = join(data_dir, 'cropped_video.mp4')
         self.df_2d = df_2d
         self.df_3d = df_3d
@@ -74,7 +75,7 @@ class Visualization():
         """
         Gets the 3d keyoints from the CSV by reading the headers.
         """
-        joint_names = ["NOSE", "LEFT_SHOULDER", "RIGHT_SHOULDER", "LEFT_ELBOW", "RIGHT_ELBOW",
+        joint_names = ["HEAD", "LEFT_SHOULDER", "RIGHT_SHOULDER", "LEFT_ELBOW", "RIGHT_ELBOW",
          "LEFT_WRIST", "RIGHT_WRIST", "LEFT_HIP", "RIGHT_HIP", "LEFT_KNEE",
          "RIGHT_KNEE", "LEFT_ANKLE", "RIGHT_ANKLE", "JAW", "CHEST", "SPINE", "HIPS" ]
         n_frames = len(self.df_3d.index)
@@ -93,7 +94,7 @@ class Visualization():
         """
         Gets the 2d keyoints froms the CSV by reading the headers. 
         """   
-        joint_names = ['HIPS', 'RIGHT_HIP', 'RIGHT_KNEE', 'RIGHT_ANKLE', 'LEFT_HIP', 'LEFT_KNEE', 'LEFT_ANKLE', 'SPINE', 'CHEST', 'JAW', 'NOSE', 'LEFT_SHOULDER', 'LEFT_ELBOW', 'LEFT_WRIST', 'RIGHT_SHOULDER', 'RIGHT_ELBOW', 'RIGHT_WRIST']
+        joint_names = ['HIPS', 'RIGHT_HIP', 'RIGHT_KNEE', 'RIGHT_ANKLE', 'LEFT_HIP', 'LEFT_KNEE', 'LEFT_ANKLE', 'SPINE', 'CHEST', 'JAW', 'HEAD', 'LEFT_SHOULDER', 'LEFT_ELBOW', 'LEFT_WRIST', 'RIGHT_SHOULDER', 'RIGHT_ELBOW', 'RIGHT_WRIST']
         hands = [
     'WRIST',
     'THUMB_CMC',
@@ -240,7 +241,7 @@ class Visualization():
         self.ax2 = fig.add_subplot(spec[2], projection='3d')
         self.ax2.set_title(f'3D Side View', fontweight='bold')
         self.ax2.set_box_aspect([1, 1, 1])
-        self.ax2.view_init(elev=70, azim=-90)
+        self.ax2.view_init(elev=0, azim=-180)
         self.ax2.set_xticklabels([])
         self.ax2.set_yticklabels([])
         self.ax2.set_zticklabels([])
@@ -277,7 +278,7 @@ class Visualization():
         # Joints order for plotting for 2D and 3D sequences
         self.l_joints2d = [13, 12, 11, 8, 7, 0, 4, 5, 6]
         self.r_joints2d = [16, 15, 14, 8, 9, 10, 9, 8, 14, 15, 16, 15, 14, 8, 7, 0, 1, 2, 3]
-        self.l_hand = [i + 17 for i in [0, 1, 2, 3, 4, 3, 2, 1, 0, 5, 6, 7, 8, 7, 6, 5, 9, 10, 11, 12, 11, 10, 9, 13, 17, 18, 19, 20, 19, 18, 17]]
+        self.l_hand = [i + 17 for i in [0, 1, 2, 3, 4, 3, 2, 1, 0, 5, 6, 7, 8, 7, 6, 5, 9, 10, 11, 12, 11, 10, 9, 13, 14, 15, 16, 15, 14, 13, 17, 18, 19, 20, 19, 18, 17]]
         self.r_hand = [i + 21 for i in self.l_hand]
         self.l_joints2d = self.l_hand + self.l_joints2d
         self.r_joints2d = self.r_hand + self.r_joints2d
@@ -291,6 +292,5 @@ class Visualization():
                                         frames = self.number_frames, interval = 1, 
                                         blit = False, repeat = False, cache_frame_data = False)
         writervideo = animation.FFMpegWriter(fps=self.fps, codec="libx264")
-        os.makedirs(os.path.join("../data", "output"), exist_ok=True) # todo
-        anim.save(join(self.data_dir, 'visualization.mp4'), writer = writervideo)
+        anim.save(join(self.data_dir, f'visualization{self.name_addition}.mp4'), writer = writervideo)
         logging.info('Video saved!')

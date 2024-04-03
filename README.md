@@ -45,6 +45,9 @@ use to customize its behavior:
 - `--camera`: This argument is optional with a default value of 0. It specifies the index of the camera to use for video
   capture.
 
+- `--preview`: This argument is optional. If used, the script will display a preview of the video capture instead of saving
+  the video.
+
 Here is an example of how to run the script:
 
 ```bash
@@ -58,6 +61,9 @@ EMG data is adapted accordingly.
 
 - `--data_dir`: This argument is required. It specifies the directory where the collected data is stored.
 
+- `--experiment_name`: This argument is required. It specifies the name of the experiment
+  to be used for saving the processed data.
+- 
 - `--crop`: This argument is optional. If used, the script will crop the video. If not used, the script will show a
   frame for visualization.
 

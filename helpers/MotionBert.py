@@ -17,7 +17,7 @@ np.random.seed(0)
 torch.manual_seed(0)
 
 MOTIONBERT_MAP = ['HIPS', 'RIGHT_HIP', 'RIGHT_KNEE', 'RIGHT_ANKLE', 'LEFT_HIP', 'LEFT_KNEE', 'LEFT_ANKLE', 'SPINE',
-                  'CHEST', 'JAW', 'NOSE', 'LEFT_SHOULDER', 'LEFT_ELBOW', 'LEFT_WRIST', 'RIGHT_SHOULDER', 'RIGHT_ELBOW',
+                  'CHEST', 'JAW', 'HEAD', 'LEFT_SHOULDER', 'LEFT_ELBOW', 'LEFT_WRIST', 'RIGHT_SHOULDER', 'RIGHT_ELBOW',
                   'RIGHT_WRIST']
 
 class MotionBert:
@@ -88,7 +88,7 @@ class MotionBert:
 
         output_3D = (output_3D_non_flip + output_3D_flip) / 2
 
-        output_3D = output_3D[0, self.probing_point, :, :]
+        output_3D = output_3D[0, :, :, :]
         post_out = output_3D.cpu().detach().numpy()
         return post_out
 
