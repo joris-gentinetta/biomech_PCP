@@ -47,8 +47,6 @@ class Visualization():
         video_frames, fps = self.get_video_frames()
         self.video_frames = video_frames
         self.fps = fps
-        self.x1_3d = self.get3djoints()
-        self.x1_2d = self.get2djoints()
         self.plotVideo()
         
 
@@ -94,7 +92,8 @@ class Visualization():
         """
         Gets the 2d keyoints froms the CSV by reading the headers. 
         """   
-        joint_names = ['HIPS', 'RIGHT_HIP', 'RIGHT_KNEE', 'RIGHT_ANKLE', 'LEFT_HIP', 'LEFT_KNEE', 'LEFT_ANKLE', 'SPINE', 'CHEST', 'JAW', 'HEAD', 'LEFT_SHOULDER', 'LEFT_ELBOW', 'LEFT_WRIST', 'RIGHT_SHOULDER', 'RIGHT_ELBOW', 'RIGHT_WRIST']
+        joint_names = ['HIPS', 'RIGHT_HIP', 'RIGHT_KNEE', 'RIGHT_ANKLE', 'LEFT_HIP', 'LEFT_KNEE', 'LEFT_ANKLE', 'SPINE',
+                       'CHEST', 'JAW', 'HEAD', 'LEFT_SHOULDER', 'LEFT_ELBOW', 'LEFT_WRIST', 'RIGHT_SHOULDER', 'RIGHT_ELBOW', 'RIGHT_WRIST']
         hands = [
     'WRIST',
     'THUMB_CMC',
@@ -134,42 +133,61 @@ class Visualization():
 
         return joints
 
+    def get_arm(self, side, i):
+        x = self.df_3d.loc[i, (side, ('SHOULDER', 'ELBOW', 'WRIST'), 'x')].values
+        y = self.df_3d.loc[i, (side, ('SHOULDER', 'ELBOW', 'WRIST'), 'y')].values
+        z = self.df_3d.loc[i, (side, ('SHOULDER', 'ELBOW', 'WRIST'), 'z')].values
+
+        return x, y, z
+
+    def get_body(self, i):
+        x = np.append(self.df_3d.loc[i, ('Body', ('RIGHT_HIP', 'LEFT_HIP', 'LEFT_SHOULDER', 'RIGHT_SHOULDER', 'RIGHT_HIP'), 'x')].values, self.df_3d.loc[i, ('Body', 'RIGHT_HIP', 'x')])
+        y = np.append(self.df_3d.loc[i, ('Body', ('RIGHT_HIP', 'LEFT_HIP', 'LEFT_SHOULDER', 'RIGHT_SHOULDER', 'RIGHT_HIP'), 'y')].values, self.df_3d.loc[i, ('Body', 'RIGHT_HIP', 'y')])
+        z = np.append(self.df_3d.loc[i, ('Body', ('RIGHT_HIP', 'LEFT_HIP', 'LEFT_SHOULDER', 'RIGHT_SHOULDER', 'RIGHT_HIP'), 'z')].values, self.df_3d.loc[i, ('Body', 'RIGHT_HIP', 'z')])
+
+        return x, y, z
+
     def update_lines(self, i):
-        # Fetch 2D data of the current frame and update it
-        xv1, yv1 = self.x1_2d[i][:, 0], self.x1_2d[i][:, 1]
-        self.clj12d[0].set_data(xv1.take(self.l_joints2d), yv1.take(self.l_joints2d))
-        self.crj12d[0].set_data(xv1.take(self.r_joints2d), yv1.take(self.r_joints2d)) 
+        x_r, y_r, z_r = self.get_arm('Right', i)
+        x_l, y_l, z_l = self.get_arm('Left', i)
+        x_b, y_b, z_b = self.get_body(i)
+
+
+        self.clj12d[0].set_data(x_l, y_l)
+        self.crj12d[0].set_data(x_r, y_r)
+        self.cbj12d[0].set_data(x_b, y_b)
+
         
         # Fetch 3D data of the current frame 
-        xs1, ys1, zs1 = self.x1_3d[i][:, 0], self.x1_3d[i][:, 2], -self.x1_3d[i][:, 1]
+        # xs1, ys1, zs1 = self.x1_3d[i][:, 0], self.x1_3d[i][:, 2], -self.x1_3d[i][:, 1]
+
+        # Update 3D data of the current frame
+        self.clj1[0].set_data_3d(x_l, z_l, -y_l)
+        self.crj1[0].set_data_3d(x_r, z_r, -y_r)
+        self.cbj1[0].set_data_3d(x_b, z_b, -y_b)
+
+        # Update 3D data of the current frame second view
+        self.clj2[0].set_data_3d(x_l, z_l, -y_l)
+        self.crj2[0].set_data_3d(x_r, z_r, -y_r)
+        self.cbj2[0].set_data_3d(x_b, z_b, -y_b)
 
         """
         Updates the limits if alternative is True, this parameter makes your grid adapt
         to the current maximum and minimum of the joints.
-        """  
+        """
         if self.alternative == True:
-            new_x = np.concatenate((xs1, ys1, zs1))
-            self.ax1.set_xlim3d([np.amin(new_x), np.amax(new_x)])
-            self.ax1.set_ylim3d([np.amin(new_x), np.amax(new_x)])
-            self.ax1.set_zlim3d([np.amin(new_x), np.amax(new_x)])
-            self.ax1.set_xlim3d([np.amin(new_x), np.amax(new_x)])
+            coords = np.concatenate((x_l, x_r, x_b, -y_l, -y_r, -y_b, z_l, z_r, z_b))
+            min_coord = np.amin(coords)
+            max_coord = np.amax(coords)
 
-               
-        # Update 3D data of the current frame 2nd view
-        self.clj1[0].set_data_3d(xs1.take(self.l_joints), ys1.take(self.l_joints), zs1.take(self.l_joints))
-        self.crj1[0].set_data_3d(xs1.take(self.r_joints), ys1.take(self.r_joints), zs1.take(self.r_joints))
+            self.ax1.set_xlim3d([min_coord, max_coord])
+            self.ax1.set_ylim3d([min_coord, max_coord])
+            self.ax1.set_zlim3d([min_coord, max_coord])
 
+            self.ax2.set_xlim3d([min_coord, max_coord])
+            self.ax2.set_ylim3d([min_coord, max_coord])
+            self.ax2.set_zlim3d([min_coord, max_coord])
 
-        if self.alternative == True:
-            new_x = np.concatenate((xs1, ys1, zs1))
-            self.ax2.set_xlim3d([np.amin(new_x), np.amax(new_x)])
-            self.ax2.set_ylim3d([np.amin(new_x), np.amax(new_x)])
-            self.ax2.set_zlim3d([np.amin(new_x), np.amax(new_x)])
-            self.ax2.set_xlim3d([np.amin(new_x), np.amax(new_x)])
-
-        # Update 3D data of the current frame
-        self.clj2[0].set_data_3d(xs1.take(self.l_joints), ys1.take(self.l_joints), zs1.take(self.l_joints))
-        self.crj2[0].set_data_3d(xs1.take(self.r_joints), ys1.take(self.r_joints), zs1.take(self.r_joints))
 
         # Update the video frame
         self.vplot.set_data(self.video_frames[i])
@@ -193,16 +211,16 @@ class Visualization():
         
         # Linewidth for joints
         lw = 1
-        
-        # Fetch and plot 2D data
-        xv1, yv1 = self.x1_2d[i][:, 0], self.x1_2d[i][:, 1]
-        self.clj12d = axv.plot(xv1.take(self.l_joints2d), yv1.take(self.l_joints2d), c = (0,0,1), linewidth = lw)
-        self.crj12d = axv.plot(xv1.take(self.r_joints2d), yv1.take(self.r_joints2d), c = (1,0,0), linewidth = lw)
 
-        
-        
-        # Fetch 3D data (Axes are different for plotting purposes)
-        xs1, ys1, zs1 = self.x1_3d[i][:, 0], self.x1_3d[i][:, 2], -self.x1_3d[i][:, 1]
+        x_l, y_l, z_l = self.get_arm('Left', i)
+        x_r, y_r, z_r = self.get_arm('Right', i)
+        x_b, y_b, z_b = self.get_body(i)
+
+        # Fetch and plot 2D data
+        self.clj12d = axv.plot(x_l, y_l, c = (1,0,0), linewidth = lw)
+        self.crj12d = axv.plot(x_r, y_l, c = (0,1,0), linewidth = lw)
+        self.cbj12d = axv.plot(x_b, y_b, c = (0,0,0), linewidth = lw)
+
         
         # 3D plots 
         self.ax1=fig.add_subplot(spec[1], projection='3d')
@@ -212,29 +230,6 @@ class Visualization():
         self.ax1.set_xticklabels([])
         self.ax1.set_yticklabels([])
         self.ax1.set_zticklabels([])
-
-        """
-        Define the limits for the grid, this parameter makes your grid adapt
-        to the current maximum and minimum of the joints.
-        """
-        if self.alternative == True: 
-            # The current min/max of the skeleton joints 
-            new_x = np.concatenate((xs1.take(self.r_joints+self.l_joints), ys1.take(self.r_joints+self.l_joints), zs1.take(self.r_joints+self.l_joints)))
-            self.ax1.set_xlim3d([np.amin(new_x), np.amax(new_x)])
-            self.ax1.set_ylim3d([np.amin(new_x), np.amax(new_x)])
-            self.ax1.set_zlim3d([np.amin(new_x), np.amax(new_x)])
-            
-        else:
-            # The global min/max of the whole sequence #todo only take max of meaningful joints
-            new_x = np.concatenate((self.x1_3d[:][0], self.x1_3d[:][2], -self.x1_3d[:][1])) 
-            self.ax1.set_xlim3d([np.amin(new_x), np.amax(new_x)])
-            self.ax1.set_ylim3d([np.amin(new_x), np.amax(new_x)])
-            self.ax1.set_zlim3d([np.amin(new_x), np.amax(new_x)])      
-        
-        # Plot 3D joints
-        self.clj1 = self.ax1.plot(xs1.take(self.l_joints), ys1.take(self.l_joints), zs1.take(self.l_joints),c = (0,0,1), linewidth = lw, zdir = 'z')
-        self.crj1 = self.ax1.plot(xs1.take(self.r_joints), ys1.take(self.r_joints), zs1.take(self.r_joints), c = (1,0,0), linewidth = lw, zdir = 'z')
-
 
 
         # 3D plots 2nd view
@@ -246,29 +241,35 @@ class Visualization():
         self.ax2.set_yticklabels([])
         self.ax2.set_zticklabels([])
 
-        """
-        Define the limits for the grid, this parameter makes your grid adapt
-        to the current maximum and minimum of the joints.
-        """
+
         if self.alternative == True:
             # The current min/max of the skeleton joints
-            new_x = np.concatenate((xs1, ys1, zs1))
-            self.ax2.set_xlim3d([np.amin(new_x), np.amax(new_x)])
-            self.ax2.set_ylim3d([np.amin(new_x), np.amax(new_x)])
-            self.ax2.set_zlim3d([np.amin(new_x), np.amax(new_x)])
+            coords = np.concatenate((x_l, x_r, x_b, -y_l, -y_r, -y_b, z_l, z_r, z_b))
+            min_coord = np.amin(coords)
+            max_coord = np.amax(coords)
 
         else:
             # The global min/max of the whole sequence
-            new_x = np.concatenate((self.x1_3d[:][0], self.x1_3d[:][2], -self.x1_3d[:][1]))
-            self.ax2.set_xlim3d([np.amin(new_x), np.amax(new_x)])
-            self.ax2.set_ylim3d([np.amin(new_x), np.amax(new_x)])
-            self.ax2.set_zlim3d([np.amin(new_x), np.amax(new_x)])
+            max_coord = self.df_3d.loc[:, (slice(None), slice(None), slice(None))].max().max()
+            min_coord = self.df_3d.loc[:, (slice(None), slice(None), slice(None))].min().min()
 
-            # Plot 3D joints
-        self.clj2 = self.ax2.plot(xs1.take(self.l_joints), ys1.take(self.l_joints), zs1.take(self.l_joints),
-                                  c=(0, 0, 1), linewidth=lw, zdir='z')
-        self.crj2 = self.ax2.plot(xs1.take(self.r_joints), ys1.take(self.r_joints), zs1.take(self.r_joints),
-                                  c=(1, 0, 0), linewidth=lw, zdir='z')
+        self.ax2.set_xlim3d([min_coord, max_coord])
+        self.ax2.set_ylim3d([min_coord, max_coord])
+        self.ax2.set_zlim3d([min_coord, max_coord])
+
+        self.ax1.set_xlim3d([min_coord, max_coord])
+        self.ax1.set_ylim3d([min_coord, max_coord])
+        self.ax1.set_zlim3d([min_coord, max_coord])
+
+        # Plot 3D joints
+        self.clj1 = self.ax1.plot(x_l, z_l, -y_l, c=(1, 0, 0), linewidth=lw, zdir='z')
+        self.crj1 = self.ax1.plot(x_r, z_r, -y_r, c=(0, 1, 0), linewidth=lw, zdir='z')
+        self.cbj1 = self.ax1.plot(x_b, z_b, -y_b, c=(0,0,0), linewidth=lw, zdir='z')
+
+        # Plot 3D joints
+        self.clj2 = self.ax2.plot(x_l, z_l, -y_l, c=(1, 0, 0), linewidth=lw, zdir='z')
+        self.crj2 = self.ax2.plot(x_r, z_r, -y_r, c=(0, 1, 0), linewidth=lw, zdir='z')
+        self.cbj2 = self.ax2.plot(x_b, z_b, -y_b, c=(0,0,0), linewidth=lw, zdir='z')
 
         logging.info("Plotting...")
         return fig 
