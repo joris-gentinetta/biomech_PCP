@@ -45,7 +45,7 @@ def run_mediapipe(cap, frames, video_timestamps, intact_hand=None, scales = None
     columns = body_columns.append(right_hand_columns).append(left_hand_columns)
     joints_df = pd.DataFrame(index=frames, columns=columns)
 
-    roi_half_size = 100
+    roi_half_size = 200
     print("MediaPipe processing...")
     for frame_id in tqdm(frames):
         success, frame = cap.read()
@@ -72,9 +72,9 @@ def run_mediapipe(cap, frames, video_timestamps, intact_hand=None, scales = None
             y_end = min(scales[1], wrist[1] + roi_half_size)
             cropped_frame = frame[y_start:y_end, x_start:x_end]
             rgb_cropped_frame = cv2.cvtColor(cropped_frame, cv2.COLOR_BGR2RGB)
-
-            plt.imshow(rgb_cropped_frame)
-            plt.show()
+            if frame_id == 1:
+                plt.imshow(rgb_cropped_frame)
+                plt.show()
 
             mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=rgb_cropped_frame)
 
@@ -182,13 +182,14 @@ if __name__ == "__main__":
         missing_len_upper_arm = average_upper_arm_length ** 2 - upper_arm[:, 0] ** 2 - upper_arm[:, 1] ** 2
         missing_len_forearm = average_forearm_length ** 2 - forearm[:, 0] ** 2 - forearm[:, 0] ** 2
 
-        # Use np.where to conditionally assign sqrt(missing_len) or 0 to upper_arm[2] and forearm[2]
-        upper_arm[:, 2] = np.where(missing_len_upper_arm > 0, np.sqrt(missing_len_upper_arm), 0)
-        forearm[:, 2] = np.where(missing_len_forearm > 0, np.sqrt(missing_len_forearm), 0)
+        missing_len_upper_arm = np.where(missing_len_upper_arm > 0, missing_len_upper_arm, 0)
+        missing_len_forearm = np.where(missing_len_forearm > 0, missing_len_forearm, 0)
+
+        upper_arm[:, 2] = np.sqrt(missing_len_upper_arm)
+        forearm[:, 2] = np.sqrt(missing_len_forearm)
 
         joints_df.loc[:, idx['Body', f'{side.upper()}_ELBOW', 'z']] = joints_df.loc[:, idx[
-                                                                                           'Body', f'{side.upper()}_SHOULDER', 'z']].values + upper_arm[
-                                                                                                                                              :, 2] * -1
+                                                                                           'Body', f'{side.upper()}_SHOULDER', 'z']].values + upper_arm[ :, 2] * -1
         joints_df.loc[:, idx['Body', f'{side.upper()}_WRIST', 'z']] = joints_df.loc[:, idx[
                                                                                            'Body', f'{side.upper()}_ELBOW', 'z']].values + forearm[:, 2] * -1
 
