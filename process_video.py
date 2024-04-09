@@ -13,7 +13,7 @@ pd.options.mode.copy_on_write = True
 idx = pd.IndexSlice
 
 from tqdm import tqdm
-from helpers.utils import MergingHelper, AnglesHelper
+from helpers.utils import AnglesHelper
 from helpers.visualization import Visualization
 
 import matplotlib.pyplot as plt
@@ -145,68 +145,68 @@ if __name__ == "__main__":
     frames = range(0, int(n_frames))
     mediapipe_landmark_names = pose.PoseLandmark._member_names_
 
-    video_timestamps = np.load(join(experiment_dir, "cropped_timestamps.npy"))
-    joints_df = run_mediapipe(cap, frames, video_timestamps, args.intact_hand, scales)
-    cap.release()
-
-    joints_df = update_left_right(joints_df)
-    joints_df.to_parquet(join(experiment_dir, "mediapipe_output.parquet"))
-
-    # get upper arm length and forearm length:
-    upper_arm_lengths = []
-    forearm_lengths = []
-    sides = [args.intact_hand] if args.intact_hand else ['Right', 'Left']
-
-    for i in args.plane_frames:
-        for side in sides:
-            shoulder = joints_df.loc[i, (side, 'SHOULDER', ['x', 'y'])].values
-            elbow = joints_df.loc[i, (side, 'ELBOW', ['x', 'y'])].values
-            wrist = joints_df.loc[i, (side, 'WRIST', ['x', 'y'])].values
-
-            upper_arm_lengths.append(np.linalg.norm(shoulder - elbow))
-            forearm_lengths.append(np.linalg.norm(elbow - wrist))
-    average_upper_arm_length = np.mean(np.array(upper_arm_lengths))
-    average_forearm_length = np.mean(np.array(forearm_lengths))
-
-    print('Correcting Z values...')
-    for side in sides:
-        # Calculate upper_arm and forearm for all rows at once
-        upper_arm = joints_df.loc[:, idx[side, 'ELBOW', slice(None)]].values - joints_df.loc[:,
-                                                                                idx[side, 'SHOULDER', slice(None)]].values
-        forearm = joints_df.loc[:, idx[side, 'WRIST', slice(None)]].values - joints_df.loc[:,
-                                                                              idx[side, 'ELBOW', slice(None)]].values
-        upper_arm = upper_arm.astype(np.float64)
-        forearm = forearm.astype(np.float64)
-
-        # Calculate missing_len for upper_arm and forearm for all rows at once
-        missing_len_upper_arm = average_upper_arm_length ** 2 - upper_arm[:, 0] ** 2 - upper_arm[:, 1] ** 2
-        missing_len_forearm = average_forearm_length ** 2 - forearm[:, 0] ** 2 - forearm[:, 0] ** 2
-
-        missing_len_upper_arm = np.where(missing_len_upper_arm > 0, missing_len_upper_arm, 0)
-        missing_len_forearm = np.where(missing_len_forearm > 0, missing_len_forearm, 0)
-
-        upper_arm[:, 2] = np.sqrt(missing_len_upper_arm)
-        forearm[:, 2] = np.sqrt(missing_len_forearm)
-
-        joints_df.loc[:, idx['Body', f'{side.upper()}_ELBOW', 'z']] = joints_df.loc[:, idx[
-                                                                                           'Body', f'{side.upper()}_SHOULDER', 'z']].values + upper_arm[ :, 2] * -1
-        joints_df.loc[:, idx['Body', f'{side.upper()}_WRIST', 'z']] = joints_df.loc[:, idx[
-                                                                                           'Body', f'{side.upper()}_ELBOW', 'z']].values + forearm[:, 2] * -1
-
-    joints_df = update_left_right(joints_df)
-    joints_df.to_parquet(join(experiment_dir, "corrected.parquet"))
-
-
-    if args.visualize:
-        df2d = pd.read_parquet(join(experiment_dir, "mediapipe_output.parquet"))
-
-        df3d = pd.read_parquet(join(experiment_dir, "mediapipe_output.parquet"))
-        vis = Visualization(experiment_dir, df2d, df3d, alternative=False)
-
-        df3d = pd.read_parquet(join(experiment_dir, "corrected.parquet"))
-        vis = Visualization(experiment_dir, df2d, df3d, name_addition="_corrected")
-
-
+    # video_timestamps = np.load(join(experiment_dir, "cropped_timestamps.npy"))
+    # joints_df = run_mediapipe(cap, frames, video_timestamps, args.intact_hand, scales)
+    # cap.release()
+    #
+    # joints_df = update_left_right(joints_df)
+    # joints_df.to_parquet(join(experiment_dir, "mediapipe_output.parquet"))
+    #
+    # # get upper arm length and forearm length:
+    # upper_arm_lengths = []
+    # forearm_lengths = []
+    # sides = [args.intact_hand] if args.intact_hand else ['Right', 'Left']
+    #
+    # for i in args.plane_frames:
+    #     for side in sides:
+    #         shoulder = joints_df.loc[i, (side, 'SHOULDER', ['x', 'y'])].values
+    #         elbow = joints_df.loc[i, (side, 'ELBOW', ['x', 'y'])].values
+    #         wrist = joints_df.loc[i, (side, 'WRIST', ['x', 'y'])].values
+    #
+    #         upper_arm_lengths.append(np.linalg.norm(shoulder - elbow))
+    #         forearm_lengths.append(np.linalg.norm(elbow - wrist))
+    # average_upper_arm_length = np.mean(np.array(upper_arm_lengths))
+    # average_forearm_length = np.mean(np.array(forearm_lengths))
+    #
+    # print('Correcting Z values...')
+    # for side in sides:
+    #     # Calculate upper_arm and forearm for all rows at once
+    #     upper_arm = joints_df.loc[:, idx[side, 'ELBOW', slice(None)]].values - joints_df.loc[:,
+    #                                                                             idx[side, 'SHOULDER', slice(None)]].values
+    #     forearm = joints_df.loc[:, idx[side, 'WRIST', slice(None)]].values - joints_df.loc[:,
+    #                                                                           idx[side, 'ELBOW', slice(None)]].values
+    #     upper_arm = upper_arm.astype(np.float64)
+    #     forearm = forearm.astype(np.float64)
+    #
+    #     # Calculate missing_len for upper_arm and forearm for all rows at once
+    #     missing_len_upper_arm = average_upper_arm_length ** 2 - upper_arm[:, 0] ** 2 - upper_arm[:, 1] ** 2
+    #     missing_len_forearm = average_forearm_length ** 2 - forearm[:, 0] ** 2 - forearm[:, 0] ** 2
+    #
+    #     missing_len_upper_arm = np.where(missing_len_upper_arm > 0, missing_len_upper_arm, 0)
+    #     missing_len_forearm = np.where(missing_len_forearm > 0, missing_len_forearm, 0)
+    #
+    #     upper_arm[:, 2] = np.sqrt(missing_len_upper_arm)
+    #     forearm[:, 2] = np.sqrt(missing_len_forearm)
+    #
+    #     joints_df.loc[:, idx['Body', f'{side.upper()}_ELBOW', 'z']] = joints_df.loc[:, idx[
+    #                                                                                        'Body', f'{side.upper()}_SHOULDER', 'z']].values + upper_arm[ :, 2] * -1
+    #     joints_df.loc[:, idx['Body', f'{side.upper()}_WRIST', 'z']] = joints_df.loc[:, idx[
+    #                                                                                        'Body', f'{side.upper()}_ELBOW', 'z']].values + forearm[:, 2] * -1
+    #
+    # joints_df = update_left_right(joints_df)
+    # joints_df.to_parquet(join(experiment_dir, "corrected.parquet"))
+    #
+    #
+    # if args.visualize:
+    #     df2d = pd.read_parquet(join(experiment_dir, "mediapipe_output.parquet"))
+    #
+    #     df3d = pd.read_parquet(join(experiment_dir, "mediapipe_output.parquet"))
+    #     vis = Visualization(experiment_dir, df2d, df3d, alternative=False)
+    #
+    #     df3d = pd.read_parquet(join(experiment_dir, "corrected.parquet"))
+    #     vis = Visualization(experiment_dir, df2d, df3d, name_addition="_corrected")
+    #
+    #
 
     corrected = pd.read_parquet(join(experiment_dir, "corrected.parquet"))
     anglesHelper = AnglesHelper()
