@@ -41,7 +41,7 @@ logging.getLogger('matplotlib').setLevel(logging.WARNING)
 
 
 class Visualization():
-    def __init__(self, data_dir, df_2d, df_3d, alternative=True, name_addition=""):
+    def __init__(self, data_dir, df_3d, alternative=True, name_addition=""):
         """
         This function takes as an input the video and outputs a video 
         with the original video with the 2D joints and the 3D plot.  
@@ -49,13 +49,11 @@ class Visualization():
         self.data_dir = data_dir
         self.name_addition = name_addition
         self.video_fnm = join(data_dir, 'cropped_video.mp4')
-        self.df_2d = df_2d
-        # self.df_3d = df_3d
         self.df_3d = df_3d.copy().sort_index(axis=1)
         self.df_3d.loc[:, idx[slice(None), slice(None), 'z']] = self.df_3d.loc[:, idx[slice(None), slice(None), 'z']] - np.min(self.df_3d.loc[:, idx[slice(None), slice(None), 'z']]) - 500
         # self.df_3d.loc[:, idx[slice(None), slice(None), 'x']] = self.df_3d.loc[:, idx[slice(None), slice(None), 'x']] - np.min(self.df_3d.loc[:, idx[slice(None), slice(None), 'x']])
         # self.df_3d.loc[:, idx[slice(None), slice(None), 'y']] = self.df_3d.loc[:, idx[slice(None), slice(None), 'y']] - np.min(self.df_3d.loc[:, idx[slice(None), slice(None), 'y']])
-        self.number_frames = len(self.df_2d.index)
+        self.number_frames = len(self.df_3d.index)
         self.alternative = alternative
         video_frames, fps = self.get_video_frames()
         self.video_frames = video_frames

@@ -1,3 +1,5 @@
+import os.path
+
 import numpy as np
 import math
 import zmq
@@ -78,8 +80,45 @@ class AnglesHelper:
 
         return max(pipAng, mcpAng)
 
+    def get_mapping(self):
+        if os.path.exists('mapping.npz'):
+            mapping = np.load('mapping.npz')
+            coords = mapping['coords']
+            angles = mapping['angles']
+            pinky_to_index_sim = mapping['pinky_to_index_sim'][0]
+        else:
+            coords = []
+            angles = []
 
-    def getArmAngles(self, output_df):
+            physicsClient = p.connect(p.DIRECT)
+            p.setGravity(0, 0, -10)
+            handStartPos = [0, 0, 0]
+            handStartOrientation = p.getQuaternionFromEuler([0, 0, 0])
+            handId = p.loadURDF("URDF/ability_hand_left_large.urdf", handStartPos, handStartOrientation,
+                                flags=p.URDF_USE_SELF_COLLISION, useFixedBase=True)
+            joint_limits_rot = p.getJointInfo(handId, 13)[8: 10]
+            joint_limits_flex = p.getJointInfo(handId, 14)[8: 10]
+            for rot in np.linspace(joint_limits_rot[0], joint_limits_rot[1], 100):
+                for flex in np.linspace(joint_limits_flex[0], joint_limits_flex[1], 100):
+                    p.resetJointState(handId, 13, rot)
+                    p.resetJointState(handId, 14, flex)
+                    p.stepSimulation()
+                    # get coordinates of the thumb tip
+                    thumb_tip = p.getLinkState(handId, 15)[0]
+                    coords.append(thumb_tip)
+                    angles.append((rot, flex))
+
+            index_q1 = p.getLinkState(handId, 1)[0]
+            pinky_q1 = p.getLinkState(handId, 10)[0]
+            pinky_to_index_sim = index_q1[0] - pinky_q1[0]
+            coords = np.array(coords)
+            angles = np.array(angles)
+            np.savez('mapping.npz', coords=coords, angles=angles, pinky_to_index_sim=np.array([pinky_to_index_sim]))
+
+        return coords, angles, pinky_to_index_sim
+
+
+    def getArmAngles(self, output_df, sides):
         angle_names = ['indexAng', 'midAng', 'ringAng', 'pinkyAng', 'thumbInPlaneAng', 'thumbOutPlaneAng', 'elbowAngle', 'wristRot',
                        'wristFlex']
         hand_names = ['Left', 'Right']
@@ -87,23 +126,11 @@ class AnglesHelper:
         columns = pd.MultiIndex.from_product([hand_names, angle_names])
         angles_df = pd.DataFrame(index=output_df.index, columns=columns)
 
-        physicsClient = p.connect(p.DIRECT)
+        coords, angles, pinky_to_index_sim = self.get_mapping()
 
-        p.setGravity(0, 0, -10)
-
-        handStartPos = [0, 0, 0]
-        handStartOrientation = p.getQuaternionFromEuler([0, 0, 0])
-        handId = p.loadURDF("URDF/ability_hand_left_large.urdf", handStartPos, handStartOrientation,
-                            flags=p.URDF_USE_SELF_COLLISION, useFixedBase=True)
-
-
-        index_q1 = p.getLinkState(handId, 1)[0]
-        pinky_q1 = p.getLinkState(handId, 10)[0]
-        pinky_to_index_sim = index_q1[0] - pinky_q1[0]
-
-
+        print('Calculating angles...')
         for i in tqdm(angles_df.index):
-            for side in ['Left', 'Right']:
+            for side in sides:
                 body_wrist = output_df.loc[i, (side, 'BODY_WRIST', ['x', 'y', 'z'])].values
                 hand_wrist = output_df.loc[i, (side, 'WRIST', ['x', 'y', 'z'])].values
                 thumb_tip = output_df.loc[i, (side, 'THUMB_TIP', ['x', 'y', 'z'])].values
@@ -151,40 +178,65 @@ class AnglesHelper:
                 angles_df.loc[i, (side, 'elbowAngle')] = self.angleBetweenVectors(lower_arm, upper_arm)
 
                 ### Thumb ###########
-                scaler = pinky_to_index_sim / math.sqrt(np.dot((index - pinky), (index - pinky)))
+                try:
+                    scaler = pinky_to_index_sim / math.sqrt(np.dot((index - pinky), (index - pinky)))
 
-                y_axis = palmNormal
-                y = np.dot(thumb_tip, y_axis)
-                y = y - np.dot(hand_wrist, y_axis)
+                    y_axis = palmNormal
+                    if side == 'Left':
+                        y_axis = -y_axis
+                    y = np.dot(thumb_tip, y_axis)
+                    y = y - np.dot(hand_wrist, y_axis)
 
-                x_axis = index - pinky
-                x_axis /= np.linalg.norm(x_axis)
-                x = np.dot(thumb_tip, x_axis)
-                x = x - np.dot((ring + middle)/2, x_axis)
+                    x_axis = index - pinky
+                    x_axis /= np.linalg.norm(x_axis)
+                    x = np.dot(thumb_tip, x_axis)
+                    x = x - np.dot((ring + middle)/2, x_axis)
 
-                z_axis = (ring + middle)/2 - hand_wrist
-                z_axis /= np.linalg.norm(z_axis)
-                z = np.dot(thumb_tip, z_axis)
-                z = z - np.dot(hand_wrist, z_axis)
+                    z_axis = (ring + middle)/2 - hand_wrist
+                    z_axis /= np.linalg.norm(z_axis)
+                    z = np.dot(thumb_tip, z_axis)
+                    z = z - np.dot(hand_wrist, z_axis)
 
-                x *= scaler
-                y *= scaler
-                z *= scaler
-                targetPos = (x, y, z)
+                    x *= scaler
+                    y *= scaler
+                    z *= scaler
 
-                jointAngles = p.calculateInverseKinematics(handId, 15, targetPos,
-                                                           maxNumIterations=1000, residualThreshold=0.0000001)
+                    # y*=1.5
 
-                angles_df.loc[i, (side, 'thumbOutPlaneAng')] = jointAngles[8] # thumb `rotation` angle
-                angles_df.loc[i, (side, 'thumbInPlaneAng')] = jointAngles[9] # thumb flexion angle
+                    # print(x, y, z)
+                    targetPos = (x, y, z)
+                    angles_df.loc[i, (side, 'thumb_x')] = x
+                    angles_df.loc[i, (side, 'thumb_y')] = y
+                    angles_df.loc[i, (side, 'thumb_z')] = z
+
+
+                    # jointAngles = p.calculateInverseKinematics(handId, 15, targetPos,
+                    #                                            maxNumIterations=10000, residualThreshold=0.0000001)
+                    # angles_df.loc[i, (side, 'thumbOutPlaneAng')] = jointAngles[8] # thumb `rotation` angle
+                    # angles_df.loc[i, (side, 'thumbInPlaneAng')] = jointAngles[9] # thumb flexion angle
+
+                    distances = np.linalg.norm(coords - np.array(targetPos), axis=1)
+                    idx = np.argmin(distances)
+                    print(angles[idx][0], angles[idx][1])
+                    angles_df.loc[i, (side, 'thumbInPlaneAng')] = angles[idx][0]
+                    angles_df.loc[i, (side, 'thumbOutPlaneAng')] = angles[idx][1]
+
+
+
+                except Exception as e:
+                    print(i, side, f'Error: {e}')
+                    angles_df.loc[i, (side, 'thumbOutPlaneAng')] = 0  # thumb `rotation` angle
+                    angles_df.loc[i, (side, 'thumbInPlaneAng')] = 0  # thumb flexion angle
 
                 ### Hand ###########
                 angles_df.loc[i, (side, 'indexAng')] = self.calculateIndex(output_df, i, side)
                 angles_df.loc[i, (side, 'midAng')] = self.calculateMiddle(output_df, i, side)
                 angles_df.loc[i, (side, 'ringAng')] = self.calculateRing(output_df, i, side)
                 angles_df.loc[i, (side, 'pinkyAng')] = self.calculatePinky(output_df, i, side)
-
+        angles_df.fillna(0, inplace=True)
         return angles_df
+
+
 
 
 

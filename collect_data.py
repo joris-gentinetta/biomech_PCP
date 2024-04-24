@@ -57,6 +57,8 @@ def capture_video(output_dir):
     fourcc = cv2.VideoWriter_fourcc(*'mp4v')
     out = cv2.VideoWriter(join(output_dir, 'video.mp4'), fourcc, 30, (frame_width, frame_height))
     timestamps = []
+    ret, frame = cap.read()  # skip the first frame
+
     while True:
         frame_time = time.time()
         ret, frame = cap.read()
