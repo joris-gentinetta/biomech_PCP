@@ -9,9 +9,10 @@ import cv2
 import numpy as np
 
 import sys
+from helpers.EMGClass import EMG
+
 try:
     sys.path.append('/home/haptix/haptix/haptix_controller/handsim/src/')
-    from EMGClass import EMG
 except:
     print("EMGClass not found")
 
@@ -55,7 +56,7 @@ def capture_video(output_dir):
     frame_height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
 
     fourcc = cv2.VideoWriter_fourcc(*'mp4v')
-    out = cv2.VideoWriter(join(output_dir, 'video.mp4'), fourcc, 30, (frame_width, frame_height))
+    out = cv2.VideoWriter(join(output_dir, 'video.mp4'), fourcc, 60, (frame_width, frame_height))
     timestamps = []
     ret, frame = cap.read()  # skip the first frame
 
@@ -94,6 +95,7 @@ def capture_EMG(save_type, output_dir, sampling_rate, dummy_emg=False):
         emg.startCommunication()
         emgHistory = np.empty((1, emg.numElectrodes))
 
+        emgTime = emg.OS_time
         while not stop_video:
             emg_timestamps.append(time.time())
 
@@ -107,6 +109,13 @@ def capture_EMG(save_type, output_dir, sampling_rate, dummy_emg=False):
                 thisEMG = np.asarray(emg.muscleAct)
             else:
                 raise ValueError(f'Improper EMG saving type {save_type}')
+
+            if abs(emg.OS_time - emgTime)/1e6 > 0.1:
+                # alignment lost
+                print(f'Read time: {emg.OS_time}, expected time: {emgTime}')
+                raise ValueError('EMG alignment lost. Please restart the EMG board and the script.')
+            else:
+                emgTime = emg.OS_time
 
             emgHistory = np.concatenate((emgHistory, thisEMG[None, :]), axis=0)
             time.sleep(delay_time)
@@ -124,9 +133,9 @@ if __name__ == '__main__':
     parser.add_argument('--emg_sampling_rate', type=int, default=1000, help='EMG sampling rate')
     parser.add_argument('--dummy_emg', action='store_true', help='Use this flag for testing without the EMG board')
     parser.add_argument('--camera', type=int, help='Camera Index', default=0)
-    parser.add_argument('--preview', action='store_true', help='Show the video preview')
+    parser.add_argument('--record', action='store_true', help='Record video')
     args = parser.parse_args()
-    if args.preview:
+    if not args.record:
         print('Preview started. No data is being saved! Press Ctrl+C to stop the video.')
         show_video()
         exit(0)

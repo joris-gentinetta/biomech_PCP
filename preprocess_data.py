@@ -125,3 +125,7 @@ if __name__ == '__main__':
 
     else:
         show_frame(cap, frame_number=args.frame_number)
+        # run video_gui.py:
+        import subprocess
+        subprocess.run(['python', 'video_gui.py', '--file', join(args.data_dir, 'video.mp4')])
+

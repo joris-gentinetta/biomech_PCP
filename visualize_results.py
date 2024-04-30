@@ -40,7 +40,8 @@ if __name__ == "__main__":
 
     handStartPos = [0, 0, 0]
     handStartOrientation = p.getQuaternionFromEuler([0, 0, 0])
-    handId = p.loadURDF("URDF/ability_hand_left_large.urdf", handStartPos, handStartOrientation,
+    urdf_path = "URDF/ability_hand_left_large.urdf" if args.intact_hand == 'Left' else "URDF/ability_hand_right_large.urdf"
+    handId = p.loadURDF(urdf_path, handStartPos, handStartOrientation,
                         flags=p.URDF_USE_SELF_COLLISION, useFixedBase=True)
 
     visual_shape_id = p.createVisualShape(shapeType=p.GEOM_SPHERE, radius=0.01, rgbaColor=[1, 0, 0, 1])

@@ -24,7 +24,7 @@ canvas = tk.Canvas(window, width=width, height=height)
 canvas.pack()
 
 # Create a Scale widget to act as the slider
-slider = tk.Scale(window, from_=0, to=total_frames, length=600, orient=tk.HORIZONTAL)
+slider = tk.Scale(window, from_=0, to=total_frames-1, length=600, orient=tk.HORIZONTAL)
 slider.pack()
 from PIL import Image
 
