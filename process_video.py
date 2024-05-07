@@ -137,6 +137,7 @@ if __name__ == "__main__":
 
     import time
     start = time.time()
+    sides = [args.intact_hand] if args.intact_hand else ['Right', 'Left']
     experiment_dir = join(args.data_dir, 'experiments', args.experiment_name)
     input_video_path = join(experiment_dir, "cropped_video.mp4")
 
@@ -163,7 +164,6 @@ if __name__ == "__main__":
     # get upper arm length and forearm length:
     upper_arm_lengths = []
     forearm_lengths = []
-    sides = [args.intact_hand] if args.intact_hand else ['Right', 'Left']
 
     for i in args.plane_frames:
         for side in sides:

@@ -14,12 +14,9 @@
 # All rights reserved 
 # --------------------------------------------------------------------------------
 
-#  Code for visualization of a single output
 
-#todo make body_wrist use x, y of wrist
-
-import os
 import logging
+import cv2
 import sys
 from tqdm import tqdm
 import numpy as np
@@ -55,31 +52,41 @@ class Visualization():
         # self.df_3d.loc[:, idx[slice(None), slice(None), 'y']] = self.df_3d.loc[:, idx[slice(None), slice(None), 'y']] - np.min(self.df_3d.loc[:, idx[slice(None), slice(None), 'y']])
         self.number_frames = len(self.df_3d.index)
         self.alternative = alternative
-        video_frames, fps = self.get_video_frames()
-        self.video_frames = video_frames
-        self.fps = fps
+        # video_frames, fps = self.get_video_frames()
+        # self.video_frames = video_frames
+        # self.fps = fps
+        self.vcap, self.fps = self.get_video_frames()
         self.plotVideo()
         
+
+    # def get_video_frames(self):
+    #     """
+    #     Fetchs frames of the video input with opencv and the frames per second
+    #     """
+    #     import cv2
+    #     vcap = cv2.VideoCapture(self.video_fnm)
+    #     fps = vcap.get(cv2.CAP_PROP_FPS)
+    #     frames = []
+    #     ret = True
+    #     while ret:
+    #         ret, img = vcap.read()
+    #         if ret:
+    #             img = cv2.cvtColor(img,cv2.COLOR_BGR2RGB)
+    #             frames.append(img)
+    #     video_frames = np.stack(frames, axis=0)
+    #     # video_frames = video_frames[self.df.iloc[:,0][0]-1: self.df.iloc[:,0][len(self.df)-1]]
+    #     logging.info('Video frames processed')
+    #     return video_frames, fps
+
 
     def get_video_frames(self):
         """
         Fetchs frames of the video input with opencv and the frames per second
-        """       
-        import cv2
+        """
         vcap = cv2.VideoCapture(self.video_fnm)
         fps = vcap.get(cv2.CAP_PROP_FPS)
-        frames = []
-        ret = True
-        while ret:
-            ret, img = vcap.read() 
-            if ret:
-                img = cv2.cvtColor(img,cv2.COLOR_BGR2RGB)
-                frames.append(img)
-        video_frames = np.stack(frames, axis=0)
-        # video_frames = video_frames[self.df.iloc[:,0][0]-1: self.df.iloc[:,0][len(self.df)-1]]
         logging.info('Video frames processed')
-        return video_frames, fps
-
+        return vcap, fps
 
     def get_arm(self, side, i):
         x = self.df_3d.loc[i, (side, ('SHOULDER', 'ELBOW', 'BODY_WRIST'), 'x')].values
@@ -148,7 +155,8 @@ class Visualization():
         return np.array(x), np.array(y), np.array(z)
 
 
-    def update_lines(self, i):
+    def update_lines(self, i, pbar):
+        pbar.update(1)
         x_h_l, y_h_l, z_h_l = self.get_hand('Left', i)
         x_l, y_l, z_l = self.get_arm('Left', i)
 
@@ -178,7 +186,9 @@ class Visualization():
         self.cbj12d[0].set_data(x_b, y_b)
 
         # Update the video frame
-        self.vplot.set_data(self.video_frames[i])
+        video_frame = self.vcap.read()[1]
+        video_frame = cv2.cvtColor(video_frame, cv2.COLOR_BGR2RGB)
+        self.vplot.set_data(video_frame)
 
         return 
 
@@ -191,10 +201,12 @@ class Visualization():
 
         # Video frames plot
         axv = fig.add_subplot(spec[0])
-        self.vplot = axv.imshow(self.video_frames[i])
-        axv.set_xlim(0, self.video_frames[i].shape[1])
-        axv.set_ylim(self.video_frames[i].shape[0], 0)
-        axv.set_title(f'Original Video + 2D', fontweight = 'bold' )
+        video_frame = self.vcap.read()[1]
+        video_frame = cv2.cvtColor(video_frame, cv2.COLOR_BGR2RGB)
+        self.vplot = axv.imshow(video_frame)
+        axv.set_xlim(0, video_frame.shape[1])
+        axv.set_ylim(video_frame.shape[0], 0)
+        axv.set_title(f'Original Video + 2D', fontweight='bold')
         axv.axis('off')
         
         # Linewidth for joints
@@ -227,8 +239,8 @@ class Visualization():
         self.ax2.set_yticklabels([])
         self.ax2.set_zticklabels([])
 
-        x_lim= [0, self.video_frames[i].shape[1]]
-        y_lim= [-self.video_frames[i].shape[0], 0]
+        x_lim= [0, video_frame.shape[1]]
+        y_lim= [-video_frame.shape[0], 0]
         z_lim = x_lim
 
         self.ax1.set_xlim3d(x_lim)
@@ -269,9 +281,13 @@ class Visualization():
         # Animation
         fig = self.initVideo()
         print('Creating animation...')
-        anim = animation.FuncAnimation(fig, self.update_lines,
+        pbar = tqdm(total=self.number_frames)
+
+        anim = animation.FuncAnimation(fig, lambda i: self.update_lines(i, pbar),
                                             frames = range(self.number_frames), interval = 1,
                                             blit = False, repeat = False, cache_frame_data = False)
         writervideo = animation.FFMpegWriter(fps=self.fps, codec="libx264")
         anim.save(join(self.data_dir, f'visualization{self.name_addition}.mp4'), writer = writervideo)
+
+
         logging.info('Video saved!')
