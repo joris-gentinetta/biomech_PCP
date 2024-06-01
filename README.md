@@ -95,14 +95,41 @@ The `process_video.py` script is used to process the video data. It first gets t
 finally computes the angles and saves them to a dataframe. It has several command line arguments that you can use to
 customize its behavior:
 
+    parser.add_argument('--data_dir', type=str, required=True, help='Output directory')
+    parser.add_argument('--experiment_name', type=str, required=True, help='Experiment name')
+    parser.add_argument('--visualize', action='store_true', help='Visualize the output')
+    parser.add_argument('--intact_hand', type=str, default=None, help='Intact hand')
+    parser.add_argument('--hand_roi_size', type=int, default=800, help='Hand ROI size')
+    parser.add_argument('--plane_frames_start', type=int, default=0, help='Start of the plane frames')
+    parser.add_argument('--plane_frames_end', type=int, default=20, help='End of the plane frames')
+    parser.add_argument('--process', action='store_true', help='Process the video')
+
 - `--data_dir`: This argument is required. It specifies the directory where the video data is stored.
+
+- `--experiment_name`: This argument is required. It specifies the name of the experiment to be used for saving the
+  processed data.
 
 - `--visualize`: This argument is optional with a default value of True. If used, the script will visualize the output.
 
-Here is an example of how to run the script:
+- `--intact_hand`: This argument is optional, either Right or Left. It specifies the hand that is intact. If not used, the script will run for both hands.
 
+- `--hand_roi_size`: This argument is optional with a default value of 800. It specifies the size of the region of interest
+  around the hand.
+
+- `--plane_frames_start`, `--plane_frames_end`: These arguments are optional with default values of 0 and 20 respectively. They define the range of frames that are used to get the arm lengths in the 0 plane.
+
+- `--process`: This argument is optional. If used, the script will process the video. If not used, the script will only
+  display the video and a sample of hand ROIs.
+
+
+First you can run the script without the `--process` argument to determine the hand ROI size and the plane frames:
 ```bash
-python process_video.py --data_dir data/joris/test --visualize True
+python process_video.py --data_dir data/joris/test --experiment_name 1
+```
+
+Then you can run the script with the `--process` argument to process the video:
+```bash
+python process_video.py --data_dir data/joris/test --experiment_name 1 --visualize --intact_hand Right --hand_roi_size 400 --plane_frames_start 0 --plane_frames_end 40 --process
 ```
 
 ## Data Output

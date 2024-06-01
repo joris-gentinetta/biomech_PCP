@@ -3,6 +3,8 @@ from os.path import join
 
 import cv2
 import imageio
+import time
+import subprocess
 
 import mediapipe as mp
 from mediapipe.python.solutions import pose, hands
@@ -21,8 +23,7 @@ import matplotlib.pyplot as plt
 import warnings
 warnings.filterwarnings("ignore")
 
-#todo use full models
-def run_mediapipe(cap, frames, video_timestamps, intact_hand=None, scales = None):
+def run_mediapipe(cap, frames, video_timestamps, sides, scales, hand_roi_size, process=False):
     body_model_path = 'models/mediapipe/pose_landmarker_heavy.task'
     hands_model_path = 'models/mediapipe/hand_landmarker.task'
     BaseOptions = mp.tasks.BaseOptions
@@ -48,7 +49,7 @@ def run_mediapipe(cap, frames, video_timestamps, intact_hand=None, scales = None
     columns = body_columns.append(right_hand_columns).append(left_hand_columns)
     joints_df = pd.DataFrame(index=frames, columns=columns)
 
-    roi_half_size = 400 # todo expose this parameter
+    roi_half_size = int(hand_roi_size // 2)
     print("MediaPipe processing...")
     for frame_id in tqdm(frames):
         success, frame = cap.read()
@@ -67,9 +68,7 @@ def run_mediapipe(cap, frames, video_timestamps, intact_hand=None, scales = None
             joints_df.loc[frame_id, ('Body', landmark_name, 'y')] = int(body_results[0][pose.PoseLandmark[landmark_name]].y * scales[1])
             joints_df.loc[frame_id, ('Body', landmark_name, 'z')] = int(body_results[0][pose.PoseLandmark[landmark_name]].z * scales[2])
 
-        sides = [intact_hand] if intact_hand else ['Right', 'Left']
         for side in sides:
-
             wrist = [joints_df.loc[frame_id, ('Body', f'{side.upper()}_WRIST', 'x')], joints_df.loc[frame_id, ('Body', f'{side.upper()}_WRIST', 'y')]]
             x_start = max(0, wrist[0] - roi_half_size)
             x_end = min(scales[0], wrist[0] + roi_half_size)
@@ -80,7 +79,13 @@ def run_mediapipe(cap, frames, video_timestamps, intact_hand=None, scales = None
             rgb_cropped_frame = cv2.cvtColor(cropped_frame, cv2.COLOR_BGR2RGB)
             if frame_id == 1:
                 plt.imshow(rgb_cropped_frame)
+                # add axis values:
+                plt.gca().set_xticks([0, roi_half_size * 2])
+                plt.gca().set_yticks([0, roi_half_size * 2])
+
                 plt.show()
+            if frame_id == 2 and not process:
+                return None
 
             mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=rgb_cropped_frame)
 
@@ -131,21 +136,22 @@ if __name__ == "__main__":
     parser.add_argument('--experiment_name', type=str, required=True, help='Experiment name')
     parser.add_argument('--visualize', action='store_true', help='Visualize the output')
     parser.add_argument('--intact_hand', type=str, default=None, help='Intact hand')
-    # argument called plane_frames that takes a list of integers:
-    parser.add_argument('--plane_frames', nargs='+', type=int, default=range(20), help='Frames to calculate the limb lenghts')
+    parser.add_argument('--hand_roi_size', type=int, default=800, help='Hand ROI size')
+    parser.add_argument('--plane_frames_start', type=int, default=0, help='Start of the plane frames')
+    parser.add_argument('--plane_frames_end', type=int, default=20, help='End of the plane frames')
+    parser.add_argument('--process', action='store_true', help='Process the video')
     args = parser.parse_args()
 
-    import time
     start = time.time()
     sides = [args.intact_hand] if args.intact_hand else ['Right', 'Left']
     experiment_dir = join(args.data_dir, 'experiments', args.experiment_name)
     input_video_path = join(experiment_dir, "cropped_video.mp4")
 
+
     cap = cv2.VideoCapture(input_video_path)
 
     fps = cap.get(cv2.CAP_PROP_FPS)
     n_frames = cap.get(cv2.CAP_PROP_FRAME_COUNT)
-    print(f"Number of frames: {n_frames}")
 
     vid = imageio.get_reader(input_video_path, 'ffmpeg')
     fps_in = vid.get_meta_data()['fps']
@@ -154,30 +160,33 @@ if __name__ == "__main__":
     frames = range(0, int(n_frames))
     mediapipe_landmark_names = pose.PoseLandmark._member_names_
 
-    video_timestamps = np.load(join(experiment_dir, "cropped_timestamps.npy"))
-    joints_df = run_mediapipe(cap, frames, video_timestamps, args.intact_hand, scales)
+    video_timestamps = np.load(join(experiment_dir, "cropped_video_timestamps.npy"))
+    joints_df = run_mediapipe(cap, frames, video_timestamps, sides, scales, args.hand_roi_size, args.process)
     cap.release()
+
+    if not args.process:
+        subprocess.run(['python', 'video_gui.py', '--file', input_video_path])
+        exit(0)
 
     joints_df = update_left_right(joints_df)
     joints_df.to_parquet(join(experiment_dir, "mediapipe_output.parquet"))
 
-    # get upper arm length and forearm length:
-    upper_arm_lengths = []
-    forearm_lengths = []
-
-    for i in args.plane_frames:
-        for side in sides:
+    print('Correcting Z values...')
+    for side in sides:
+        # get upper arm length and forearm length:
+        upper_arm_lengths = []
+        forearm_lengths = []
+        for i in range(args.plane_frames_start, args.plane_frames_end):
             shoulder = joints_df.loc[i, (side, 'SHOULDER', ['x', 'y'])].values
             elbow = joints_df.loc[i, (side, 'ELBOW', ['x', 'y'])].values
             wrist = joints_df.loc[i, (side, 'WRIST', ['x', 'y'])].values
 
             upper_arm_lengths.append(np.linalg.norm(shoulder - elbow))
             forearm_lengths.append(np.linalg.norm(elbow - wrist))
-    average_upper_arm_length = np.mean(np.array(upper_arm_lengths))
-    average_forearm_length = np.mean(np.array(forearm_lengths))
+        average_upper_arm_length = np.mean(np.array(upper_arm_lengths))
+        average_forearm_length = np.mean(np.array(forearm_lengths))
 
-    print('Correcting Z values...')
-    for side in sides:
+
         # Calculate upper_arm and forearm for all rows at once
         upper_arm = joints_df.loc[:, idx[side, 'ELBOW', slice(None)]].values - joints_df.loc[:,
                                                                                 idx[side, 'SHOULDER', slice(None)]].values
