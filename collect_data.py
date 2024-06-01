@@ -39,7 +39,6 @@ def show_video(stop_flag):
             cv2.imshow('Video', frame)
             if cv2.waitKey(1) & 0xFF == ord('q'):  # Press 'q' to exit the video window
                 break
-        print(stop_flag.value)
         if stop_flag.value:
             break
 
@@ -47,7 +46,7 @@ def show_video(stop_flag):
     cv2.destroyAllWindows()
 
 
-def capture_video(stop_flag, output_dir, fps):
+def capture_video(stop_flag, output_dir):
     cap = cv2.VideoCapture(0)
     if not cap.isOpened():
         print("Error: Cannot open camera.")
@@ -55,6 +54,7 @@ def capture_video(stop_flag, output_dir, fps):
 
     frame_width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
     frame_height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+    fps = cap.get(cv2.CAP_PROP_FPS)
 
     fourcc = cv2.VideoWriter_fourcc(*'mp4v')
     out = cv2.VideoWriter(join(output_dir, 'video.mp4'), fourcc, fps, (frame_width, frame_height))
@@ -128,7 +128,6 @@ if __name__ == '__main__':
     parser.add_argument('--data_dir', type=str, required=True, help='Output directory')
     parser.add_argument('--dummy_emg', action='store_true', help='Use this flag for testing without the EMG board')
     parser.add_argument('--camera', type=int, help='Camera Index', default=-1)
-    parser.add_argument('--fps', type=int, help='Frames per second', default=30)
     parser.add_argument('--record', action='store_true', help='Record video')
     args = parser.parse_args()
     args.save_type = 'raw'
@@ -140,7 +139,7 @@ if __name__ == '__main__':
         raise ValueError(f'Directory {args.data_dir} already exists. Please provide a new directory.')
     os.makedirs(args.data_dir, exist_ok=True)
     if args.camera != -1:
-        video_process = multiprocessing.Process(target=capture_video, args=(stop_flag, args.data_dir, args.fps))
+        video_process = multiprocessing.Process(target=capture_video, args=(stop_flag, args.data_dir))
         video_process.start()
 
     emg_process = multiprocessing.Process(target=capture_EMG,
@@ -162,16 +161,15 @@ if __name__ == '__main__':
     if args.camera != -1:
         video_timestamps = np.load(join(args.data_dir, 'video_timestamps.npy'))
         cap = cv2.VideoCapture(join(args.data_dir, 'video.mp4'))
-        fps = cap.get(cv2.CAP_PROP_FPS)
         video_length = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
         print(f"Video Length: {video_length}")
         print(f'Video Size: W:{int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))} H:{int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))}')
-        print(f"Requested Frame Rate: {fps}")
+        print(f"Metadata Framerate: {cap.get(cv2.CAP_PROP_FPS)}")
         print(f"Actual Frame Rate: {video_length / (video_timestamps[-1] - video_timestamps[0])}\n")
         cap.release()
 
     print(f'EMG Shape: {emg.shape}\n')
-    print(f'Actual EMG Sampling Rate: {len(emg_timestamps) / (emg_timestamps[-1] - emg_timestamps[0])}')
+    print(f'EMG Sampling Rate: {len(emg_timestamps) / (emg_timestamps[-1] - emg_timestamps[0])}')
     print('########################################################')
 
 

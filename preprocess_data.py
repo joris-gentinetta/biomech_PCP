@@ -6,9 +6,11 @@ from tqdm import tqdm
 import cv2
 import numpy as np
 import matplotlib.pyplot as plt
+import subprocess
+from helpers.EMGClass import EMG
 
 
-def crop_video(cap, data_dir, out_dir, start_frame, end_frame, x_start, x_end, y_start, y_end):
+def crop_data(cap, data_dir, out_dir, start_frame, end_frame, x_start, x_end, y_start, y_end):
     fourcc = cv2.VideoWriter_fourcc(*'mp4v')
     fps = cap.get(cv2.CAP_PROP_FPS)
     width = x_end - x_start
@@ -17,37 +19,37 @@ def crop_video(cap, data_dir, out_dir, start_frame, end_frame, x_start, x_end, y
     output_path = join(out_dir, f'cropped_video.mp4')
     out = cv2.VideoWriter(output_path, fourcc, fps, (width, height))
 
-    frame_count = 0
+    frame_count = -1
     print('Cropping video...')
     with tqdm(total=int(cap.get(cv2.CAP_PROP_FRAME_COUNT))) as pbar:
         while cap.isOpened():
             ret, frame = cap.read()
+            frame_count += 1
             if not ret:
                 break
 
-            if start_frame <= frame_count:
-                if end_frame == -1 or frame_count <= end_frame:
-                    cropped_frame = frame[y_start:y_end, x_start:x_end]
-                    out.write(cropped_frame)
+            if frame_count < start_frame:
+                continue
+            if frame_count >= end_frame:
+                break
 
-            frame_count += 1
+            cropped_frame = frame[y_start:y_end, x_start:x_end]
+            out.write(cropped_frame)
+
+
             pbar.update(1)
 
     cap.release()
     out.release()
 
-    timestamps = np.load(os.path.join(data_dir, 'cropped_video_timestamps.npy'))
+    video_timestamps = np.load(os.path.join(data_dir, 'triggered_video_timestamps.npy'))
+    np.save(join(out_dir, f'cropped_video_timestamps.npy'), video_timestamps[start_frame:end_frame])
 
-    if end_frame == -1:
-        end_frame = frame_count - 1
-    timestamps = timestamps[start_frame:end_frame + 1]
-    np.save(join(out_dir, f'cropped_timestamps.npy'), timestamps)
-
-def trigger_crop(data_dir):
+def trigger_crop_video(data_dir):
     cap = cv2.VideoCapture(join(args.data_dir, 'video.mp4'))
     fourcc = cv2.VideoWriter_fourcc(*'mp4v')
 
-    output_path = join(data_dir, f'video_cropped.mp4')
+    output_path = join(data_dir, f'triggered_video.mp4')
     out = cv2.VideoWriter(output_path, fourcc, cap.get(cv2.CAP_PROP_FPS), (int(cap.get(cv2.CAP_PROP_FRAME_WIDTH)), int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))))
 
     frame_count = 0
@@ -66,7 +68,11 @@ def trigger_crop(data_dir):
                 found_trigger = True
 
                 plt.imshow(frame)
-                plt.title(f'Trigger, frame {frame_count}')
+                if record_frame:
+                    title = f'End trigger, frame {frame_count}'
+                else:
+                    title = f'Start trigger, frame {frame_count}'
+                plt.title(title)
                 plt.show()
                 if record_frame:
                     break
@@ -81,54 +87,50 @@ def trigger_crop(data_dir):
 
             frame_count += 1
             pbar.update(1)
+        pbar.close()
 
     cap.release()
     out.release()
-    if os.path.exists(join(data_dir, 'video_timestamps.npy')):
+    if os.path.exists(join(data_dir, 'video_timestamps.npy')):  # if webcam video
         cropped_timestamps = np.array(cropped_timestamps)
-        np.save(join(data_dir, 'cropped_video_timestamps.npy'), cropped_timestamps)
+        np.save(join(data_dir, 'triggered_video_timestamps.npy'), cropped_timestamps)
 
 
-def create_video_timestamps(cap, data_dir, trigger_channel, trigger_value):
+def trigger_crop_emg(cap, data_dir, trigger_channel, trigger_value):
     emg = np.load(join(data_dir, 'emg.npy'))
     emg_timestamps = np.load(join(data_dir, 'emg_timestamps.npy'))
     video_timestamps = np.zeros((int(cap.get(cv2.CAP_PROP_FRAME_COUNT))))
 
-    plt.plot(emg[:, trigger_channel])
-    print(emg.shape)
-    plt.show()
-    print('Trigger value: ', trigger_value)
-    continue_ = input('Continue? (y/n): ')
-    if continue_ == 'n':
-        print('Exiting.')
-        exit(0)
 
     found_trigger = False
     record_frame = False
-    start_time = -1
-    end_time = -1
+    start_frame = -1
+    end_frame = -1
     for i, signal in enumerate(emg[:, trigger_channel]):
         if abs(signal) >= trigger_value:
             found_trigger = True
             if record_frame:
-                end_time = emg_timestamps[i]
+                end_frame = i
                 print(f'end_frame: {i}')
                 break
 
         if found_trigger and abs(signal) < trigger_value:
             found_trigger = False
             record_frame = True
-            start_time = emg_timestamps[i]
+            start_frame = i
             print(f'start_frame: {i}')
 
-    assert start_time != -1 and end_time != -1, 'Could not find trigger in EMG data.'
+    assert start_frame != -1 and end_frame != -1, 'Could not find trigger in EMG data.'
 
-    for i in range(len(video_timestamps)):
-        video_timestamps[i] = start_time + (end_time - start_time) * i / len(video_timestamps)
+    triggered_emg = emg[start_frame:end_frame]
+    triggered_emg_timestamps = emg_timestamps[start_frame:end_frame]
+    np.save(join(data_dir, 'triggered_emg.npy'), triggered_emg)
+    np.save(join(data_dir, 'triggered_emg_timestamps.npy'), triggered_emg_timestamps)
 
-    np.save(join(data_dir, 'cropped_video_timestamps.npy'), video_timestamps)
-
-
+    if not os.path.exists(join(args.data_dir, 'triggered_video_timestamps.npy')):  # if not webcam video
+        for i in range(len(video_timestamps)):
+            video_timestamps[i] = emg_timestamps[start_frame] + (emg_timestamps[end_frame] - emg_timestamps[start_frame]) * i / len(video_timestamps)
+            np.save(join(data_dir, 'triggered_video_timestamps.npy'), video_timestamps)
 
 
 def show_frame(cap, frame_number):
@@ -139,6 +141,8 @@ def show_frame(cap, frame_number):
             break
 
         if frame_count == frame_number:
+            #make sure that the frame is in RGB format:
+            frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
             plt.imshow(frame)
             # label axes:
             plt.xlabel('x')
@@ -152,15 +156,67 @@ def show_frame(cap, frame_number):
 
     cap.release()
 
+def filter_emg(data_dir):
+    emg_data = np.load(join(data_dir, 'triggered_emg.npy')).T
+    emg_timestamps = np.load(join(data_dir, 'triggered_emg_timestamps.npy'))
+    sf = (len(emg_timestamps) - 1) / (emg_timestamps[-1] - emg_timestamps[0])
+    emg = EMG(samplingFreq=sf, offlineData=emg_data)
+    emg.startCommunication()
+    emg.emgThread.join()
+    filtered_emg = emg.emgHistory[:, emg.numPackets * 100 + 1:]
+    filtered_emg = filtered_emg[:, :emg_data.shape[1]]
+    # filtered_emg_timestamps = [emg_timestamps[i * emg.numPackets + emg.numPackets // 2] for i in
+    #                            range(filtered_emg.shape[1])]
+    filtered_emg_timestamps = emg_timestamps
+
+    # min_vals = np.percentile(filtered_emg, 1, axis=1)
+    # max_vals = np.percentile(filtered_emg, 99, axis=1)
+    min_vals = filtered_emg.min(axis=1)
+    max_vals = filtered_emg.max(axis=1)
+    normalized_emg = np.clip((filtered_emg - min_vals[:, None]) / (max_vals - min_vals)[:, None], 0, 1)
+    np.save(join(data_dir, 'min_norm_vals.npy'), min_vals)
+    np.save(join(data_dir, 'max_norm_vals.npy'), max_vals)
+    np.save(join(data_dir, 'filtered_emg.npy'), normalized_emg.T)
+    np.save(join(data_dir, 'filtered_emg_timestamps.npy'), filtered_emg_timestamps)
+
+def downsample_video(cap, out_dir):
+    fourcc = cv2.VideoWriter_fourcc(*'mp4v')
+    output_path = join(out_dir, f'cropped_downsampled_video.mp4')
+    out = cv2.VideoWriter(output_path, fourcc, 60, (int(cap.get(cv2.CAP_PROP_FRAME_WIDTH)), int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))))
+
+    old_video_timestamps = np.load(join(out_dir, 'cropped_video_timestamps.npy'))
+    new_video_timestamps = []
+
+    frame_count = 0
+    print('Downsampling video...')
+    with tqdm(total=int(cap.get(cv2.CAP_PROP_FRAME_COUNT))) as pbar:
+        while cap.isOpened():
+            ret, frame = cap.read()
+            if not ret:
+                break
+            if frame_count % 2 == 0:
+                out.write(frame)
+                new_video_timestamps.append(old_video_timestamps[frame_count])
+
+            frame_count += 1
+            pbar.update(1)
+        pbar.close()
+        cap.release()
+        out.release()
+
+    np.save(join(out_dir, 'cropped_video_timestamps.npy'), np.array(new_video_timestamps))
+    os.remove(join(out_dir, 'cropped_video.mp4'))
+    os.rename(output_path, join(out_dir, 'cropped_video.mp4'))
 
 def align_emg(data_dir, out_dir):
-    emg = np.load(join(data_dir, 'emg.npy'))
-    video_timestamps = np.load(join(out_dir, 'cropped_timestamps.npy'))
-    emg_timestamps = np.load(join(data_dir, 'emg_timestamps.npy'))
+    emg = np.load(join(data_dir, 'filtered_emg.npy'))
+    video_timestamps = np.load(join(out_dir, 'cropped_video_timestamps.npy'))
+    emg_timestamps = np.load(join(data_dir, 'filtered_emg_timestamps.npy'))
 
     # Align EMG data with video timestamps
     aligned_emg = np.zeros((len(video_timestamps), emg.shape[1]))
     for i, timestamp in enumerate(video_timestamps):
+
         idx = np.argmin(np.abs(emg_timestamps - timestamp))
         aligned_emg[i] = emg[idx]
 
@@ -179,40 +235,43 @@ if __name__ == '__main__':
     parser.add_argument('--y_end', type=int, default=-1, help='End y coordinate for cropping')
     parser.add_argument('--start_frame', type=int, default=0, help='Start frame for cropping')
     parser.add_argument('--end_frame', type=int, default=-1, help='End frame for cropping')
-    parser.add_argument('--trigger_channel', type=int, default=0, help='Trigger channel')
-    parser.add_argument('--trigger_value', type=int, default=200, help='Trigger value')
+    parser.add_argument('--trigger_channel', type=int, required=True, help='Trigger channel')
+    parser.add_argument('--trigger_value', type=int, default=600, help='Trigger value')
     args = parser.parse_args()
 
-
-
-    if not os.path.exists(join(args.data_dir, 'video_cropped.mp4')):
-        trigger_crop(args.data_dir)
-
-
-
-    cap = cv2.VideoCapture(join(args.data_dir, 'video_cropped.mp4'))
-    if not os.path.exists(join(args.data_dir, 'cropped_video_timestamps.npy')):
-        create_video_timestamps(cap, args.data_dir, trigger_channel=args.trigger_channel, trigger_value=abs(args.trigger_value))
+    if not os.path.exists(join(args.data_dir, 'triggered_video.mp4')):
+        trigger_crop_video(args.data_dir)  # produces triggered_video_timestamps.npy for webcam case
+    cap = cv2.VideoCapture(join(args.data_dir, 'triggered_video.mp4'))
 
     if args.crop:
+        if not os.path.exists(join(args.data_dir, 'triggered_emg.npy')):  # produces triggered_video_timestamps.npy for prof cam case
+            trigger_crop_emg(cap, args.data_dir, trigger_channel=args.trigger_channel, trigger_value=abs(args.trigger_value))
+
+        if not os.path.exists(join(args.data_dir, 'filtered_emg.npy')):
+            filter_emg(args.data_dir)
+
         x_start = int(args.x_start)
         x_end = int(args.x_end)
         y_start = int(args.y_start)
         y_end = int(args.y_end)
+        start_frame = int(args.start_frame)
+        end_frame = int(args.end_frame)
         frame_width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
         frame_height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
         if x_end == -1:
-            x_end = frame_width - 1
+            x_end = frame_width
         if y_end == -1:
-            y_end = frame_height - 1
+            y_end = frame_height
+        if end_frame == -1:
+            end_frame = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
 
         if x_start < 0 or x_start >= frame_width:
             raise ValueError(f'Invalid x_start value: {x_start}')
-        if x_end < 0 or x_end >= frame_width or x_end <= x_start:
+        if x_end < 0 or x_end > frame_width or x_end <= x_start:
             raise ValueError(f'Invalid x_end value: {x_end}')
-        if y_start < 0 or y_start >= frame_height:
+        if y_start < 0 or y_start > frame_height:
             raise ValueError(f'Invalid y_start value: {y_start}')
-        if y_end < 0 or y_end >= frame_height or y_end <= y_start:
+        if y_end < 0 or y_end > frame_height or y_end <= y_start:
             raise ValueError(f'Invalid y_end value: {y_end}')
 
         out_dir = join(args.data_dir, 'experiments', args.experiment_name)
@@ -220,14 +279,22 @@ if __name__ == '__main__':
             raise ValueError(f'Output directory {out_dir} already exists.')
         os.makedirs(out_dir, exist_ok=True)
 
-        crop_video(cap, args.data_dir, out_dir, start_frame=args.start_frame, end_frame=args.end_frame, x_start=x_start,
-                   x_end=x_end, y_start=y_start,
-                   y_end=y_end)
-        align_emg(args.data_dir, out_dir)
+        crop_data(cap, args.data_dir, out_dir, start_frame=start_frame, end_frame=end_frame, x_start=x_start,
+                   x_end=x_end, y_start=y_start, y_end=y_end)
+
+        cap = cv2.VideoCapture(join(out_dir, 'cropped_video.mp4'))
+        if cap.get(cv2.CAP_PROP_FPS) > 115 and cap.get(cv2.CAP_PROP_FPS) < 125:
+            downsample_video(cap, out_dir)
+        if not os.path.exists(join(out_dir, 'aligned_emg.npy')):
+            align_emg(args.data_dir, out_dir)
 
     else:
-        show_frame(cap, frame_number=args.frame_number)
+        # show_frame(cap, frame_number=args.frame_number) # todo remove args.frame_number if it works on external display, readme
+
+        emg = np.load(join(args.data_dir, 'emg.npy'))
+        plt.plot(emg[:, args.trigger_channel])
+        plt.title(f'Trigger value: {args.trigger_value}')
+        plt.show()
         # run video_gui.py:
-        import subprocess
-        subprocess.run(['python', 'video_gui.py', '--file', join(args.data_dir, 'video_cropped.mp4')])
+        subprocess.run(['python', 'video_gui_axes.py', '--file', join(args.data_dir, 'triggered_video.mp4')])
 

@@ -33,25 +33,21 @@ use to customize its behavior:
 
 - `--data_dir`: This argument is required. It specifies the output directory where the video and EMG data will be saved.
 
-- `--save_type`: This argument is optional with a default value of 'normed'. It specifies the type of EMG data to save.
-  The options are 'normed', 'iEMG', and 'act'.
-
-- `--emg_sampling_rate`: This argument is optional with a default value of 1000. It specifies the sampling rate for the
-  EMG data.
-
 - `--dummy_emg`: This argument is optional. If used, the script will generate dummy EMG data for testing purposes
   without the need for an EMG board.
 
 - `--camera`: This argument is optional with a default value of 0. It specifies the index of the camera to use for video
   capture.
 
-- `--preview`: This argument is optional. If used, the script will display a preview of the video capture instead of saving
-  the video.
+- `--record`: This argument is optional. If used, the script will record the video and EMG data. If not used, the script
+  will only display the video and EMG data.
+
+
 
 Here is an example of how to run the script:
 
 ```bash
-python collect_data.py --data_dir data/joris/test --save_type normed --emg_sampling_rate 1000 --dummy_emg --camera 0
+python collect_data.py --data_dir data/joris/test --camera 0 --dummy_emg --record
 ```
 
 ### 2. Data Preprocessing with `preprocess_data.py`
@@ -70,22 +66,27 @@ EMG data is adapted accordingly.
 - `--frame_number`: This argument is optional with a default value of 2. It specifies the frame number to visualize when
   the `--crop` argument is not used.
 
-- `--x_start`, `--x_end`, `--y_start`, `--y_end`: These arguments are optional with a default value of -1. They specify
+- `--x_start`, `--x_end`, `--y_start`, `--y_end`: These arguments are optional with a default value of 0 and -1. They specify
   the coordinates for cropping the video when the `--crop` argument is used.
 
 - `--start_frame`, `--end_frame`: These arguments are optional with default values of 0 and -1 respectively. They
   specify the start and end frames for cropping the video when the `--crop` argument is used.
 
+- `--trigger_channel`: This argument is required. It specifies the channel number of the trigger signal in the EMG data.
+
+- `--trigger_value`: This argument is required. It specifies the trigger value in the EMG data. Trigger is detected when
+  the absolute value signal crosses the trigger_value.
+
 Here is an example of how to run the script for visualization:
 
 ```bash
-python preprocess_data.py --data_dir data/joris/test --frame_number 2
+python preprocess_data.py --data_dir data/joris/trigger_2 --experiment_name 1 --frame_number 990 --trigger_channel 7 
 ```
 
 And here is an example of how to run the script for cropping:
 
 ```bash
-python preprocess_data.py --data_dir data/joris/test --crop --x_start 100 --x_end 500 --y_start 200 --y_end 600 --start_frame 10 --end_frame 100
+python preprocess_data.py --data_dir data/joris/trigger_2 --experiment_name 1 --start_frame 544 --end_frame 14246 --trigger_channel 7 --trigger_value 600
 ```
 
 ### 3. Video Processing with `process_video.py`
