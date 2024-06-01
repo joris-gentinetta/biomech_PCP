@@ -59,34 +59,30 @@ EMG data is adapted accordingly.
 
 - `--experiment_name`: This argument is required. It specifies the name of the experiment
   to be used for saving the processed data.
-- 
-- `--crop`: This argument is optional. If used, the script will crop the video. If not used, the script will show a
-  frame for visualization.
-
-- `--frame_number`: This argument is optional with a default value of 2. It specifies the frame number to visualize when
-  the `--crop` argument is not used.
 
 - `--x_start`, `--x_end`, `--y_start`, `--y_end`: These arguments are optional with a default value of 0 and -1. They specify
-  the coordinates for cropping the video when the `--crop` argument is used.
+  the coordinates for cropping the video when the `--process` argument is used.
 
 - `--start_frame`, `--end_frame`: These arguments are optional with default values of 0 and -1 respectively. They
-  specify the start and end frames for cropping the video when the `--crop` argument is used.
+  specify the start and end frames for cropping the video when the `--process` argument is used.
 
 - `--trigger_channel`: This argument is required. It specifies the channel number of the trigger signal in the EMG data.
 
 - `--trigger_value`: This argument is required. It specifies the trigger value in the EMG data. Trigger is detected when
   the absolute value signal crosses the trigger_value.
 
+- `--process`: This argument is optional. If used, the script will process the video. If not used, the script will show the video and the EMG trigger channel
+
 Here is an example of how to run the script for visualization:
 
 ```bash
-python preprocess_data.py --data_dir data/joris/trigger_2 --experiment_name 1 --frame_number 990 --trigger_channel 7 
+python preprocess_data.py --data_dir data/joris/trigger_2 --experiment_name 1 --trigger_channel 7 
 ```
 
-And here is an example of how to run the script for cropping:
+And here is an example of how to run the script for processing:
 
 ```bash
-python preprocess_data.py --data_dir data/joris/trigger_2 --experiment_name 1 --start_frame 544 --end_frame 14246 --trigger_channel 7 --trigger_value 600
+python preprocess_data.py --data_dir data/joris/trigger_2 --experiment_name 1 --start_frame 544 --end_frame 14246 --trigger_channel 7 --trigger_value 600 --process
 ```
 
 ### 3. Video Processing with `process_video.py`
@@ -141,7 +137,7 @@ python process_video.py --data_dir data/joris/test --experiment_name 1 --visuali
 import pandas as pd
 from os.path import join
 data_dir = 'data/joris/test'
-angles = pd.read_parquet(join(data_dir, 'angles.parquet')
+angles = pd.read_parquet(join(data_dir, 'angles.parquet'))
 # To get the index angel for the left hand in the first frame:
 left_hand_index_angle = angles.loc[0, ('Left', 'indexAng')]
 ```

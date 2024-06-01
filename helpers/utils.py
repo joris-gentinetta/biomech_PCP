@@ -128,7 +128,7 @@ class AnglesHelper:
 
         coords, angles, pinky_to_index_sim = self.get_mapping()
 
-        print('Calculating angles...')
+        print('\nCalculating angles...')
         for i in tqdm(angles_df.index):
             for side in sides:
                 body_wrist = output_df.loc[i, (side, 'BODY_WRIST', ['x', 'y', 'z'])].values
@@ -217,7 +217,7 @@ class AnglesHelper:
 
                     distances = np.linalg.norm(coords - np.array(targetPos), axis=1)
                     idx = np.argmin(distances)
-                    print(angles[idx][0], angles[idx][1])
+                    # print(angles[idx][0], angles[idx][1])
                     angles_df.loc[i, (side, 'thumbInPlaneAng')] = angles[idx][0]
                     angles_df.loc[i, (side, 'thumbOutPlaneAng')] = angles[idx][1]
 

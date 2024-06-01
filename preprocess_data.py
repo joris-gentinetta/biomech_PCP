@@ -133,29 +133,6 @@ def trigger_crop_emg(cap, data_dir, trigger_channel, trigger_value):
             np.save(join(data_dir, 'triggered_video_timestamps.npy'), video_timestamps)
 
 
-def show_frame(cap, frame_number):
-    frame_count = 0
-    while cap.isOpened():
-        ret, frame = cap.read()
-        if not ret:
-            break
-
-        if frame_count == frame_number:
-            #make sure that the frame is in RGB format:
-            frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-            plt.imshow(frame)
-            # label axes:
-            plt.xlabel('x')
-            plt.ylabel('y')
-
-            print(frame.shape)
-            plt.show()
-            break
-
-        frame_count += 1
-
-    cap.release()
-
 def filter_emg(data_dir):
     emg_data = np.load(join(data_dir, 'triggered_emg.npy')).T
     emg_timestamps = np.load(join(data_dir, 'triggered_emg_timestamps.npy'))
@@ -227,8 +204,6 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='Crop a video.')
     parser.add_argument('--data_dir', type=str, required=True, help='Data directory')
     parser.add_argument('--experiment_name', type=str, required=True, help='Experiment name')
-    parser.add_argument('--crop', action='store_true', help='Crop video, otherwise show frame.')
-    parser.add_argument('--frame_number', type=int, default=2, help='Frame number to visualize')
     parser.add_argument('--x_start', type=int, default=0, help='Start x coordinate for cropping')
     parser.add_argument('--x_end', type=int, default=-1, help='End x coordinate for cropping')
     parser.add_argument('--y_start', type=int, default=0, help='Start y coordinate for cropping')
@@ -237,13 +212,15 @@ if __name__ == '__main__':
     parser.add_argument('--end_frame', type=int, default=-1, help='End frame for cropping')
     parser.add_argument('--trigger_channel', type=int, required=True, help='Trigger channel')
     parser.add_argument('--trigger_value', type=int, default=600, help='Trigger value')
+    parser.add_argument('--process', action='store_true', help='Process video, otherwise show video and EMG trigger channel')
+
     args = parser.parse_args()
 
     if not os.path.exists(join(args.data_dir, 'triggered_video.mp4')):
         trigger_crop_video(args.data_dir)  # produces triggered_video_timestamps.npy for webcam case
     cap = cv2.VideoCapture(join(args.data_dir, 'triggered_video.mp4'))
 
-    if args.crop:
+    if args.process:
         if not os.path.exists(join(args.data_dir, 'triggered_emg.npy')):  # produces triggered_video_timestamps.npy for prof cam case
             trigger_crop_emg(cap, args.data_dir, trigger_channel=args.trigger_channel, trigger_value=abs(args.trigger_value))
 
@@ -289,12 +266,10 @@ if __name__ == '__main__':
             align_emg(args.data_dir, out_dir)
 
     else:
-        # show_frame(cap, frame_number=args.frame_number) # todo remove args.frame_number if it works on external display, readme
-
         emg = np.load(join(args.data_dir, 'emg.npy'))
         plt.plot(emg[:, args.trigger_channel])
         plt.title(f'Trigger value: {args.trigger_value}')
         plt.show()
-        # run video_gui.py:
-        subprocess.run(['python', 'video_gui_axes.py', '--file', join(args.data_dir, 'triggered_video.mp4')])
+
+        subprocess.run(['python', 'video_gui.py', '--file', join(args.data_dir, 'triggered_video.mp4')])
 

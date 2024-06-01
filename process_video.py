@@ -54,7 +54,7 @@ def run_mediapipe(cap, frames, video_timestamps, sides, scales, hand_roi_size, p
     for frame_id in tqdm(frames):
         success, frame = cap.read()
         if not success:
-            print("Finished MediaPipe processing.")
+            print(f"Finished MediaPipe processing at frame {frame_id}.")
             break
         rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
         mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=rgb_frame)
