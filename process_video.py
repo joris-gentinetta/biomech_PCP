@@ -115,7 +115,6 @@ def run_mediapipe(cap, frames, video_timestamps, sides, scales, hand_roi_size, p
                 joints_df.loc[frame_id, (side, landmark_name, 'y')] = y_start + hands_results[hand_id][hands.HandLandmark[landmark_name]].y * (y_end - y_start)
                 joints_df.loc[frame_id, (side, landmark_name, 'z')] = x_start + hands_results[hand_id][hands.HandLandmark[landmark_name]].z * (x_end - x_start)
 
-
         joints_df = joints_df.fillna(0)
     return joints_df
 
