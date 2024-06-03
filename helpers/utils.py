@@ -1,5 +1,4 @@
 import os.path
-
 import numpy as np
 import math
 import zmq
@@ -7,6 +6,11 @@ import pybullet as p
 from tqdm import tqdm
 import pandas as pd
 pd.options.mode.copy_on_write = True
+import numpy as np
+from scipy.ndimage import gaussian_filter1d
+from scipy.signal import gaussian
+import matplotlib.pyplot as plt
+
 
 class Comms:
     def __init__(self, sendSocketAddr):
@@ -237,6 +241,27 @@ class AnglesHelper:
         return angles_df
 
 
+    def apply_gaussian_smoothing(self, df, sigma, radius):
+        smoothed_df = df.copy()
+        for column in df.columns:
+            smoothed_df[column] = gaussian_filter1d(df[column], sigma=sigma, radius=radius)
+        return smoothed_df
+
+
+    def print_gaussian_kernel(self, sigma, radius):
+        kernel = gaussian(2*radius+1, std=sigma)
+        print("Gaussian Kernel:")
+        print(kernel)
+        # plot it:
+        plt.plot(kernel)
+        plt.title(f'Gaussian Kernel with sigma={sigma} and radius={radius}')
+        plt.show()
+
+
+
+if __name__ == '__main__':
+    A = AnglesHelper()
+    A.print_gaussian_kernel(1.5, 2)
 
 
 

@@ -5,7 +5,8 @@ from time import sleep
 import math
 import argparse
 from os.path import join
-multiplier = 1.05851325
+from helpers.utils import AnglesHelper
+multiplier = 1.05851325 # todo compare to real hand
 
 
 def get_joints_of_type(body_id, joint_type):
@@ -23,7 +24,7 @@ def move_finger(finger, angle):
     angle = math.radians(angle)
     id0, id1 = joint_ids[finger][0], joint_ids[finger][1]
     p.setJointMotorControl2(handId, id0, p.POSITION_CONTROL, targetPosition=angle)
-    p.setJointMotorControl2(handId, id1, p.POSITION_CONTROL, targetPosition=angle * multiplier)
+    p.setJointMotorControl2(handId, id1, p.POSITION_CONTROL, targetPosition=angle * multiplier + 0.6) # todo compare to real hand
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='Capture a video.')
@@ -35,6 +36,43 @@ if __name__ == "__main__":
     cap = cv2.VideoCapture(join(args.data_dir, 'experiments', args.experiment_name, 'visualization_corrected.mp4'))
     angles = pd.read_parquet(join(args.data_dir, 'experiments', args.experiment_name, 'angles.parquet'))
 
+
+    ###########################################
+    # # make a new video with all frames after len(angles)//5 * 4:
+    # import cv2
+    # from os.path import join
+    #
+    # # Define the codec and create a VideoWriter object
+    # fourcc = cv2.VideoWriter_fourcc(*'mp4v')  # or use 'XVID'
+    # out = cv2.VideoWriter('visualization_test.mp4', fourcc, cap.get(cv2.CAP_PROP_FPS),
+    #                       (int(cap.get(cv2.CAP_PROP_FRAME_WIDTH)), int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))))
+    #
+    # # Skip the first 19 frames
+    # for _ in range(len(angles)//5 * 4):
+    #     cap.read()
+    #
+    # # Read and write the remaining frames to the new video
+    # while (cap.isOpened()):
+    #     ret, frame = cap.read()
+    #     if ret:
+    #         out.write(frame)
+    #     else:
+    #         break
+    #
+    # # Release everything when job is finished
+    # cap.release()
+    # out.release()
+    ###########################################
+    cap = cv2.VideoCapture('visualization_test.mp4')
+    angles = pd.read_parquet(join(args.data_dir, 'experiments', args.experiment_name, 'test_angles_CNN.parquet'))
+    angles.loc[:, (args.intact_hand, 'indexAng')] = angles.loc[:, 'indexAng']
+    # reindex:
+    angles.index = range(len(angles))
+
+
+    # angles.loc[:, :] = 0  # todo
+    anglesHelper = AnglesHelper()
+    angles = anglesHelper.apply_gaussian_smoothing(angles, sigma=1.5, radius=2)
     physicsClient = p.connect(p.GUI)
     p.setGravity(0, 0, -10)
 
@@ -88,7 +126,7 @@ if __name__ == "__main__":
         for i in range(20):
             p.stepSimulation()
 
-        sleep(1/cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+        # sleep(1/cap.get(cv2.CAP_PROP_FPS))
 
     cap.release()
     cv2.destroyAllWindows()
