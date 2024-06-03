@@ -7,3 +7,10 @@ pyarrow
 tqdm
 zmq
 pybullet
+pandas
+matplotlib
+scikit-learn
+tqdm
+torch
+wandb
+pyarrow

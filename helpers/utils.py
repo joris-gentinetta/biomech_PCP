@@ -171,15 +171,15 @@ class AnglesHelper:
                 wrist_rot_dir = 1 if np.dot(np.cross(lower_arm, elbowNormal), palmNormal_proj) > 0 else -1
                 if side == 'Left':
                     wrist_rot_dir *= -1
-                angles_df.loc[i, (side, 'wristRot')] = wrist_rot_dir * wrist_rot_abs_val
+                angles_df.loc[i, (side, 'wristRot')] = math.radians(wrist_rot_dir * wrist_rot_abs_val)
 
                 # wrist flexion is zero when the palm is parallel to the lower arm
                 # it increases when the wrist is extended and decreases when it is flexed
-                angles_df.loc[i, (side, 'wristFlex')] = self.angleBetweenVectors(palmNormal, -lower_arm) - 90
+                angles_df.loc[i, (side, 'wristFlex')] = math.radians(self.angleBetweenVectors(palmNormal, -lower_arm) - 90)
 
                 ### Elbow ##########
                 # 0 when fully flexed, 180 when fully extended
-                angles_df.loc[i, (side, 'elbowAngle')] = self.angleBetweenVectors(lower_arm, upper_arm)
+                angles_df.loc[i, (side, 'elbowAngle')] = math.radians(self.angleBetweenVectors(lower_arm, upper_arm))
 
                 ### Thumb ###########
                 try:
@@ -233,10 +233,10 @@ class AnglesHelper:
                     angles_df.loc[i, (side, 'thumbInPlaneAng')] = 0  # thumb flexion angle
 
                 ### Hand ###########
-                angles_df.loc[i, (side, 'indexAng')] = self.calculateIndex(output_df, i, side)
-                angles_df.loc[i, (side, 'midAng')] = self.calculateMiddle(output_df, i, side)
-                angles_df.loc[i, (side, 'ringAng')] = self.calculateRing(output_df, i, side)
-                angles_df.loc[i, (side, 'pinkyAng')] = self.calculatePinky(output_df, i, side)
+                angles_df.loc[i, (side, 'indexAng')] = math.radians(self.calculateIndex(output_df, i, side))
+                angles_df.loc[i, (side, 'midAng')] = math.radians(self.calculateMiddle(output_df, i, side))
+                angles_df.loc[i, (side, 'ringAng')] = math.radians(self.calculateRing(output_df, i, side))
+                angles_df.loc[i, (side, 'pinkyAng')] = math.radians(self.calculatePinky(output_df, i, side))
         angles_df.fillna(0, inplace=True)
         return angles_df
 

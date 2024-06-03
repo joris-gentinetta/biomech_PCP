@@ -2,7 +2,6 @@ import pandas as pd
 import pybullet as p
 import cv2
 from time import sleep
-import math
 import argparse
 from os.path import join
 from helpers.utils import AnglesHelper
@@ -21,7 +20,6 @@ def get_joints_of_type(body_id, joint_type):
 
 
 def move_finger(finger, angle):
-    angle = math.radians(angle)
     id0, id1 = joint_ids[finger][0], joint_ids[finger][1]
     p.setJointMotorControl2(handId, id0, p.POSITION_CONTROL, targetPosition=angle)
     p.setJointMotorControl2(handId, id1, p.POSITION_CONTROL, targetPosition=angle * multiplier + 0.6) # todo compare to real hand
@@ -64,15 +62,14 @@ if __name__ == "__main__":
     # out.release()
     ###########################################
     cap = cv2.VideoCapture('visualization_test.mp4')
-    angles = pd.read_parquet(join(args.data_dir, 'experiments', args.experiment_name, 'test_angles_CNN.parquet'))
-    angles.loc[:, (args.intact_hand, 'indexAng')] = angles.loc[:, 'indexAng']
+    angles = pd.read_parquet(join(args.data_dir, 'experiments', args.experiment_name, 'test_angles_GRU.parquet'))
     # reindex:
     angles.index = range(len(angles))
 
 
     # angles.loc[:, :] = 0  # todo
     anglesHelper = AnglesHelper()
-    angles = anglesHelper.apply_gaussian_smoothing(angles, sigma=1.5, radius=2)
+    angles = anglesHelper.apply_gaussian_smoothing(angles, sigma=1.5, radius=2) #todo
     physicsClient = p.connect(p.GUI)
     p.setGravity(0, 0, -10)
 

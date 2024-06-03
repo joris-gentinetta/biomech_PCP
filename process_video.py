@@ -221,3 +221,5 @@ if __name__ == "__main__":
     anglesHelper = AnglesHelper()
     angles_df = anglesHelper.getArmAngles(corrected, sides)
     angles_df.to_parquet(join(experiment_dir, "angles.parquet"))
+    smooth_angles_df = anglesHelper.apply_gaussian_smoothing(angles_df, sigma=1.5, radius=2)
+    smooth_angles_df.to_parquet(join(experiment_dir, "smooth_angles.parquet"))
