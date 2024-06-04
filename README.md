@@ -119,6 +119,7 @@ python process_video.py --data_dir data/joris/test --experiment_name 1
 python process_video.py --data_dir data/linda/minJerk/digitsFlEx --experiment_name 1 --hand_roi_size 450
 python process_video.py --data_dir data/linda/minJerk/digitsFlEx --experiment_name 1 --hand_roi_size 450 --visualize --intact_hand Left --plane_frames_start 200 --plane_frames_end 500 --video_start 500 --video_end 2200 --process
 
+#todo
 python process_video.py --data_dir data/linda/minJerk/fingersFlEx --experiment_name 1 --hand_roi_size 450
 python process_video.py --data_dir data/linda/minJerk/fingersFlEx --experiment_name 1 --hand_roi_size 450 --visualize --intact_hand Left --plane_frames_start 200 --plane_frames_end 500 --video_start 500 --video_end 2400 --process
 

@@ -6,63 +6,74 @@ import wandb
 import torch
 from torch.utils.data import Dataset, DataLoader
 import random
+from time import time
+from helpers.models import TorchTimeSeriesClassifier
+
+# if torch.backends.mps.is_available():
+#     device = torch.device("mps")
+#     print('Using MPS')
+# elif torch.cuda.is_available():
+#     device = torch.device("cuda")
+#     print('Using CUDA')
+# else:
+device = torch.device("cpu")
+#     print('Using CPU')
 
 
-def train_model(train, config=None):
-    with wandb.init(config):
-        config = wandb.config
+def train_model(trainsets, testsets, mode='online', config=None):
+    with wandb.init(mode=mode):
+        if mode != 'disabled':
+            config = wandb.config
+        model = TorchTimeSeriesClassifier(input_size=len(config.features), hidden_size=config.hidden_size,
+                                          output_size=len(config.targets), n_epochs=config.n_epochs, seq_len=config.seq_len,
+                                          learning_rate=config.learning_rate,
+                                          warmup_steps=config.warmup_steps, num_layers=config.n_layers,
+                                          model_type=config.model_type)
+        model.to(device)
 
-        mean_best_val_loss = 0
-        mean_used_epochs = 0
+        dataset = TSDataset(trainsets, config.features, config.targets, sequence_len=125)
+        dataloader = TSDataLoader(dataset, batch_size=2, shuffle=True, drop_last=True)
 
+        best_val_loss = float('inf')
+        best_epoch = 0
+        epochs_no_improve = 0
+        patience = 15
+        used_epochs = 0
+        for epoch in range(model.n_epochs):
+            used_epochs = epoch
+            # start = time()
+            model.train_one_epoch(dataloader)
+            # end = time()
+            # print('Epoch:', epoch, 'Time:', end - start)
 
-        for fold in used_folds:
-            dataset = TSDataset(train, config.features, ['y'], sequence_len=125)
-            dataloader = TSDataLoader(dataset, batch_size=2, shuffle=True)
-            model = TorchTimeSeriesClassifier(input_size=len(config.features), hidden_size=config.hidden_size, n_epochs=config.max_n_epochs,
-                                              seq_len=config.seq_len, learning_rate=config.learning_rate,
-                                              warmup_steps=config.warmup_steps, num_layers=config.n_layers,
-                                              model_type=config.model_type)
-            best_val_loss = float('inf')
-            epochs_no_improve = 0
-            patience = 99
-            used_epochs = 0
-            for epoch in range(model.n_epochs):
-                used_epochs = epoch
-                model.train_one_epoch(fold['train'], config.used_features)
-
-                if epoch % 50 == 49:
-                    val_pred = model.predict(fold['val'], config.used_features)
+            if epoch % 5 == 0:
+                losses = []
+                for set_id, test_set in enumerate(testsets):
+                    val_pred = model.predict(test_set, config.features).squeeze(0)
                     loss = model.eval_criterion(val_pred[config.warmup_steps:],
-                                                torch.tensor(fold['val']['y'].values, dtype=torch.float32)[
-                                                config.warmup_steps:]).item()
-                    val_pred = val_pred.numpy()
-                    val_pred = (val_pred > 0.5).astype(int)
-                    accuracy = ((val_pred[config.warmup_steps:]) == fold['val']['y'].values[config.warmup_steps:]).mean()
-                    sensitivity = ((val_pred[config.warmup_steps:] == 1) & (fold['val']['y'][config.warmup_steps:] == 1)).sum() / (
-                                fold['val']['y'][config.warmup_steps:] == 1).sum()
-                    specificity = ((val_pred[config.warmup_steps:] == 0) & (fold['val']['y'][config.warmup_steps:] == 0)).sum() / (
-                                fold['val']['y'][config.warmup_steps:] == 0).sum()
-                    auc = roc_auc_score(fold['val']['y'][config.warmup_steps:], val_pred[config.warmup_steps:])
+                                                torch.tensor(test_set[config.targets].values, dtype=torch.float32)[
+                                                config.warmup_steps:].to(device))
+                    loss = float(loss.to('cpu').detach())
+                    losses.append(loss)
+                total_loss = sum(losses) / len(losses)
+                print('Total val loss:', total_loss)
+                log = {f'val_loss_{set_id}': loss for set_id, loss in enumerate(losses)}
+                log['total_val_loss'] = total_loss
+                wandb.log(log, step=epoch)
 
-                    wandb.log({'val_loss': loss, 'val_accuracy': accuracy, 'sensitivity': sensitivity,
-                               'specificity': specificity, 'auc': auc})
+                if total_loss < best_val_loss:
+                    best_val_loss = total_loss
+                    best_epoch = epoch
+                    epochs_no_improve = 0
+                else:
+                    epochs_no_improve += 5
+                if epochs_no_improve > patience:
+                    print('Early stopping, epoch:', epoch)
+                    break
 
-                    if loss < best_val_loss:
-                        best_val_loss = loss
-                        epochs_no_improve = 0
-                    else:
-                        epochs_no_improve += 50
-                    if epochs_no_improve > patience:
-                        print('Early stopping')
-                        break
-
-            mean_best_val_loss += best_val_loss
-            mean_used_epochs += used_epochs
-        mean_best_val_loss /= len(used_folds)
-        mean_used_epochs /= len(used_folds)
-
-        wandb.log({'mean_best_val_loss': mean_best_val_loss, 'used_epochs': mean_used_epochs})
+        wandb.run.summary['used_epochs'] = used_epochs
+        wandb.run.summary['best_epoch'] = best_epoch
+        wandb.run.summary['best_val_loss'] = best_val_loss
 
 def plot_auc_roc(y_true, y_scores, name):
     # Calculate AUC
@@ -96,27 +107,34 @@ class Config:
             setattr(self, key, value)
 
 
-
 class TSDataset(Dataset):
-    def __init__(self, data, features, targets, sequence_len, index_shift=0):
-        self.data = data
-        self.data = self.data.astype('float32')
+    def __init__(self, data_sources, features, targets, sequence_len, index_shift=0):
+        self.data_sources = data_sources
+        for i in range(len(self.data_sources)):
+            self.data_sources[i] = self.data_sources[i].astype('float32')
         self.features = features
         self.targets = targets
         self.sequence_len = sequence_len
         self.index_shift = index_shift
+        self.lengths = [len(data) // self.sequence_len - 1 for data in self.data_sources]
+        self.starts = [0] + [sum(self.lengths[:i]) for i in range(1, len(self.lengths))]
 
     def __len__(self):
-        return len(self.data) // self.sequence_len - 1
+        return sum(self.lengths)
 
     def __getitem__(self, idx):
-        x = self.data.loc[idx * self.sequence_len + self.index_shift: (idx + 1) * self.sequence_len+ self.index_shift - 1, self.features].values
-        y = self.data.loc[idx * self.sequence_len + self.index_shift: (idx + 1) * self.sequence_len+ self.index_shift - 1, self.targets].values
+        set_idx = -1
+        for start in self.starts:
+            if idx < start:
+                break
+            set_idx += 1
+        idx = idx - self.starts[set_idx]
+        x = torch.tensor(self.data_sources[set_idx].loc[idx * self.sequence_len + self.index_shift: (idx + 1) * self.sequence_len + self.index_shift - 1, self.features].values).to(device)
+        y = torch.tensor(self.data_sources[set_idx].loc[idx * self.sequence_len + self.index_shift: (idx + 1) * self.sequence_len + self.index_shift - 1, self.targets].values).to(device)
         return x, y
 
     def set_index_shift(self, shift):
         self.index_shift = shift
-
 
 class TSDataLoader(DataLoader):
     def __init__(self, *args, **kwargs):

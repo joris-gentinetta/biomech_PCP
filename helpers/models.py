@@ -63,11 +63,12 @@ class CNNClassifier(nn.Module):
 class TorchTimeSeriesClassifier:
     def __init__(self, input_size, hidden_size, output_size, n_epochs, seq_len, learning_rate, warmup_steps, num_layers, model_type):
         self.model_type = model_type
+        self.device = torch.device("cpu")
         if self.model_type == 'CNN':
             self.model = CNNClassifier(input_size, hidden_size, output_size, num_layers)
         else:
             self.model = RNNClassifier(input_size, hidden_size, output_size, num_layers, self.model_type)
-        self.train_criterion = nn.MSELoss(reduction='sum')
+        self.train_criterion = nn.MSELoss(reduction='mean')
         self.eval_criterion = nn.MSELoss(reduction='mean')
         self.optimizer = optim.Adam(self.model.parameters(), lr=learning_rate)
         # self.sigmoid = nn.Sigmoid()
@@ -81,7 +82,7 @@ class TorchTimeSeriesClassifier:
         for x, y in dataloader:
 
             if self.model_type == 'LSTM':
-                states = (torch.zeros(self.model.num_layers, dataloader.batch_size, self.model.hidden_size), torch.zeros(self.model.num_layers, 1, self.model.hidden_size))
+                states = (torch.zeros(self.model.num_layers, dataloader.batch_size, self.model.hidden_size), torch.zeros(self.model.num_layers, dataloader.batch_size, self.model.hidden_size))
             else:
                 states = torch.zeros(self.model.num_layers, dataloader.batch_size, self.model.hidden_size)
 
@@ -103,7 +104,7 @@ class TorchTimeSeriesClassifier:
 
     def predict(self, test_set, features):
         self.model.eval()
-        X_test = torch.tensor(test_set.loc[:, features].values, dtype=torch.float32).unsqueeze(0)
+        X_test = torch.tensor(test_set.loc[:, features].values, dtype=torch.float32).unsqueeze(0).to(self.device)
         with torch.no_grad():
             if self.model_type == 'LSTM':
                 states = (torch.zeros(self.model.num_layers, 1, self.model.hidden_size), torch.zeros(self.model.num_layers, 1, self.model.hidden_size))
@@ -113,6 +114,11 @@ class TorchTimeSeriesClassifier:
             y_pred, _ = self.model(X_test, states=states)
             # y_pred = self.sigmoid(y_pred).squeeze()
         return y_pred
+
+    def to(self, device):
+        self.device = device
+        self.model.to(device)
+        return self
 
 
 
