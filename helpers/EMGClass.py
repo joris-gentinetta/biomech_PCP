@@ -99,7 +99,7 @@ class EMG():
     def initFilters(self):
         self.powerLineFilterArray = BesselFilterArr(numChannels=self.numElectrodes, order=8, critFreqs=[58, 62], fs=self.samplingFreq, filtType='bandstop') # remove power line noise and multiples up to 600 Hz
         self.highPassFilters = BesselFilterArr(numChannels=self.numElectrodes, order=4, critFreqs=10, fs=self.samplingFreq, filtType='highpass') # high pass removes motion artifacts and drift
-        self.lowPassFilters = BesselFilterArr(numChannels=self.numElectrodes, order=4, critFreqs=240, fs=self.samplingFreq, filtType='lowpass') # low pass to remove noise
+        self.lowPassFilters = BesselFilterArr(numChannels=self.numElectrodes, order=4, critFreqs=500, fs=self.samplingFreq, filtType='lowpass') # low pass to remove noise
         self.envelopeFilters = BesselFilterArr(numChannels=self.numElectrodes, order=4, critFreqs=4, fs=self.samplingFreq, filtType='lowpass') # smooth the envelope, when not using 'actually' integrated EMG
     def startCommunication(self):
         # set the emg thread up here

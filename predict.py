@@ -12,7 +12,6 @@ from os.path import join
 parser = argparse.ArgumentParser(description='Timeseries data analysis')
 parser.add_argument('-v', '--visualize', action='store_true', help='Plot data exploration results')
 parser.add_argument('-hs', '--hyperparameter_search', action='store_true', help='Perform hyperparameter search')
-parser.add_argument('-d', '--debug', action='store_true', help='Use debug mode')
 parser.add_argument('-t', '--test', action='store_true', help='Test the model')
 args = parser.parse_args()
 
@@ -26,7 +25,7 @@ angles = pd.read_parquet(f'{data_dir}/{angles_file}')
 emg = np.load(f'{data_dir}/{emg_file}')
 
 side = 'Left'
-channels = [1, 2, 3, 4, 5, 8, 9, 10, 11, 12, 13, 14, 15]
+channels = [0, 1, 2, 3, 4, 5, 8, 9, 10, 11, 12, 13, 14, 15]
 features = [('emg', channel) for channel in channels]
 targets = ['indexAng', 'midAng', 'ringAng', 'pinkyAng', 'thumbInPlaneAng', 'thumbOutPlaneAng', 'elbowAngle', 'wristRot', 'wristFlex']
 targets = [(side, target) for target in targets]
@@ -71,6 +70,12 @@ if args.hyperparameter_search:
             'goal': 'minimize'
         },
         'parameters': {
+            'features': {
+                'value': features
+            },
+            'targets': {
+                'value': targets
+            },
             'max_n_epochs': {
                 'value': 2500
             },
@@ -99,7 +104,7 @@ if args.hyperparameter_search:
     }
 
     sweep_id = wandb.sweep(sweep_config, project="sovn_5")
-    wandb.agent(sweep_id, lambda config=None: train_model([folds[0]], config))
+    wandb.agent(sweep_id, lambda config=None: train_model(train, config))
 
 
 if args.test:

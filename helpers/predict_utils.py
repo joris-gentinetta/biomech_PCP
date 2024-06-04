@@ -8,7 +8,7 @@ from torch.utils.data import Dataset, DataLoader
 import random
 
 
-def train_model(used_folds, config=None):
+def train_model(train, config=None):
     with wandb.init(config):
         config = wandb.config
 
@@ -17,9 +17,9 @@ def train_model(used_folds, config=None):
 
 
         for fold in used_folds:
-            dataset = TSDataset(train, features, ['y'], sequence_len=125)
+            dataset = TSDataset(train, config.features, ['y'], sequence_len=125)
             dataloader = TSDataLoader(dataset, batch_size=2, shuffle=True)
-            model = TorchTimeSeriesClassifier(input_size=len(features), hidden_size=config.hidden_size, n_epochs=config.max_n_epochs,
+            model = TorchTimeSeriesClassifier(input_size=len(config.features), hidden_size=config.hidden_size, n_epochs=config.max_n_epochs,
                                               seq_len=config.seq_len, learning_rate=config.learning_rate,
                                               warmup_steps=config.warmup_steps, num_layers=config.n_layers,
                                               model_type=config.model_type)

@@ -77,7 +77,7 @@ def run_mediapipe(cap, frames, video_timestamps, sides, scales, hand_roi_size, p
             cropped_frame = frame[y_start:y_end, x_start:x_end]
             #todo make sure the frame is not empty
             rgb_cropped_frame = cv2.cvtColor(cropped_frame, cv2.COLOR_BGR2RGB)
-            if frame_id == 1:
+            if frame_id == 1 and not process:
                 plt.imshow(rgb_cropped_frame)
                 # add axis values:
                 plt.gca().set_xticks([0, roi_half_size * 2])
@@ -138,6 +138,8 @@ if __name__ == "__main__":
     parser.add_argument('--hand_roi_size', type=int, default=800, help='Hand ROI size')
     parser.add_argument('--plane_frames_start', type=int, default=0, help='Start of the plane frames')
     parser.add_argument('--plane_frames_end', type=int, default=20, help='End of the plane frames')
+    parser.add_argument('--video_start', type=int, default=0, help='Start of the video')
+    parser.add_argument('--video_end', type=int, default=-1, help='End of the video')
     parser.add_argument('--process', action='store_true', help='Process the video')
     args = parser.parse_args()
 
@@ -215,7 +217,7 @@ if __name__ == "__main__":
 
     if args.visualize:
         df3d = pd.read_parquet(join(experiment_dir, "corrected.parquet"))
-        vis = Visualization(experiment_dir, df3d, name_addition="_corrected")
+        vis = Visualization(experiment_dir, df3d, start_frame=args.video_start, end_frame=args.video_end, name_addition="_corrected")
 
     corrected = pd.read_parquet(join(experiment_dir, "corrected.parquet"))
     anglesHelper = AnglesHelper()
@@ -223,3 +225,15 @@ if __name__ == "__main__":
     angles_df.to_parquet(join(experiment_dir, "angles.parquet"))
     smooth_angles_df = anglesHelper.apply_gaussian_smoothing(angles_df, sigma=1.5, radius=2)
     smooth_angles_df.to_parquet(join(experiment_dir, "smooth_angles.parquet"))
+
+    # crop after plane frames
+    start = args.video_start
+    end = args.video_end
+    angles_df = pd.read_parquet(join(experiment_dir, "angles.parquet"))
+    angles_df = angles_df.loc[start:end-1]
+    angles_df.to_parquet(join(experiment_dir, "cropped_angles.parquet"))
+    smooth_angles_df = pd.read_parquet(join(experiment_dir, "smooth_angles.parquet"))
+    smooth_angles_df = smooth_angles_df.loc[start:end-1]
+    smooth_angles_df.to_parquet(join(experiment_dir, "cropped_smooth_angles.parquet"))
+    emg = np.load(join(experiment_dir, "aligned_emg.npy"))
+    np.save(join(experiment_dir, "cropped_aligned_emg.npy"), emg[start:end])

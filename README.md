@@ -91,14 +91,6 @@ The `process_video.py` script is used to process the video data. It first gets t
 finally computes the angles and saves them to a dataframe. It has several command line arguments that you can use to
 customize its behavior:
 
-    parser.add_argument('--data_dir', type=str, required=True, help='Output directory')
-    parser.add_argument('--experiment_name', type=str, required=True, help='Experiment name')
-    parser.add_argument('--visualize', action='store_true', help='Visualize the output')
-    parser.add_argument('--intact_hand', type=str, default=None, help='Intact hand')
-    parser.add_argument('--hand_roi_size', type=int, default=800, help='Hand ROI size')
-    parser.add_argument('--plane_frames_start', type=int, default=0, help='Start of the plane frames')
-    parser.add_argument('--plane_frames_end', type=int, default=20, help='End of the plane frames')
-    parser.add_argument('--process', action='store_true', help='Process the video')
 
 - `--data_dir`: This argument is required. It specifies the directory where the video data is stored.
 
@@ -114,6 +106,8 @@ customize its behavior:
 
 - `--plane_frames_start`, `--plane_frames_end`: These arguments are optional with default values of 0 and 20 respectively. They define the range of frames that are used to get the arm lengths in the 0 plane.
 
+- `--video_start`, `--video_end`: This argument is optional with a default value of -1. It specifies the end frame of the video, used to produce "cropped_" files
+
 - `--process`: This argument is optional. If used, the script will process the video. If not used, the script will only
   display the video and a sample of hand ROIs.
 
@@ -121,6 +115,38 @@ customize its behavior:
 First you can run the script without the `--process` argument to determine the hand ROI size and the plane frames:
 ```bash
 python process_video.py --data_dir data/joris/test --experiment_name 1
+
+python process_video.py --data_dir data/linda/minJerk/digitsFlEx --experiment_name 1 --hand_roi_size 450
+python process_video.py --data_dir data/linda/minJerk/digitsFlEx --experiment_name 1 --hand_roi_size 450 --visualize --intact_hand Left --plane_frames_start 200 --plane_frames_end 500 --video_start 500 --video_end 2200 --process
+
+python process_video.py --data_dir data/linda/minJerk/fingersFlEx --experiment_name 1 --hand_roi_size 450
+python process_video.py --data_dir data/linda/minJerk/fingersFlEx --experiment_name 1 --hand_roi_size 450 --visualize --intact_hand Left --plane_frames_start 200 --plane_frames_end 500 --video_start 500 --video_end 2400 --process
+
+python process_video.py --data_dir data/linda/minJerk/handCloseOpen --experiment_name 1 --hand_roi_size 450
+python process_video.py --data_dir data/linda/minJerk/handCloseOpen --experiment_name 1 --hand_roi_size 450 --visualize --intact_hand Left --plane_frames_start 100 --plane_frames_end 400 --video_start 400 --video_end 2200 --process
+
+python process_video.py --data_dir data/linda/minJerk/indexFlEx --experiment_name 1 --hand_roi_size 450
+python process_video.py --data_dir data/linda/minJerk/indexFlEx --experiment_name 1 --hand_roi_size 450 --visualize --intact_hand Left --plane_frames_start 100 --plane_frames_end 400 --video_start 450 --video_end 3700 --process
+
+python process_video.py --data_dir data/linda/minJerk/indexFlexDigtisEx --experiment_name 1 --hand_roi_size 450
+python process_video.py --data_dir data/linda/minJerk/indexFlexDigtisEx --experiment_name 1 --hand_roi_size 450 --visualize --intact_hand Left --plane_frames_start 150 --plane_frames_end 500 --video_start 550 --video_end 2400 --process
+
+python process_video.py --data_dir data/linda/minJerk/pinchCloseOpen --experiment_name 1 --hand_roi_size 450
+python process_video.py --data_dir data/linda/minJerk/pinchCloseOpen --experiment_name 1 --hand_roi_size 450 --visualize --intact_hand Left --plane_frames_start 100 --plane_frames_end 400 --video_start 500 --video_end 2000 --process
+
+python process_video.py --data_dir data/linda/minJerk/thumbFlEx --experiment_name 1 --hand_roi_size 450
+python process_video.py --data_dir data/linda/minJerk/thumbFlEx --experiment_name 1 --hand_roi_size 450 --visualize --intact_hand Left --plane_frames_start 100 --plane_frames_end 400 --video_start 450 --video_end 2400 --process
+
+python process_video.py --data_dir data/linda/minJerk/wristFlEx --experiment_name 1 --hand_roi_size 450
+python process_video.py --data_dir data/linda/minJerk/wristFlEx --experiment_name 1 --hand_roi_size 450 --visualize --intact_hand Left --plane_frames_start 100 --plane_frames_end 400 --video_start 650 --video_end 2500 --process
+
+python process_video.py --data_dir data/linda/minJerk/wristFlexHandClose --experiment_name 1 --hand_roi_size 450
+python process_video.py --data_dir data/linda/minJerk/wristFlexHandClose --experiment_name 1 --hand_roi_size 450 --visualize --intact_hand Left --plane_frames_start 100 --plane_frames_end 400 --video_start 500 --video_end 2500 --process
+
+python process_video.py --data_dir data/linda/minJerk/wristFlexHandOpen --experiment_name 1 --hand_roi_size 450
+python process_video.py --data_dir data/linda/minJerk/wristFlexHandOpen --experiment_name 1 --hand_roi_size 450 --visualize --intact_hand Left --plane_frames_start 150 --plane_frames_end 500 --video_start 600 --video_end 2800 --process
+
+
 ```
 
 Then you can run the script with the `--process` argument to process the video:

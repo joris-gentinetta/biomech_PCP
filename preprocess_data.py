@@ -1,6 +1,8 @@
 import argparse
 import os
 from os.path import join
+
+import pandas as pd
 from tqdm import tqdm
 
 import cv2
@@ -69,11 +71,12 @@ def trigger_crop_video(data_dir):
 
                 plt.imshow(frame)
                 if record_frame:
-                    title = f'End trigger, frame {frame_count}'
+                    title = f'End_trigger_frame-{frame_count}'
                 else:
-                    title = f'Start trigger, frame {frame_count}'
+                    title = f'Start_trigger_frame-{frame_count}'
                 plt.title(title)
-                plt.show()
+                # plt.show()
+                plt.savefig(join(data_dir, f'trigger_frame_{frame_count}.png'))
                 if record_frame:
                     break
 
@@ -120,6 +123,13 @@ def trigger_crop_emg(cap, data_dir, trigger_channel, trigger_value):
             start_frame = i
             print(f'start_frame: {i}')
 
+    plt.figure(figsize=(10, 5))
+    plt.plot(emg[:, args.trigger_channel])
+    plt.title(f'start: {start_frame}, end: {end_frame}')
+    # plt.show()
+    plt.savefig(join(args.data_dir, 'trigger_channel.png'))
+
+
     assert start_frame != -1 and end_frame != -1, 'Could not find trigger in EMG data.'
 
     triggered_emg = emg[start_frame:end_frame]
@@ -136,7 +146,7 @@ def trigger_crop_emg(cap, data_dir, trigger_channel, trigger_value):
 def filter_emg(data_dir):
     emg_data = np.load(join(data_dir, 'triggered_emg.npy')).T
     emg_timestamps = np.load(join(data_dir, 'triggered_emg_timestamps.npy'))
-    sf = (len(emg_timestamps) - 1) / (emg_timestamps[-1] - emg_timestamps[0])
+    sf = (len(emg_timestamps) - 1) * 10**6 / (emg_timestamps[-1] - emg_timestamps[0])
     emg = EMG(samplingFreq=sf, offlineData=emg_data)
     emg.startCommunication()
     emg.emgThread.join()
@@ -150,6 +160,16 @@ def filter_emg(data_dir):
     # max_vals = np.percentile(filtered_emg, 99, axis=1)
     min_vals = filtered_emg.min(axis=1)
     max_vals = filtered_emg.max(axis=1)
+    min_vals[:] = 10
+
+    max_vals[0] = 400
+    max_vals[1] = 40
+    max_vals[2] = 150
+    max_vals[4] = 200
+    max_vals[5] = 250
+    max_vals[8] = 150
+    max_vals[10] = 400
+    max_vals[11] = 300
     normalized_emg = np.clip((filtered_emg - min_vals[:, None]) / (max_vals - min_vals)[:, None], 0, 1)
     np.save(join(data_dir, 'min_norm_vals.npy'), min_vals)
     np.save(join(data_dir, 'max_norm_vals.npy'), max_vals)
@@ -216,6 +236,21 @@ if __name__ == '__main__':
 
     args = parser.parse_args()
 
+    if not os.path.exists(join(args.data_dir, 'video.mp4')):
+        # find MP4 file in data_dir and rename to video.mp4
+        for file in os.listdir(args.data_dir):
+            if file.endswith('.MP4'):
+                os.rename(join(args.data_dir, file), join(args.data_dir, 'video.mp4'))
+                break
+    if not os.path.exists(join(args.data_dir, 'emg.npy')):
+        for file in os.listdir(args.data_dir):
+            if file.endswith('.csv'):
+                emg = pd.read_csv(join(args.data_dir, file), delimiter='\t')
+                emg = emg.to_numpy()
+                np.save(join(args.data_dir, 'emg.npy'), emg[:, 0:16])
+                np.save(join(args.data_dir, 'emg_timestamps.npy'), emg[:, 19])
+                break
+
     if not os.path.exists(join(args.data_dir, 'triggered_video.mp4')):
         trigger_crop_video(args.data_dir)  # produces triggered_video_timestamps.npy for webcam case
     cap = cv2.VideoCapture(join(args.data_dir, 'triggered_video.mp4'))
@@ -267,9 +302,12 @@ if __name__ == '__main__':
 
     else:
         emg = np.load(join(args.data_dir, 'emg.npy'))
+        # make the plot higher
+        plt.figure(figsize=(10, 5))
         plt.plot(emg[:, args.trigger_channel])
         plt.title(f'Trigger value: {args.trigger_value}')
         plt.show()
+        # plt.savefig(join(args.data_dir, 'trigger_channel.png'))
 
         subprocess.run(['python', 'video_gui.py', '--file', join(args.data_dir, 'triggered_video.mp4')])
 

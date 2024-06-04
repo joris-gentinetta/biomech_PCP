@@ -38,12 +38,14 @@ logging.getLogger('matplotlib').setLevel(logging.WARNING)
 
 
 class Visualization():
-    def __init__(self, data_dir, df_3d, alternative=True, name_addition=""):
+    def __init__(self, data_dir, df_3d, start_frame, end_frame, alternative=True, name_addition=""):
         """
         This function takes as an input the video and outputs a video 
         with the original video with the 2D joints and the 3D plot.  
         """
         self.data_dir = data_dir
+        self.start_frame = start_frame
+        self.end_frame = end_frame
         self.name_addition = name_addition
         self.video_fnm = join(data_dir, 'cropped_video.mp4')
         self.df_3d = df_3d.copy().sort_index(axis=1)
@@ -178,13 +180,15 @@ class Visualization():
 
 
     def initVideo(self):
-        i = 0
+        i = self.start_frame
         fig = plt.figure(figsize=(22,12))
         spec = gridspec.GridSpec(ncols = 3, nrows = 1, width_ratios = [1.8, 1, 1],
                                 wspace = 0.1, hspace = 0.1 )
 
         # Video frames plot
         axv = fig.add_subplot(spec[0])
+        for frame in range(self.start_frame):
+            self.vcap.read()
         video_frame = self.vcap.read()[1]
         video_frame = cv2.cvtColor(video_frame, cv2.COLOR_BGR2RGB)
         self.vplot = axv.imshow(video_frame)
@@ -265,13 +269,12 @@ class Visualization():
         # Animation
         fig = self.initVideo()
         print('Creating animation...')
-        pbar = tqdm(total=self.number_frames)
-
+        pbar = tqdm(total=self.end_frame - self.start_frame)
+        pbar.update(1)
         anim = animation.FuncAnimation(fig, lambda i: self.update_lines(i, pbar),
-                                            frames = range(1, self.number_frames), interval = 1,
+                                            frames = range(self.start_frame + 1, self.end_frame), interval = 1,
                                             blit = False, repeat = False, cache_frame_data = False)
         writervideo = animation.FFMpegWriter(fps=self.fps, codec="libx264")
         anim.save(join(self.data_dir, f'visualization{self.name_addition}.mp4'), writer = writervideo)
-
 
         logging.info('Video saved!')

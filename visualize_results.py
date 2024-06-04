@@ -5,7 +5,8 @@ from time import sleep
 import argparse
 from os.path import join
 from helpers.utils import AnglesHelper
-multiplier = 1.05851325 # todo compare to real hand
+multiplier = 1.05851325
+offset = 0.72349796
 
 
 def get_joints_of_type(body_id, joint_type):
@@ -22,7 +23,7 @@ def get_joints_of_type(body_id, joint_type):
 def move_finger(finger, angle):
     id0, id1 = joint_ids[finger][0], joint_ids[finger][1]
     p.setJointMotorControl2(handId, id0, p.POSITION_CONTROL, targetPosition=angle)
-    p.setJointMotorControl2(handId, id1, p.POSITION_CONTROL, targetPosition=angle * multiplier + 0.6) # todo compare to real hand
+    p.setJointMotorControl2(handId, id1, p.POSITION_CONTROL, targetPosition=angle * multiplier + offset)
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='Capture a video.')
@@ -32,7 +33,7 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     cap = cv2.VideoCapture(join(args.data_dir, 'experiments', args.experiment_name, 'visualization_corrected.mp4'))
-    angles = pd.read_parquet(join(args.data_dir, 'experiments', args.experiment_name, 'angles.parquet'))
+    angles = pd.read_parquet(join(args.data_dir, 'experiments', args.experiment_name, 'cropped_smooth_angles.parquet'))
 
 
     ###########################################
@@ -61,15 +62,15 @@ if __name__ == "__main__":
     # cap.release()
     # out.release()
     ###########################################
-    cap = cv2.VideoCapture('visualization_test.mp4')
-    angles = pd.read_parquet(join(args.data_dir, 'experiments', args.experiment_name, 'test_angles_GRU.parquet'))
+    # cap = cv2.VideoCapture('visualization_test.mp4')
+    # angles = pd.read_parquet(join(args.data_dir, 'experiments', args.experiment_name, 'test_angles_GRU.parquet'))
     # reindex:
     angles.index = range(len(angles))
 
 
     # angles.loc[:, :] = 0  # todo
-    anglesHelper = AnglesHelper()
-    angles = anglesHelper.apply_gaussian_smoothing(angles, sigma=1.5, radius=2) #todo
+    # anglesHelper = AnglesHelper()
+    # angles = anglesHelper.apply_gaussian_smoothing(angles, sigma=1.5, radius=2) #todo
     physicsClient = p.connect(p.GUI)
     p.setGravity(0, 0, -10)
 
