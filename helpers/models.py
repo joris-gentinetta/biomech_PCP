@@ -76,7 +76,12 @@ class TorchTimeSeriesClassifier:
         self.seq_len = seq_len
         self.warmup_steps = warmup_steps
 
+    def save(self, path):
+        torch.save(self.model.state_dict(), path)
 
+    def load(self, path):
+        self.model.load_state_dict(torch.load(path))
+        return self
     def train_one_epoch(self, dataloader):
         self.model.train()
         for x, y in dataloader:
@@ -100,6 +105,7 @@ class TorchTimeSeriesClassifier:
             self.optimizer.zero_grad()
             loss.backward()
             self.optimizer.step()
+
 
 
     def predict(self, test_set, features):

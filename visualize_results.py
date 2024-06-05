@@ -1,3 +1,5 @@
+import os.path
+
 import pandas as pd
 import pybullet as p
 import cv2
@@ -30,41 +32,45 @@ if __name__ == "__main__":
     parser.add_argument('--data_dir', type=str, required=True, help='Output directory')
     parser.add_argument('--experiment_name', type=str, required=True, help='Experiment name')
     parser.add_argument('--intact_hand', type=str, default=None, help='Intact hand')
+    parser.add_argument('--model', type=str, default=None, help='Model name')
     args = parser.parse_args()
 
     cap = cv2.VideoCapture(join(args.data_dir, 'experiments', args.experiment_name, 'visualization_corrected.mp4'))
     angles = pd.read_parquet(join(args.data_dir, 'experiments', args.experiment_name, 'cropped_smooth_angles.parquet'))
 
+    if args.model:
+        if not os.path.exists(join(args.data_dir, 'experiments', args.experiment_name, 'visualization_test.mp4')):
+            ##########################################
+            # make a new video with all frames after len(angles)//5 * 4:
+            import cv2
+            from os.path import join
 
-    ###########################################
-    # # make a new video with all frames after len(angles)//5 * 4:
-    # import cv2
-    # from os.path import join
-    #
-    # # Define the codec and create a VideoWriter object
-    # fourcc = cv2.VideoWriter_fourcc(*'mp4v')  # or use 'XVID'
-    # out = cv2.VideoWriter('visualization_test.mp4', fourcc, cap.get(cv2.CAP_PROP_FPS),
-    #                       (int(cap.get(cv2.CAP_PROP_FRAME_WIDTH)), int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))))
-    #
-    # # Skip the first 19 frames
-    # for _ in range(len(angles)//5 * 4):
-    #     cap.read()
-    #
-    # # Read and write the remaining frames to the new video
-    # while (cap.isOpened()):
-    #     ret, frame = cap.read()
-    #     if ret:
-    #         out.write(frame)
-    #     else:
-    #         break
-    #
-    # # Release everything when job is finished
-    # cap.release()
-    # out.release()
-    ###########################################
-    # cap = cv2.VideoCapture('visualization_test.mp4')
-    # angles = pd.read_parquet(join(args.data_dir, 'experiments', args.experiment_name, 'test_angles_GRU.parquet'))
-    # reindex:
+            # Define the codec and create a VideoWriter object
+            fourcc = cv2.VideoWriter_fourcc(*'mp4v')  # or use 'XVID'
+            out = cv2.VideoWriter(join(args.data_dir, 'experiments', args.experiment_name, 'visualization_test.mp4'), fourcc, cap.get(cv2.CAP_PROP_FPS),
+                                  (int(cap.get(cv2.CAP_PROP_FRAME_WIDTH)), int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))))
+
+            for _ in range(len(angles)//5 * 4):
+                ret, frame = cap.read()
+
+            # Read and write the remaining frames to the new video
+            while (cap.isOpened()):
+                ret, frame = cap.read()
+                if ret:
+                    out.write(frame)
+                else:
+                    break
+
+            # Release everything when job is finished
+            cap.release()
+            out.release()
+            ##########################################
+        cap = cv2.VideoCapture(join(args.data_dir, 'experiments', args.experiment_name, 'visualization_test.mp4'))
+        angles = pd.read_parquet(join(args.data_dir, 'experiments', args.experiment_name, f'pred_angles_{args.model}.parquet')) #todo
+        # angles.index = range(len(angles))
+        # angles = angles.loc[len(angles)//5 * 4:].copy()
+    ######
+
     angles.index = range(len(angles))
 
 
@@ -80,11 +86,11 @@ if __name__ == "__main__":
     handId = p.loadURDF(urdf_path, handStartPos, handStartOrientation,
                         flags=p.URDF_USE_SELF_COLLISION, useFixedBase=True)
 
-    visual_shape_id = p.createVisualShape(shapeType=p.GEOM_SPHERE, radius=0.01, rgbaColor=[1, 0, 0, 1])
-    point_id = p.createMultiBody(baseMass=0,
-                                 baseInertialFramePosition=[0, 0, 0],
-                                 baseVisualShapeIndex=visual_shape_id,
-                                 basePosition=[0, 0, 1])
+    # visual_shape_id = p.createVisualShape(shapeType=p.GEOM_SPHERE, radius=0.01, rgbaColor=[1, 0, 0, 1])
+    # point_id = p.createMultiBody(baseMass=0,
+    #                              baseInertialFramePosition=[0, 0, 0],
+    #                              baseVisualShapeIndex=visual_shape_id,
+    #                              basePosition=[0, 0, 1])
 
     joints_of_type_0 = get_joints_of_type(handId, 0)
 
@@ -104,10 +110,10 @@ if __name__ == "__main__":
         move_finger('ring', angles.loc[i, (args.intact_hand, 'ringAng')])
         move_finger('pinky', angles.loc[i, (args.intact_hand, 'pinkyAng')])
 
-        x = angles.loc[i, (args.intact_hand, 'thumb_x')]
-        y = angles.loc[i, (args.intact_hand, 'thumb_y')]
-        z = angles.loc[i, (args.intact_hand, 'thumb_z')]
-        p.resetBasePositionAndOrientation(point_id, [x, y, z], [0, 0, 0, 1])
+        # x = angles.loc[i, (args.intact_hand, 'thumb_x')]
+        # y = angles.loc[i, (args.intact_hand, 'thumb_y')]
+        # z = angles.loc[i, (args.intact_hand, 'thumb_z')]
+        # p.resetBasePositionAndOrientation(point_id, [x, y, z], [0, 0, 0, 1])
 
 
         #thumb:

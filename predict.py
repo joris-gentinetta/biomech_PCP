@@ -1,22 +1,28 @@
 import argparse
 import math
+import os
+
+import torch
+from helpers.models import TorchTimeSeriesClassifier
 
 import matplotlib.pyplot as plt
 import numpy as np
+from os.path import join
 import pandas as pd
 from time import time
 import wandb
-from helpers.predict_utils import Config, train_model
+from helpers.predict_utils import Config, train_model, TSDataset, TSDataLoader
 
 parser = argparse.ArgumentParser(description='Timeseries data analysis')
 parser.add_argument('-v', '--visualize', action='store_true', help='Plot data exploration results')
 parser.add_argument('-hs', '--hyperparameter_search', action='store_true', help='Perform hyperparameter search')
 parser.add_argument('-t', '--test', action='store_true', help='Test the model')
+parser.add_argument('-s', '--save_model', action='store_true', help='Save a model')
 args = parser.parse_args()
 
 # load the data:
-angles_file = 'smooth_angles.parquet'
-emg_file = 'aligned_emg.npy'
+angles_file = 'cropped_smooth_angles.parquet'
+emg_file = 'cropped_aligned_emg.npy'
 side = 'Left'
 sampling_frequency = 60
 
@@ -39,9 +45,11 @@ targets = ['indexAng', 'midAng', 'ringAng', 'pinkyAng', 'thumbInPlaneAng', 'thum
 targets = [(side, target) for target in targets]
 trainsets = []
 testsets = []
+combined_sets = []
 for recording in recordings:
     data_dir = f'/Users/jg/projects/biomech/DataGen/data/linda/minJerk/{recording}/experiments/1'
     angles = pd.read_parquet(f'{data_dir}/{angles_file}')
+    angles.index = range(len(angles))
     emg = np.load(f'{data_dir}/{emg_file}')
 
     data = angles[targets].copy()
@@ -64,11 +72,12 @@ for recording in recordings:
         data[targets].plot(subplots=True)
         plt.show()
 
-    test_set = data.iloc[len(data) // 5 * 4:].copy()
-    test_angles = angles.iloc[len(data) // 5 * 4:].copy()
-    train = data.iloc[: len(data) // 5 * 4].copy()
+    test_set = data.loc[len(data) // 5 * 4:].copy()
+    # test_angles = angles.iloc[len(data) // 5 * 4:].copy()
+    train = data.loc[: len(data) // 5 * 4].copy()
     trainsets.append(train)
     testsets.append(test_set)
+    combined_sets.append(data.copy())
 
 # number of steps to warm up the model before evaluating the loss function:
 warmup_steps = 10
@@ -94,7 +103,7 @@ if args.hyperparameter_search:
                 'value': 10
             },
             'learning_rate': {
-                'values': [0.1, 0.01, 0.001, 0.0001]
+                'values': [0.01, 0.001]
             },
             'hidden_size': {
                 'values': [10, 20]
@@ -117,9 +126,9 @@ if args.hyperparameter_search:
 if args.test:
     cnn_config = Config({'features': features,
                          'targets': targets,
-                         'n_epochs': 2,
+                         'n_epochs': 55,
                          'warmup_steps': 10,
-                         'learning_rate': 0.005,
+                         'learning_rate': 0.01,
                          'hidden_size': 10,
                          'seq_len': 125,
                          'n_layers': 2,
@@ -127,33 +136,64 @@ if args.test:
                         )
     configs = {'CNN': cnn_config}
     for name, config in configs.items():
-        train_model(trainsets, testsets, mode='disabled', config=config)
-        # for test_set in testsets:
-        #     pred = model.predict(test_set, features)
-        #     pred = pred.detach().numpy().squeeze()
-        #     test_angles.loc[:, targets] = np.clip(pred, 0, 1) * math.pi
-        #     data.loc[:, (side, 'thumbInPlaneAng')] = data.loc[:, (side, 'thumbInPlaneAng')] - math.pi
-        #     data.loc[:, (side, 'wristRot')] = (data.loc[:, (side, 'wristRot')] * 2) - math.pi
-        #     data.loc[:, (side, 'wristFlex')] = (data.loc[:, (side, 'wristFlex')] - math.pi / 2)
-            # test_angles.to_parquet(join(data_dir, f'test_angles_{name}.parquet'))
+        device = torch.device("cpu")
+        model = TorchTimeSeriesClassifier(input_size=len(config.features), hidden_size=config.hidden_size,
+                                          output_size=len(config.targets), n_epochs=config.n_epochs,
+                                          seq_len=config.seq_len,
+                                          learning_rate=config.learning_rate,
+                                          warmup_steps=config.warmup_steps, num_layers=config.n_layers,
+                                          model_type=config.model_type)
+        model.to(device)
+        dataset = TSDataset(trainsets, config.features, config.targets, sequence_len=125)
+        dataloader = TSDataLoader(dataset, batch_size=2, shuffle=True, drop_last=True)
 
-        # preds.append(pred[warmup_steps:])
-        # targets.append(test_set['y'].values[warmup_steps:])
-        #
-        # pred = np.concatenate(preds)
-        # target = np.concatenate(targets)
-        # binary_pred = (pred > 0.5).astype(int)
-        #
-        # accuracy = (binary_pred == target).mean()
-        # sensitivity = ((binary_pred == 1) & (target == 1)).sum() / (target == 1).sum()
-        # specificity = ((binary_pred == 0) & (target == 0)).sum() / (target == 0).sum()
-        # auc = roc_auc_score(target, pred)
-        # plot_auc_roc(target, pred, name)
-        # plot_results(target, pred, binary_pred, name)
-        #
-        #
-        # print('\n#############################################')
-        # print(f'{name} accuracy: {accuracy}')
-        # print(f'{name} sensitivity: {sensitivity}')
-        # print(f'{name} specificity: {specificity}')
-        # print(f'{name} auc: {auc}')
+        for epoch in range(model.n_epochs):
+            model.train_one_epoch(dataloader)
+
+        for set_id, test_set in enumerate(testsets):
+            val_pred = model.predict(test_set, config.features).squeeze(0).to(device).detach().numpy()
+
+            val_pred = np.clip(val_pred, 0, 1) * math.pi
+            test_set[config.targets] = val_pred
+
+            test_set.loc[:, (side, 'thumbInPlaneAng')] = test_set.loc[:, (side, 'thumbInPlaneAng')] - math.pi
+            test_set.loc[:, (side, 'wristRot')] = (test_set.loc[:, (side, 'wristRot')] * 2) - math.pi
+            test_set.loc[:, (side, 'wristFlex')] = (test_set.loc[:, (side, 'wristFlex')] - math.pi / 2)
+            data_dir = f'/Users/jg/projects/biomech/DataGen/data/linda/minJerk/{recordings[set_id]}/experiments/1'
+            test_set.to_parquet(join(data_dir, f'pred_angles_{name}.parquet'))
+
+if args.save_model:
+    gru_config = Config({'features': features,
+                         'targets': targets,
+                         'n_epochs': 35,
+                         'warmup_steps': 10,
+                         'learning_rate': 0.01,
+                         'hidden_size': 10,
+                         'seq_len': 125,
+                         'n_layers': 1,
+                         'model_type': 'GRU'}
+                        )
+    configs = {'GRU': gru_config}
+    for name, config in configs.items():
+        device = torch.device("cpu")
+        model = TorchTimeSeriesClassifier(input_size=len(config.features), hidden_size=config.hidden_size,
+                                          output_size=len(config.targets), n_epochs=config.n_epochs,
+                                          seq_len=config.seq_len,
+                                          learning_rate=config.learning_rate,
+                                          warmup_steps=config.warmup_steps, num_layers=config.n_layers,
+                                          model_type=config.model_type)
+        model.to(device)
+        dataset = TSDataset(combined_sets, config.features, config.targets, sequence_len=125)
+        dataloader = TSDataLoader(dataset, batch_size=2, shuffle=True, drop_last=True)
+
+        train_losses = []
+        for epoch in range(model.n_epochs):
+            loss = model.train_one_epoch(dataloader)
+            train_losses.append(loss)
+
+        plt.plot(train_losses)
+        plt.show()
+
+        model.to(torch.device('cpu'))
+        os.makedirs(f'model_files', exist_ok=True)
+        model.save(f'model_files/{name}.pt')

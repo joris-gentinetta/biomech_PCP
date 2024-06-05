@@ -37,7 +37,7 @@ def train_model(trainsets, testsets, mode='online', config=None):
         best_val_loss = float('inf')
         best_epoch = 0
         epochs_no_improve = 0
-        patience = 15
+        patience = 7
         used_epochs = 0
         for epoch in range(model.n_epochs):
             used_epochs = epoch
@@ -46,7 +46,7 @@ def train_model(trainsets, testsets, mode='online', config=None):
             # end = time()
             # print('Epoch:', epoch, 'Time:', end - start)
 
-            if epoch % 5 == 0:
+            if epoch % 1 == 0:
                 losses = []
                 for set_id, test_set in enumerate(testsets):
                     val_pred = model.predict(test_set, config.features).squeeze(0)
@@ -66,7 +66,7 @@ def train_model(trainsets, testsets, mode='online', config=None):
                     best_epoch = epoch
                     epochs_no_improve = 0
                 else:
-                    epochs_no_improve += 5
+                    epochs_no_improve += 1
                 if epochs_no_improve > patience:
                     print('Early stopping, epoch:', epoch)
                     break
