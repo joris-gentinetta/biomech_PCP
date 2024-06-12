@@ -50,6 +50,7 @@ class BesselFilterArr():
         return filterOut
     
     def filterByIndex(self, sig, channel):
+
         filterOut = np.zeros_like(sig)
 
         for i in channel:

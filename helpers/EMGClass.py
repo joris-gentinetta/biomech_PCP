@@ -50,7 +50,6 @@ class EMG():
         self.samplingFreq = samplingFreq # this SHOULD be 1 kHz - but don't assume that
 
         self.getBounds() # first 16: maximum values, second 16: minimum values
-
         self.getDeltas() # first 8: maximum deltas, second 8: minimum deltas
         if self.usingSynergies:
             self.getSynergyMat() # this is an [nSynergies x usedChannels] array
@@ -102,7 +101,7 @@ class EMG():
     def initFilters(self):
         self.powerLineFilterArray = BesselFilterArr(numChannels=self.numElectrodes, order=8, critFreqs=[58, 62], fs=self.samplingFreq, filtType='bandstop') # remove power line noise and multiples up to 600 Hz
         self.highPassFilters = BesselFilterArr(numChannels=self.numElectrodes, order=4, critFreqs=10, fs=self.samplingFreq, filtType='highpass') # high pass removes motion artifacts and drift
-        self.lowPassFilters = BesselFilterArr(numChannels=self.numElectrodes, order=4, critFreqs=500, fs=self.samplingFreq, filtType='lowpass') # low pass to remove noise
+        self.lowPassFilters = BesselFilterArr(numChannels=self.numElectrodes, order=4, critFreqs=450, fs=self.samplingFreq, filtType='lowpass') # low pass to remove noise
         self.envelopeFilters = BesselFilterArr(numChannels=self.numElectrodes, order=4, critFreqs=4, fs=self.samplingFreq, filtType='lowpass') # smooth the envelope, when not using 'actually' integrated EMG
     def startCommunication(self):
         # set the emg thread up here
@@ -221,7 +220,6 @@ class EMG():
             except OSError as e:
                 print(f'getBounds(): Could not read bounds - {e}')
 
-
     def getDeltas(self):
         try:
             with open(self.deltasPath, 'rb') as fifo:
@@ -258,13 +256,10 @@ class EMG():
                 self.switch1 = emg[19]
                 self.switch2 = emg[20]
                 self.end = emg[21]
-                self.samplingFreq = emg[22]
+                self.samplingFreq = emg[22] # todo adapt sampling frequency
 
             except OSError as e:
                 print(f'readEMG(): Could not read EMG - {e}')
-
-        else:
-            pass
 
     # read multiple EMG packets to save time and processing
     def readEMGPacket(self):
@@ -311,12 +306,11 @@ class EMG():
             # self.iEMG = np.mean(np.asarray(emg), axis=1)
         else:
             self.iEMG = emg
-            # self.iEMG = np.asarray(emg)[:, -1]
 
     # normalize the EMG
     def normEMG(self):
         emg = self.iEMG
-        emg = np.clip(emg - self.noiseLevel[:, None], 0, None)
+        emg = np.clip(emg - self.noiseLevel, 0, None)
 
         normed = emg/self.maxVals
 
@@ -361,8 +355,8 @@ class EMG():
             if self.offlineData is None:
                 self.normEMG()
                 if self.usingSynergies: self.synergyProd()
-                # self.muscleDynamics()
-                self.emgHistory = np.concatenate((self.emgHistory, self.normedEMG[:, None]), axis=1)
+                self.muscleDynamics()
+                # self.emgHistory = np.concatenate((self.emgHistory, self.normedEMG[:, None]), axis=1)
             else:
                 # self.emgHistory = np.concatenate((self.emgHistory, self.iEMG[:, None]), axis=1)
                 self.emgHistory = np.concatenate((self.emgHistory, self.iEMG), axis=1)

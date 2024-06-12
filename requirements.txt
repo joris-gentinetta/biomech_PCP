@@ -14,3 +14,6 @@ tqdm
 torch
 wandb
 pyarrow
+pyserial
+PyQt5
+pyqtgraph

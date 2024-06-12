@@ -122,6 +122,36 @@ Then you can run the script with the `--process` argument to process the video:
 python process_video.py --data_dir data/joris/test --experiment_name 1 --visualize --intact_hand Right --hand_roi_size 400 --plane_frames_start 0 --plane_frames_end 40 --process
 ```
 
+### 4. Training with `train.py`
+
+### 5. Predict with `predict.py`
+- Find the port of the emg board:
+```bash
+# device not plugged in
+ls /dev/ > notPluggedIn.txt
+
+# device plugged in
+ls /dev/ > pluggedIn.txt
+
+# <port> is the entry that contains tty
+diff notPluggedIn.txt pluggedIn.txt
+```
+- Connect to the EMG board:
+```bash
+python emgInterface.py -p /dev/<port>
+```
+- Connect to the hand:
+```bash
+python psyonicHand.py -e
+```
+- Type `move` to start the hand.
+
+
+
+
+
+
+
 ## Data Output
 
 - aligned_emg.npy: EMG data aligned with the video data.
