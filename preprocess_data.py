@@ -152,6 +152,38 @@ def filter_emg(data_dir):
     emg.emgThread.join()
     filtered_emg = emg.emgHistory[:, emg.numPackets * 100 + 1:]
     filtered_emg = filtered_emg[:, :emg_data.shape[1]]
+
+    # ########## to generate figures
+    # raw = emg.r_history[:, emg.numPackets * 100 + 1:]
+    # raw = raw[:, :emg_data.shape[1]]
+    #
+    # non_int = emg.f_history[:, emg.numPackets * 100 + 1:]
+    # non_int = non_int[:, :emg_data.shape[1]]
+    # os.makedirs('poster', exist_ok=True)
+    # np.save(join('poster', 'raw_emg.npy'), raw.T)
+    # np.save(join('poster', 'filt_emg.npy'), non_int.T)
+    # np.save(join('poster', 'int_emg.npy'), filtered_emg.T)
+    # plt.figure(figsize=(10, 5))
+    # plt.plot(raw.T[:, [0, 1, 2, 4, 5, 8, 10, 11]])
+    # plt.show()
+    #
+    # emg = raw.T
+    # for i in range(emg.shape[0]):
+    #     plt.figure(figsize=(10, 6))
+    #     plt.plot(emg[i, :], label=f'Channel {i}')
+    #     # plt.title(f'Channel {i}, min: {min_vals[i]:.2f}, max: {max_vals[i]:.2f}')
+    #     plt.legend()
+    #     plt.show()
+    #
+    # plt.figure(figsize=(10, 5))
+    # plt.plot(non_int.T[:, [0, 1, 2, 4, 5, 8, 10, 11]])
+    # plt.show()
+    #
+    # plt.figure(figsize=(10, 5))
+    # plt.plot(filtered_emg.T[:, [0, 1, 2, 4, 5, 8, 10, 11]])
+    # plt.show()
+    #
+    # ##########
     # filtered_emg_timestamps = [emg_timestamps[i * emg.numPackets + emg.numPackets // 2] for i in
     #                            range(filtered_emg.shape[1])]
     filtered_emg_timestamps = emg_timestamps

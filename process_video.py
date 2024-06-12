@@ -217,6 +217,9 @@ if __name__ == "__main__":
 
     if args.visualize:
         df3d = pd.read_parquet(join(experiment_dir, "corrected.parquet"))
+        if args.intact_hand is not None:
+            df3d = AnglesHelper().mirror_pose(df3d, args.intact_hand)
+
         vis = Visualization(experiment_dir, df3d, start_frame=args.video_start, end_frame=args.video_end, name_addition="_corrected")
 
     corrected = pd.read_parquet(join(experiment_dir, "corrected.parquet"))

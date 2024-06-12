@@ -115,39 +115,6 @@ customize its behavior:
 First you can run the script without the `--process` argument to determine the hand ROI size and the plane frames:
 ```bash
 python process_video.py --data_dir data/joris/test --experiment_name 1
-
-python process_video.py --data_dir data/linda/minJerk/digitsFlEx --experiment_name 1 --hand_roi_size 450
-python process_video.py --data_dir data/linda/minJerk/digitsFlEx --experiment_name 1 --hand_roi_size 450 --visualize --intact_hand Left --plane_frames_start 200 --plane_frames_end 500 --video_start 500 --video_end 2200 --process
-
-#todo
-python process_video.py --data_dir data/linda/minJerk/fingersFlEx --experiment_name 1 --hand_roi_size 450
-python process_video.py --data_dir data/linda/minJerk/fingersFlEx --experiment_name 1 --hand_roi_size 450 --visualize --intact_hand Left --plane_frames_start 200 --plane_frames_end 500 --video_start 500 --video_end 2400 --process
-
-python process_video.py --data_dir data/linda/minJerk/handCloseOpen --experiment_name 1 --hand_roi_size 450
-python process_video.py --data_dir data/linda/minJerk/handCloseOpen --experiment_name 1 --hand_roi_size 450 --visualize --intact_hand Left --plane_frames_start 100 --plane_frames_end 400 --video_start 400 --video_end 2200 --process
-
-python process_video.py --data_dir data/linda/minJerk/indexFlEx --experiment_name 1 --hand_roi_size 450
-python process_video.py --data_dir data/linda/minJerk/indexFlEx --experiment_name 1 --hand_roi_size 450 --visualize --intact_hand Left --plane_frames_start 100 --plane_frames_end 400 --video_start 450 --video_end 3700 --process
-
-python process_video.py --data_dir data/linda/minJerk/indexFlexDigtisEx --experiment_name 1 --hand_roi_size 450
-python process_video.py --data_dir data/linda/minJerk/indexFlexDigtisEx --experiment_name 1 --hand_roi_size 450 --visualize --intact_hand Left --plane_frames_start 150 --plane_frames_end 500 --video_start 550 --video_end 2400 --process
-
-python process_video.py --data_dir data/linda/minJerk/pinchCloseOpen --experiment_name 1 --hand_roi_size 450
-python process_video.py --data_dir data/linda/minJerk/pinchCloseOpen --experiment_name 1 --hand_roi_size 450 --visualize --intact_hand Left --plane_frames_start 100 --plane_frames_end 400 --video_start 500 --video_end 2000 --process
-
-python process_video.py --data_dir data/linda/minJerk/thumbFlEx --experiment_name 1 --hand_roi_size 450
-python process_video.py --data_dir data/linda/minJerk/thumbFlEx --experiment_name 1 --hand_roi_size 450 --visualize --intact_hand Left --plane_frames_start 100 --plane_frames_end 400 --video_start 450 --video_end 2400 --process
-
-python process_video.py --data_dir data/linda/minJerk/wristFlEx --experiment_name 1 --hand_roi_size 450
-python process_video.py --data_dir data/linda/minJerk/wristFlEx --experiment_name 1 --hand_roi_size 450 --visualize --intact_hand Left --plane_frames_start 100 --plane_frames_end 400 --video_start 650 --video_end 2500 --process
-
-python process_video.py --data_dir data/linda/minJerk/wristFlexHandClose --experiment_name 1 --hand_roi_size 450
-python process_video.py --data_dir data/linda/minJerk/wristFlexHandClose --experiment_name 1 --hand_roi_size 450 --visualize --intact_hand Left --plane_frames_start 100 --plane_frames_end 400 --video_start 500 --video_end 2500 --process
-
-python process_video.py --data_dir data/linda/minJerk/wristFlexHandOpen --experiment_name 1 --hand_roi_size 450
-python process_video.py --data_dir data/linda/minJerk/wristFlexHandOpen --experiment_name 1 --hand_roi_size 450 --visualize --intact_hand Left --plane_frames_start 150 --plane_frames_end 500 --video_start 600 --video_end 2800 --process
-
-
 ```
 
 Then you can run the script with the `--process` argument to process the video:

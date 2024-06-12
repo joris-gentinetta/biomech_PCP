@@ -19,7 +19,8 @@ class EMG():
         self.exitEvent = threading.Event()
         self.offlineData = self.offline_data_gen(offlineData) if offlineData is not None else None
         self.emgHistory = np.empty((self.numElectrodes, 1))
-        self.int_emgHistory = np.empty((self.numElectrodes, 1))
+        self.r_history = np.empty((self.numElectrodes, 1))
+        self.f_history = np.empty((self.numElectrodes, 1))
 
         if usedChannels is None:
             self.usedChannels = []
@@ -293,8 +294,11 @@ class EMG():
         emg = self.highPassFilters.filter(emg)
 
         emg = self.lowPassFilters.filter(emg)
-        
-        self.filtEMG = np.copy(np.asarray(emg)[:, -1]) # motion artificats and drift removed
+
+        if self.offlineData is None:
+            self.filtEMG = np.copy(np.asarray(emg)[:, -1]) # motion artificats and drift removed
+        else:
+            self.filtEMG = np.copy(emg)
 
         emg = np.abs(emg)
 
@@ -360,6 +364,8 @@ class EMG():
             else:
                 # self.emgHistory = np.concatenate((self.emgHistory, self.iEMG[:, None]), axis=1)
                 self.emgHistory = np.concatenate((self.emgHistory, self.iEMG), axis=1)
+                self.r_history = np.concatenate((self.r_history, self.rawHistory), axis=1)
+                self.f_history = np.concatenate((self.f_history, self.filtEMG), axis=1)
 
 
 

@@ -54,9 +54,6 @@ class Visualization():
         # self.df_3d.loc[:, idx[slice(None), slice(None), 'y']] = self.df_3d.loc[:, idx[slice(None), slice(None), 'y']] - np.min(self.df_3d.loc[:, idx[slice(None), slice(None), 'y']])
         self.number_frames = len(self.df_3d.index)
         self.alternative = alternative
-        # video_frames, fps = self.get_video_frames()
-        # self.video_frames = video_frames
-        # self.fps = fps
         self.vcap, self.fps = self.get_video_frames()
         self.plotVideo()
 
@@ -170,6 +167,9 @@ class Visualization():
 
         # Update the video frame
         success, video_frame = self.vcap.read()
+        # make the frame all white:
+        # video_frame = np.ones_like(video_frame) * 255
+
         if success:
             video_frame = cv2.cvtColor(video_frame, cv2.COLOR_BGR2RGB)
             self.vplot.set_data(video_frame)
@@ -181,7 +181,7 @@ class Visualization():
 
     def initVideo(self):
         i = self.start_frame
-        fig = plt.figure(figsize=(22,12))
+        fig = plt.figure(figsize=(44, 24))
         spec = gridspec.GridSpec(ncols = 3, nrows = 1, width_ratios = [1.8, 1, 1],
                                 wspace = 0.1, hspace = 0.1 )
 
@@ -195,10 +195,10 @@ class Visualization():
         axv.set_xlim(0, video_frame.shape[1])
         axv.set_ylim(video_frame.shape[0], 0)
         axv.set_title(f'Original Video + 2D', fontweight='bold')
-        axv.axis('off')
+        # axv.axis('off')
         
         # Linewidth for joints
-        lw = 1
+        lw = 4
 
         x_h_l, y_h_l, z_h_l = self.get_hand('Left', i)
         x_l, y_l, z_l = self.get_arm('Left', i)
@@ -209,10 +209,10 @@ class Visualization():
         x_b, y_b, z_b = self.get_body(i)
 
         # 3D plots 
-        self.ax1=fig.add_subplot(spec[1], projection='3d')
+        self.ax1 = fig.add_subplot(spec[1], projection='3d')
         self.ax1.set_title(f'3D Front View', fontweight='bold')
-        self.ax1.set_box_aspect([1,1,1])
-        self.ax1.view_init(elev = 20, azim = -90) # For better visualization
+        self.ax1.set_box_aspect([1, 1, 1])
+        self.ax1.view_init(elev=20, azim=-90)  # For better visualization
         self.ax1.set_xticklabels([])
         self.ax1.set_yticklabels([])
         self.ax1.set_zticklabels([])
@@ -227,8 +227,8 @@ class Visualization():
         self.ax2.set_yticklabels([])
         self.ax2.set_zticklabels([])
 
-        x_lim= [0, video_frame.shape[1]]
-        y_lim= [-video_frame.shape[0], 0]
+        x_lim = [0, video_frame.shape[1]]
+        y_lim = [-video_frame.shape[0], 0]
         z_lim = x_lim
 
         self.ax1.set_xlim3d(x_lim)
@@ -258,6 +258,8 @@ class Visualization():
         # Fetch and plot 2D data
         self.clj12d = axv.plot(x_l, y_l, c = (1,0,0), linewidth = lw)
         self.crj12d = axv.plot(x_r, y_r, c = (0,1,0), linewidth = lw)
+        # self.crj12d = axv.plot(x_r, y_r, c = (1, 195/255, 77/255), linewidth = lw)
+
         self.cbj12d = axv.plot(x_b, y_b, c = (0,0,0), linewidth = lw)
 
         logging.info("Plotting...")

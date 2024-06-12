@@ -5,7 +5,7 @@ import argparse
 from matplotlib.figure import Figure
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 
-parser = argparse.ArgumentParser(description='Capture a video.')
+parser = argparse.ArgumentParser(description='Show a video.')
 parser.add_argument('--file', type=str, required=True, help='Video file')
 args = parser.parse_args()
 
@@ -33,8 +33,18 @@ canvas_widget.pack()
 # Create a Scale widget to act as the slider
 slider = tk.Scale(window, from_=0, to=total_frames-1, length=600, orient=tk.HORIZONTAL)
 slider.pack()
+current_frame = None
+
+
+def save_frame():
+    cv2.imwrite('frame.jpg', cv2.cvtColor(current_frame, cv2.COLOR_RGB2BGR))
+    print('frame saved')
+button = tk.Button(window, text='Save Frame', command=save_frame)
+button.pack()
+
 
 def update_image(value):
+    global current_frame
     # Set the video position to the slider value
     cap.set(cv2.CAP_PROP_POS_FRAMES, int(value))
 
@@ -43,6 +53,8 @@ def update_image(value):
 
     # Convert the frame from BGR to RGB color space
     frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+    current_frame = frame
+
 
     # Clear the axes for the new frame
     ax.clear()

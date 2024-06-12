@@ -240,6 +240,20 @@ class AnglesHelper:
         angles_df.fillna(0, inplace=True)
         return angles_df
 
+    def mirror_pose(self, angles_df, intact_hand):
+        angles_df.columns = angles_df.columns.set_names(['Side', 'Joint', 'Axis'])
+        joints = angles_df[intact_hand].columns.get_level_values(0)
+        # remove 'SHOULDER' from the list:
+        # joints.remove('SHOULDER')
+
+        affected_hand = 'Right' if intact_hand == 'Left' else 'Left'
+        for joint in joints:
+            angles_df.loc[:, (affected_hand, joint, 'x')] = -(angles_df.loc[:, (intact_hand, joint, 'x')] - angles_df.loc[:, (intact_hand, 'SHOULDER', 'x')]) + angles_df.loc[:, (affected_hand, 'SHOULDER', 'x')]
+            angles_df.loc[:, (affected_hand, joint, 'y')] = (angles_df.loc[:, (intact_hand, joint, 'y')] - angles_df.loc[:, (intact_hand, 'SHOULDER', 'y')]) + angles_df.loc[:, (affected_hand, 'SHOULDER', 'y')]
+            angles_df.loc[:, (affected_hand, joint, 'z')] = (angles_df.loc[:, (intact_hand, joint, 'z')] - angles_df.loc[:, (intact_hand, 'SHOULDER', 'z')]) + angles_df.loc[:, (affected_hand, 'SHOULDER', 'z')]
+
+        return angles_df
+
 
     def apply_gaussian_smoothing(self, df, sigma, radius):
         smoothed_df = df.copy()

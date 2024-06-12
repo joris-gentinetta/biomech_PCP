@@ -34,6 +34,44 @@ config = Config({'features': features,
                          'n_layers': 1,
                          'model_type': 'GRU'}
                         )
+#
+# name = 'GRU_big'
+# config = Config({'features': features,
+#                          'targets': targets,
+#                          'n_epochs': 35,
+#                          'warmup_steps': 10,
+#                          'learning_rate': 0.001,
+#                          'hidden_size': 500,
+#                          'seq_len': 125,
+#                          'n_layers': 1,
+#                          'model_type': 'GRU'}
+#                         )
+#
+# name = 'GRU_all_data'
+# model_path = f'model_files/{name}.pt'  # todo
+# config = Config({'features': features,
+#                          'targets': targets,
+#                          'n_epochs': 35,
+#                          'warmup_steps': 10,
+#                          'learning_rate': 0.01,
+#                          'hidden_size': 10,
+#                          'seq_len': 125,
+#                          'n_layers': 1,
+#                          'model_type': 'GRU'}
+#                         )
+#
+# name = 'GRU_big_all_data'
+# config = Config({'features': features,
+#                          'targets': targets,
+#                          'n_epochs': 35,
+#                          'warmup_steps': 10,
+#                          'learning_rate': 0.001,
+#                          'hidden_size': 500,
+#                          'seq_len': 125,
+#                          'n_layers': 2,
+#                          'model_type': 'GRU'}
+#                         )
+
 
 
 model = TorchTimeSeriesClassifier(input_size=len(config.features), hidden_size=config.hidden_size,

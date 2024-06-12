@@ -11,6 +11,7 @@ from os.path import join
 import pandas as pd
 from time import time
 import wandb
+import tqdm
 from helpers.predict_utils import Config, train_model, TSDataset, TSDataLoader
 
 parser = argparse.ArgumentParser(description='Timeseries data analysis')
@@ -27,7 +28,7 @@ side = 'Left'
 sampling_frequency = 60
 
 channels = [0, 1, 2, 4, 5, 8, 10, 11]
-recordings = [
+recordings = [ #todo!
     'fingersFlEx',
     'wristFlEx',
     'wristFlexHandOpen',
@@ -39,6 +40,14 @@ recordings = [
     'wristFlexHandClose',
     'digitsFlEx'
 ]
+data_dirs = []
+for recording in recordings:
+    data_dir = f'/Users/jg/projects/biomech/DataGen/data/linda/minJerk/{recording}/experiments/1'
+    data_dirs.append(data_dir)
+data_dirs.append('/Users/jg/projects/biomech/DataGen/data/linda/fingers/experiments/1')
+data_dirs.append('/Users/jg/projects/biomech/DataGen/data/linda/free/experiments/1')
+data_dirs.append('/Users/jg/projects/biomech/DataGen/data/linda/pickPlace/experiments/1')
+data_dirs.append('/Users/jg/projects/biomech/DataGen/data/linda/wrist/experiments/1')
 
 features = [('emg', channel) for channel in channels]
 targets = ['indexAng', 'midAng', 'ringAng', 'pinkyAng', 'thumbInPlaneAng', 'thumbOutPlaneAng', 'wristRot', 'wristFlex']
@@ -46,8 +55,7 @@ targets = [(side, target) for target in targets]
 trainsets = []
 testsets = []
 combined_sets = []
-for recording in recordings:
-    data_dir = f'/Users/jg/projects/biomech/DataGen/data/linda/minJerk/{recording}/experiments/1'
+for data_dir in data_dirs:
     angles = pd.read_parquet(f'{data_dir}/{angles_file}')
     angles.index = range(len(angles))
     emg = np.load(f'{data_dir}/{emg_file}')
@@ -103,10 +111,10 @@ if args.hyperparameter_search:
                 'value': 10
             },
             'learning_rate': {
-                'values': [0.01, 0.001]
+                'values': [0.01, 0.001, 0.0001]
             },
             'hidden_size': {
-                'values': [10, 20]
+                'values': [30, 60, 90, 120, 150, 500]
             },
             'seq_len': {
                 'value': 125
@@ -163,17 +171,27 @@ if args.test:
             test_set.to_parquet(join(data_dir, f'pred_angles_{name}.parquet'))
 
 if args.save_model:
-    gru_config = Config({'features': features,
+    gru_config_big = Config({'features': features,
                          'targets': targets,
                          'n_epochs': 35,
                          'warmup_steps': 10,
-                         'learning_rate': 0.01,
-                         'hidden_size': 10,
+                         'learning_rate': 0.001,
+                         'hidden_size': 500,
                          'seq_len': 125,
-                         'n_layers': 1,
+                         'n_layers': 2,
                          'model_type': 'GRU'}
                         )
-    configs = {'GRU': gru_config}
+    gru_config = Config({'features': features,
+                     'targets': targets,
+                     'n_epochs': 35,
+                     'warmup_steps': 10,
+                     'learning_rate': 0.01,
+                     'hidden_size': 10,
+                     'seq_len': 125,
+                     'n_layers': 1,
+                     'model_type': 'GRU'}
+                    )
+    configs = {'GRU_all_data': gru_config, 'GRU_big_all_data': gru_config_big}
     for name, config in configs.items():
         device = torch.device("cpu")
         model = TorchTimeSeriesClassifier(input_size=len(config.features), hidden_size=config.hidden_size,
@@ -186,13 +204,9 @@ if args.save_model:
         dataset = TSDataset(combined_sets, config.features, config.targets, sequence_len=125)
         dataloader = TSDataLoader(dataset, batch_size=2, shuffle=True, drop_last=True)
 
-        train_losses = []
-        for epoch in range(model.n_epochs):
-            loss = model.train_one_epoch(dataloader)
-            train_losses.append(loss)
+        for epoch in tqdm(range(model.n_epochs)):
+            model.train_one_epoch(dataloader)
 
-        plt.plot(train_losses)
-        plt.show()
 
         model.to(torch.device('cpu'))
         os.makedirs(f'model_files', exist_ok=True)
