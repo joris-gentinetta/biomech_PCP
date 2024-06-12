@@ -26,9 +26,9 @@ class EMG():
         else:
             self.usedChannels = usedChannels
 
-        self.boundsPath = '/Users/jg/projects/biomech/UEA-AMI-Controller/handsim/include/scaleFactors.txt'
-        self.deltasPath = '/Users/jg/projects/biomech/UEA-AMI-Controller/handsim/include/deltas.txt'
-        self.synergyPath = '/Users/jg/projects/biomech/UEA-AMI-Controller/handsim/include/synergyMat.csv'
+        self.boundsPath = '/home/haptix/haptix/haptix_controller/handsim/include/scaleFactors.txt'
+        self.deltasPath = '/home/haptix/haptix/haptix_controller/handsim/include/deltas.txt'
+        self.synergyPath = '/home/haptix/haptix/haptix_controller/handsim/include/synergyMat.csv'
         # self.synergyPath = '/home/haptix/haptix/haptix_controller/handsim/include/JM_0929_synergyMat.csv'
 
         self.socketAddr = socketAddr
@@ -99,8 +99,9 @@ class EMG():
     def initFilters(self):
         self.powerLineFilterArray = BesselFilterArr(numChannels=self.numElectrodes, order=8, critFreqs=[58, 62], fs=self.samplingFreq, filtType='bandstop') # remove power line noise and multiples up to 600 Hz
         self.highPassFilters = BesselFilterArr(numChannels=self.numElectrodes, order=4, critFreqs=10, fs=self.samplingFreq, filtType='highpass') # high pass removes motion artifacts and drift
-        self.lowPassFilters = BesselFilterArr(numChannels=self.numElectrodes, order=4, critFreqs=500, fs=self.samplingFreq, filtType='lowpass') # low pass to remove noise
+        self.lowPassFilters = BesselFilterArr(numChannels=self.numElectrodes, order=4, critFreqs=490, fs=self.samplingFreq, filtType='lowpass') # low pass to remove noise
         self.envelopeFilters = BesselFilterArr(numChannels=self.numElectrodes, order=4, critFreqs=4, fs=self.samplingFreq, filtType='lowpass') # smooth the envelope, when not using 'actually' integrated EMG
+
     def startCommunication(self):
         # set the emg thread up here
         # self.pipelineEMG()
@@ -310,7 +311,7 @@ class EMG():
     # normalize the EMG
     def normEMG(self):
         emg = self.iEMG
-        emg = np.clip(emg - self.noiseLevel[:, None], 0, None)
+        emg = np.clip(emg - self.noiseLevel, 0, None)
 
         normed = emg/self.maxVals
 
@@ -353,7 +354,7 @@ class EMG():
             self.intEMGPacket()
 
             if self.offlineData is None:
-                self.normEMG()
+                print(self.normedEMG.shape, self.normedEMG.shape)
                 if self.usingSynergies: self.synergyProd()
                 # self.muscleDynamics()
                 self.emgHistory = np.concatenate((self.emgHistory, self.normedEMG[:, None]), axis=1)
