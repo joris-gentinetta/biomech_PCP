@@ -30,7 +30,9 @@ class EMG():
         self.boundsPath = '/Users/jg/projects/biomech/UEA-AMI-Controller/handsim/include/scaleFactors.txt'
         self.deltasPath = '/Users/jg/projects/biomech/UEA-AMI-Controller/handsim/include/deltas.txt'
         self.synergyPath = '/Users/jg/projects/biomech/UEA-AMI-Controller/handsim/include/synergyMat.csv'
-        # self.synergyPath = '/home/haptix/haptix/haptix_controller/handsim/include/JM_0929_synergyMat.csv'
+        # self.boundsPath = '/home/haptix/haptix/haptix_controller/handsim/include/scaleFactors.txt'
+        # self.deltasPath = '/home/haptix/haptix/haptix_controller/handsim/include/deltas.txt'
+        # self.synergyPath = '/home/haptix/haptix/haptix_controller/handsim/include/synergyMat.csv'
 
         self.socketAddr = socketAddr
         self.ctx = zmq.Context()

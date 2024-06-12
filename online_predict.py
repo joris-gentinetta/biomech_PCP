@@ -12,6 +12,11 @@ import pandas as pd
 from time import time
 import wandb
 from helpers.predict_utils import Config, train_model, TSDataset, TSDataLoader
+# from helpers.EMGClass import EMG
+import sys
+sys.path.append('/home/haptix/haptix/haptix_controller/handsim/src/')
+from EMGClass import EMG
+import threading
 
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
@@ -89,16 +94,23 @@ if config.model_type == 'LSTM':
               torch.zeros(config.n_layers, 1, config.hidden_size))
 else:
     states = torch.zeros(config.n_layers, 1, config.hidden_size)
+
+#NOTE
+targets = ['indexAng', 'midAng', 'ringAng', 'pinkyAng', 'thumbInPlaneAng', 'thumbOutPlaneAng', 'wristRot', 'wristFlex']
 output_dict = {target: 0 for target in targets}
 
+emg = EMG()
+emg.startCommunication()
+quitEvent = threading.Event()
 
 ##############################################   # todo
-emg = np.load('/Users/jg/projects/biomech/DataGen/data/linda/minJerk/pinchCloseOpen/experiments/1/cropped_aligned_emg.npy')
-for i in range(0, emg.shape[0]):
-    emg_timestep = emg[i, channels]
+# emg = np.load('/Users/jg/projects/biomech/DataGen/data/linda/minJerk/pinchCloseOpen/experiments/1/cropped_aligned_emg.npy')
+# for i in range(0, emg.shape[0]):
+#     emg_timestep = emg[i, channels]
 ##############################################
 
-
+while not quitEvent.is_set():
+    emg_timestep = np.asarray(emg.normedEMG)[channels]
     emg_timestep = torch.tensor(emg_timestep, dtype=torch.float32).unsqueeze(0).unsqueeze(0).to(device)
     with torch.no_grad():
         output, states = model.model(emg_timestep, states)
@@ -109,4 +121,5 @@ for i in range(0, emg.shape[0]):
         output_dict['wristRot'] = (output_dict['wristRot'] * 2) - math.pi
         output_dict['wristFlex'] = (output_dict['wristFlex'] - math.pi / 2)
         # todo
-
+        print(output_dict)
+        # emg.printNormedEMG()
