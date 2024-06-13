@@ -15,7 +15,7 @@ sys.path.append('/home/haptix/haptix/haptix_controller/handsim/src')
 from helpers.EMGClass import EMG
 from helpers.BesselFilter import BesselFilterArr
 from helpers.ExponentialFilter import ExponentialFilterArr
-from psyonicControllers import psyonicControllers
+from helpers.psyonicControllers import psyonicControllers
 import numpy as np
 
 class psyonicArm():

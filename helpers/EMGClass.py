@@ -103,10 +103,10 @@ class EMG():
         self.highPassFilters = BesselFilterArr(numChannels=self.numElectrodes, order=4, critFreqs=10, fs=self.samplingFreq, filtType='highpass') # high pass removes motion artifacts and drift
         self.lowPassFilters = BesselFilterArr(numChannels=self.numElectrodes, order=4, critFreqs=450, fs=self.samplingFreq, filtType='lowpass') # low pass to remove noise
         self.envelopeFilters = BesselFilterArr(numChannels=self.numElectrodes, order=4, critFreqs=4, fs=self.samplingFreq, filtType='lowpass') # smooth the envelope, when not using 'actually' integrated EMG
-    def startCommunication(self):
+    def startCommunication(self, raw=False):
         # set the emg thread up here
         # self.pipelineEMG()
-        self.emgThread = threading.Thread(target=self.pipelineEMG, name='pipelineEMG')
+        self.emgThread = threading.Thread(target=self.pipelineEMG, name='pipelineEMG', args=(raw,))
         self.emgThread.daemon = False
         self.emgThread.start()
 
@@ -347,21 +347,26 @@ class EMG():
         return self.synergies
 
     # full EMG update pipeline
-    def pipelineEMG(self):
+    def pipelineEMG(self, raw=False):
         while not self.exitEvent.is_set():
             self.readEMGPacket()
-            self.intEMGPacket()
+            if not raw:
+                self.intEMGPacket()
 
-            if self.offlineData is None:
-                self.normEMG()
-                if self.usingSynergies: self.synergyProd()
-                self.muscleDynamics()
-                # self.emgHistory = np.concatenate((self.emgHistory, self.normedEMG[:, None]), axis=1)
-            else:
-                # self.emgHistory = np.concatenate((self.emgHistory, self.iEMG[:, None]), axis=1)
-                self.emgHistory = np.concatenate((self.emgHistory, self.iEMG), axis=1)
-                self.r_history = np.concatenate((self.r_history, self.rawHistory), axis=1)
-                self.f_history = np.concatenate((self.f_history, self.filtEMG), axis=1)
+                if self.offlineData is None:
+                    self.normEMG()
+                    if self.usingSynergies: self.synergyProd()
+                    self.muscleDynamics()
+                    # self.emgHistory = np.concatenate((self.emgHistory, self.normedEMG[:, None]), axis=1)
+                else:
+                    # self.emgHistory = np.concatenate((self.emgHistory, self.iEMG[:, None]), axis=1)
+                    self.emgHistory = np.concatenate((self.emgHistory, self.iEMG), axis=1)
+                    self.r_history = np.concatenate((self.r_history, self.rawHistory), axis=1)
+                    self.f_history = np.concatenate((self.f_history, self.filtEMG), axis=1)
+
+    def pipelineRaw(self):
+        while not self.exitEvent.is_set():
+            self.readEMGPacket()
 
 
 

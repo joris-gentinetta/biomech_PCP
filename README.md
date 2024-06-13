@@ -26,28 +26,40 @@ pip install -r requirements.txt
 
 ## Scripts
 
-### 1. Data Collection with `collect_data.py`
+### 0.1. EMG Board Setup
+- Find the port of the emg board:
+```bash
+# device not plugged in
+ls /dev/ > temp/notPluggedIn.txt
 
-The `collect_data.py` script is used to capture a video and EMG data. It has several command line arguments that you can
-use to customize its behavior:
+# device plugged in
+ls /dev/ > temp/pluggedIn.txt
+
+# <port> is the entry that contains tty e.g.: tty.usbserial-DO02GBUB
+diff notPluggedIn.txt pluggedIn.txt
+```
+
+- Connect to the EMG board:
+```bash
+python emgInterface.py -p /dev/<port>
+```
+
+
+### 1. Data Collection with `1_collect_data.py`
+
+The `1_collect_data.py` script is used to capture a video and EMG data. It has several command line arguments that you can
+use to customize its behavior. To use it first connect the EMG board (see the 0.1 EMG Board Setup)
 
 - `--data_dir`: This argument is required. It specifies the output directory where the video and EMG data will be saved.
 
 - `--dummy_emg`: This argument is optional. If used, the script will generate dummy EMG data for testing purposes
   without the need for an EMG board.
 
-- `--camera`: This argument is optional with a default value of 0. It specifies the index of the camera to use for video
-  capture.
-
-- `--record`: This argument is optional. If used, the script will record the video and EMG data. If not used, the script
-  will only display the video and EMG data.
-
-
 
 Here is an example of how to run the script:
 
 ```bash
-python collect_data.py --data_dir data/joris/test --camera 0 --dummy_emg --record
+python 1_collect_data.py --data_dir data/joris/test --dummy_emg 
 ```
 
 ### 2. Data Preprocessing with `preprocess_data.py`
@@ -125,21 +137,7 @@ python process_video.py --data_dir data/joris/test --experiment_name 1 --visuali
 ### 4. Training with `train.py`
 
 ### 5. Predict with `predict.py`
-- Find the port of the emg board:
-```bash
-# device not plugged in
-ls /dev/ > notPluggedIn.txt
-
-# device plugged in
-ls /dev/ > pluggedIn.txt
-
-# <port> is the entry that contains tty
-diff notPluggedIn.txt pluggedIn.txt
-```
-- Connect to the EMG board:
-```bash
-python emgInterface.py -p /dev/<port>
-```
+- Connect to the EMG board (see the 0.1. EMG Board Setup)
 - Connect to the hand:
 ```bash
 python psyonicHand.py -e

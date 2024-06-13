@@ -85,8 +85,8 @@ class AnglesHelper:
         return max(pipAng, mcpAng)
 
     def get_mapping(self):
-        if os.path.exists('mapping.npz'):
-            mapping = np.load('mapping.npz')
+        if os.path.exists('helpers/mapping.npz'):
+            mapping = np.load('helpers/mapping.npz')
             coords = mapping['coords']
             angles = mapping['angles']
             pinky_to_index_sim = mapping['pinky_to_index_sim'][0]
@@ -117,7 +117,7 @@ class AnglesHelper:
             pinky_to_index_sim = index_q1[0] - pinky_q1[0]
             coords = np.array(coords)
             angles = np.array(angles)
-            np.savez('mapping.npz', coords=coords, angles=angles, pinky_to_index_sim=np.array([pinky_to_index_sim]))
+            np.savez('helpers/mapping.npz', coords=coords, angles=angles, pinky_to_index_sim=np.array([pinky_to_index_sim]))
 
         return coords, angles, pinky_to_index_sim
 
