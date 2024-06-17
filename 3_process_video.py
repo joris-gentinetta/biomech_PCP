@@ -3,13 +3,11 @@ from os.path import join
 
 import cv2
 import imageio
-import time
 import subprocess
 
 import mediapipe as mp
 from mediapipe.python.solutions import pose, hands
 import numpy as np
-from math import sqrt, ceil
 import pandas as pd
 pd.options.mode.copy_on_write = True
 idx = pd.IndexSlice
@@ -75,11 +73,9 @@ def run_mediapipe(cap, frames, video_timestamps, sides, scales, hand_roi_size, p
             y_start = max(0, wrist[1] - roi_half_size)
             y_end = min(scales[1], wrist[1] + roi_half_size)
             cropped_frame = frame[y_start:y_end, x_start:x_end]
-            #todo make sure the frame is not empty
             rgb_cropped_frame = cv2.cvtColor(cropped_frame, cv2.COLOR_BGR2RGB)
             if frame_id == 1 and not process:
                 plt.imshow(rgb_cropped_frame)
-                # add axis values:
                 plt.gca().set_xticks([0, roi_half_size * 2])
                 plt.gca().set_yticks([0, roi_half_size * 2])
 
@@ -143,7 +139,6 @@ if __name__ == "__main__":
     parser.add_argument('--process', action='store_true', help='Process the video')
     args = parser.parse_args()
 
-    start = time.time()
     sides = [args.intact_hand] if args.intact_hand else ['Right', 'Left']
     experiment_dir = join(args.data_dir, 'experiments', args.experiment_name)
     input_video_path = join(experiment_dir, "cropped_video.mp4")
@@ -151,15 +146,12 @@ if __name__ == "__main__":
 
     cap = cv2.VideoCapture(input_video_path)
 
-    fps = cap.get(cv2.CAP_PROP_FPS)
-    n_frames = cap.get(cv2.CAP_PROP_FRAME_COUNT)
 
     vid = imageio.get_reader(input_video_path, 'ffmpeg')
-    fps_in = vid.get_meta_data()['fps']
     vid_size = vid.get_meta_data()['size']
     scales = (vid_size[0], vid_size[1], vid_size[0])
+    n_frames = cap.get(cv2.CAP_PROP_FRAME_COUNT)
     frames = range(0, int(n_frames))
-    mediapipe_landmark_names = pose.PoseLandmark._member_names_
 
     video_timestamps = np.load(join(experiment_dir, "cropped_video_timestamps.npy"))
     joints_df = run_mediapipe(cap, frames, video_timestamps, sides, scales, args.hand_roi_size, args.process)
@@ -187,8 +179,6 @@ if __name__ == "__main__":
         average_upper_arm_length = np.mean(np.array(upper_arm_lengths))
         average_forearm_length = np.mean(np.array(forearm_lengths))
 
-
-        # Calculate upper_arm and forearm for all rows at once
         upper_arm = joints_df.loc[:, idx[side, 'ELBOW', slice(None)]].values - joints_df.loc[:,
                                                                                 idx[side, 'SHOULDER', slice(None)]].values
         forearm = joints_df.loc[:, idx[side, 'WRIST', slice(None)]].values - joints_df.loc[:,
@@ -196,7 +186,6 @@ if __name__ == "__main__":
         upper_arm = upper_arm.astype(np.float64)
         forearm = forearm.astype(np.float64)
 
-        # Calculate missing_len for upper_arm and forearm for all rows at once
         missing_len_upper_arm = average_upper_arm_length ** 2 - upper_arm[:, 0] ** 2 - upper_arm[:, 1] ** 2
         missing_len_forearm = average_forearm_length ** 2 - forearm[:, 0] ** 2 - forearm[:, 0] ** 2
 
@@ -213,7 +202,6 @@ if __name__ == "__main__":
 
     joints_df = update_left_right(joints_df)
     joints_df.to_parquet(join(experiment_dir, "corrected.parquet"))
-    print(f"Time taken: {(time.time() - start)/60} minutes.")
 
     if args.visualize:
         df3d = pd.read_parquet(join(experiment_dir, "corrected.parquet"))
@@ -224,12 +212,13 @@ if __name__ == "__main__":
 
     corrected = pd.read_parquet(join(experiment_dir, "corrected.parquet"))
     anglesHelper = AnglesHelper()
+
     angles_df = anglesHelper.getArmAngles(corrected, sides)
     angles_df.to_parquet(join(experiment_dir, "angles.parquet"))
+
     smooth_angles_df = anglesHelper.apply_gaussian_smoothing(angles_df, sigma=1.5, radius=2)
     smooth_angles_df.to_parquet(join(experiment_dir, "smooth_angles.parquet"))
 
-    # crop after plane frames
     start = args.video_start
     end = args.video_end
     angles_df = pd.read_parquet(join(experiment_dir, "angles.parquet"))

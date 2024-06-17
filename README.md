@@ -104,9 +104,9 @@ Then run the script with the `--process` argument to process the data:
 python 2_preprocess_data.py --data_dir data/test --experiment_name 1 --start_frame 400 --end_frame 1000 --trigger_channel 15 --trigger_value 600 --process
 ```
 
-### 3. Video Processing with `process_video.py`
+### 3. Video Processing with `3_process_video.py`
 
-The `process_video.py` script is used to process the video data. It first gets the 2D poses, then raises them to 3D, and
+The `3_process_video.py` script is used to process the video data. It first gets the 2D poses, then raises them to 3D, and
 finally computes the angles and saves them to a dataframe. It has several command line arguments that you can use to
 customize its behavior:
 
@@ -133,12 +133,12 @@ customize its behavior:
 
 First you can run the script without the `--process` argument to determine the hand ROI size and the plane frames:
 ```bash
-python process_video.py --data_dir data/joris/test --experiment_name 1
+python 3_process_video.py --data_dir data/test --experiment_name 1
 ```
 
 Then you can run the script with the `--process` argument to process the video:
 ```bash
-python process_video.py --data_dir data/joris/test --experiment_name 1 --visualize --intact_hand Right --hand_roi_size 400 --plane_frames_start 0 --plane_frames_end 40 --process
+python 3_process_video.py --data_dir data/test --experiment_name 1 --visualize --intact_hand Right --hand_roi_size 400 --plane_frames_start 0 --plane_frames_end 40 --process
 ```
 
 ### 4. Training with `train.py`
