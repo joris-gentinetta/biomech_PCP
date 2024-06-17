@@ -29,14 +29,20 @@ pip install -r requirements.txt
 ### 0.1. EMG Board Setup
 - Find the port of the emg board:
 ```bash
-# device not plugged in
+# create a temp directory
+mkdir temp
+
+# emg board not plugged in:
 ls /dev/ > temp/notPluggedIn.txt
 
-# device plugged in
+# emg board plugged in:
 ls /dev/ > temp/pluggedIn.txt
 
 # <port> is the entry that contains tty e.g.: tty.usbserial-DO02GBUB
-diff notPluggedIn.txt pluggedIn.txt
+diff temp/notPluggedIn.txt temp/pluggedIn.txt
+
+# remove the temp directory
+rm -r temp
 ```
 
 - Connect to the EMG board:
@@ -47,10 +53,9 @@ python emgInterface.py -p /dev/<port>
 
 ### 1. Data Collection with `1_collect_data.py`
 
-The `1_collect_data.py` script is used to capture a video and EMG data. It has several command line arguments that you can
-use to customize its behavior. To use it first connect the EMG board (see the 0.1 EMG Board Setup)
+The `1_collect_data.py` script is used to capture EMG data. To use it first connect the EMG board (see 0.1 EMG Board Setup)
 
-- `--data_dir`: This argument is required. It specifies the output directory where the video and EMG data will be saved.
+- `--data_dir`: This argument is required. It specifies the output directory where the EMG data will be saved.
 
 - `--dummy_emg`: This argument is optional. If used, the script will generate dummy EMG data for testing purposes
   without the need for an EMG board.
@@ -59,10 +64,12 @@ use to customize its behavior. To use it first connect the EMG board (see the 0.
 Here is an example of how to run the script:
 
 ```bash
-python 1_collect_data.py --data_dir data/joris/test --dummy_emg 
+python 1_collect_data.py --data_dir data/test --dummy_emg 
 ```
 
-### 2. Data Preprocessing with `preprocess_data.py`
+Put the recorded video in the data directory that you specified. The file name of the video is not important, but it should be in the .mp4 format.
+
+### 2. Data Preprocessing with `2_preprocess_data.py`
 
 The `preprocess_data.py` script is used to first display a frame of the video and then crop it in width/height and time.
 EMG data is adapted accordingly.
@@ -85,16 +92,16 @@ EMG data is adapted accordingly.
 
 - `--process`: This argument is optional. If used, the script will process the video. If not used, the script will show the video and the EMG trigger channel
 
-Here is an example of how to run the script for visualization:
+First inspect the Trigger channel and the video to determine the parameters:
 
 ```bash
-python preprocess_data.py --data_dir data/joris/trigger_2 --experiment_name 1 --trigger_channel 7 
+python 2_preprocess_data.py --data_dir data/test --experiment_name 1 --trigger_channel 15
 ```
 
-And here is an example of how to run the script for processing:
+Then run the script with the `--process` argument to process the data:
 
 ```bash
-python preprocess_data.py --data_dir data/joris/trigger_2 --experiment_name 1 --start_frame 544 --end_frame 14246 --trigger_channel 7 --trigger_value 600 --process
+python 2_preprocess_data.py --data_dir data/test --experiment_name 1 --start_frame 400 --end_frame 1000 --trigger_channel 15 --trigger_value 600 --process
 ```
 
 ### 3. Video Processing with `process_video.py`

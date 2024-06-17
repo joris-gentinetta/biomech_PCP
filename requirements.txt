@@ -1,4 +1,4 @@
-mediapipe==0.10.9
+mediapipe
 opencv-python
 imageio[ffmpeg]
 numpy
@@ -17,3 +17,8 @@ pyarrow
 pyserial
 PyQt5
 pyqtgraph
+
+pyzmq
+scipy
+pillow
+pyyaml
