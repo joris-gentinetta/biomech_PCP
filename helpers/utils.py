@@ -46,7 +46,7 @@ class AnglesHelper:
         vec2 = output_df.loc[i, (side, 'INDEX_FINGER_MCP', ['x', 'y', 'z'])].values - output_df.loc[i, (side, 'WRIST', ['x', 'y', 'z'])].values
         mcpAng = self.angleBetweenVectors(vec1, vec2)
 
-        vec4 =  output_df.loc[i, (side, 'INDEX_FINGER_DIP', ['x', 'y', 'z'])].values - output_df.loc[i, (side, 'INDEX_FINGER_PIP', ['x', 'y', 'z'])].values
+        vec4 = output_df.loc[i, (side, 'INDEX_FINGER_DIP', ['x', 'y', 'z'])].values - output_df.loc[i, (side, 'INDEX_FINGER_PIP', ['x', 'y', 'z'])].values
         pipAng = self.angleBetweenVectors(vec1, vec4)
 
         return max(pipAng, mcpAng)
@@ -205,23 +205,13 @@ class AnglesHelper:
                     y *= scaler
                     z *= scaler
 
-                    # y*=1.5
-
-                    # print(x, y, z)
                     targetPos = (x, y, z)
                     angles_df.loc[i, (side, 'thumb_x')] = x
                     angles_df.loc[i, (side, 'thumb_y')] = y
                     angles_df.loc[i, (side, 'thumb_z')] = z
 
-
-                    # jointAngles = p.calculateInverseKinematics(handId, 15, targetPos,
-                    #                                            maxNumIterations=10000, residualThreshold=0.0000001)
-                    # angles_df.loc[i, (side, 'thumbOutPlaneAng')] = jointAngles[8] # thumb `rotation` angle
-                    # angles_df.loc[i, (side, 'thumbInPlaneAng')] = jointAngles[9] # thumb flexion angle
-
                     distances = np.linalg.norm(coords - np.array(targetPos), axis=1)
                     idx = np.argmin(distances)
-                    # print(angles[idx][0], angles[idx][1])
                     angles_df.loc[i, (side, 'thumbInPlaneAng')] = angles[idx][0]
                     angles_df.loc[i, (side, 'thumbOutPlaneAng')] = angles[idx][1]
 
@@ -243,8 +233,6 @@ class AnglesHelper:
     def mirror_pose(self, angles_df, intact_hand):
         angles_df.columns = angles_df.columns.set_names(['Side', 'Joint', 'Axis'])
         joints = angles_df[intact_hand].columns.get_level_values(0)
-        # remove 'SHOULDER' from the list:
-        # joints.remove('SHOULDER')
 
         affected_hand = 'Right' if intact_hand == 'Left' else 'Left'
         for joint in joints:
