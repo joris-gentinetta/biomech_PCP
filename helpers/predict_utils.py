@@ -103,8 +103,13 @@ def plot_results(target, pred, binary_pred, name):
 
 class Config:
     def __init__(self, dictionary):
-        for key, value in dictionary.items():
-            setattr(self, key, value)
+        for key, value in dictionary['parameters'].items():
+            for key_2, value_2 in value.items():
+                if isinstance(value_2, list):
+                    for id, value_3 in enumerate(value_2):
+                        if isinstance(value_3, list):
+                            value_2[id] = tuple(value_3)
+                setattr(self, key, value_2)
 
 
 class TSDataset(Dataset):

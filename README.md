@@ -1,4 +1,4 @@
-# Upper Extremity Prosthesis Control Data Generation
+# Upper Extremity Prosthesis Control Pipeline
 
 ## Installation
 
@@ -7,13 +7,13 @@ Follow the steps below to set up your environment:
 1. Create a new conda environment with Python 3.8:
 
 ```bash
-conda create -n datagen python=3.8
+conda create -n PCP python=3.8
 ```
 
 2. Activate the newly created environment:
 
 ```bash
-conda activate datagen
+conda activate PCP
 ```
 
 3. Install PyTorch based on your system: [PyTorch website](https://pytorch.org/get-started/locally/)
@@ -64,7 +64,7 @@ The `1_collect_data.py` script is used to capture EMG data. To use it first conn
 Here is an example of how to run the script:
 
 ```bash
-python 1_collect_data.py --data_dir data/test --dummy_emg 
+python 1_collect_data.py --data_dir data/test_person/test_data --dummy_emg 
 ```
 
 Put the recorded video in the data directory that you specified. The file name of the video is not important, but it should be in the .mp4 format.
@@ -95,13 +95,13 @@ EMG data is adapted accordingly.
 First inspect the Trigger channel and the video to determine the parameters:
 
 ```bash
-python 2_preprocess_data.py --data_dir data/test --experiment_name 1 --trigger_channel 15
+python 2_preprocess_data.py --data_dir data/test_person/test_recording --experiment_name 1 --trigger_channel 15
 ```
 
 Then run the script with the `--process` argument to process the data:
 
 ```bash
-python 2_preprocess_data.py --data_dir data/test --experiment_name 1 --start_frame 400 --end_frame 1000 --trigger_channel 15 --trigger_value 600 --process
+python 2_preprocess_data.py --data_dir data/test_person/test_recording --experiment_name 1 --start_frame 400 --end_frame 1000 --trigger_channel 15 --trigger_value 600 --process
 ```
 
 ### 3. Video Processing with `3_process_video.py`
@@ -133,17 +133,60 @@ customize its behavior:
 
 First you can run the script without the `--process` argument to determine the hand ROI size and the plane frames:
 ```bash
-python 3_process_video.py --data_dir data/test --experiment_name 1
+python 3_process_video.py --data_dir data/test_person/test_recording --experiment_name 1
 ```
 
 Then you can run the script with the `--process` argument to process the video:
 ```bash
-python 3_process_video.py --data_dir data/test --experiment_name 1 --visualize --intact_hand Right --hand_roi_size 400 --plane_frames_start 0 --plane_frames_end 40 --process
+python 3_process_video.py --data_dir data/test_person/test_recording --experiment_name 1 --visualize --intact_hand Right --hand_roi_size 400 --plane_frames_start 0 --plane_frames_end 40 --process
 ```
 
-### 4. Training with `train.py`
+### 4. Training with `4_train.py`
 
-### 5. Predict with `predict.py`
+The `4_train.py` script is used for training a time-series model on EMG data, predicting joint angles. It supports data exploration, hyperparameter search, testing, and saving the trained model. Below are the command-line arguments and usage examples.
+
+#### Command Line Arguments
+
+- `--person_dir`: (Required) Specifies the directory of the person's data.
+- `--intact_hand`: (Required) Specifies the intact hand (Right/Left).
+- `--config_name`: (Required) The name of the training configuration file (YAML format).
+- `-v, --visualize`: (Optional) If used, plots data exploration results.
+- `-hs, --hyperparameter_search`: (Optional) If used, performs a hyperparameter search.
+- `-t, --test`: (Optional) If used, tests the model.
+- `-s, --save_model`: (Optional) If used, saves the trained model.
+
+#### Usage
+
+1. **Data Exploration**
+
+   To visualize the data for exploration, use the `--visualize` argument. This will plot the features and targets for the specified person.
+
+   ```bash
+   python 4_train.py --person_dir test_person --intact_hand Right --config_name config.yaml --visualize
+   ```
+
+2. **Hyperparameter Search**
+
+   To perform a hyperparameter search, use the `--hyperparameter_search` argument. This will run a sweep using the configuration specified in the YAML file.
+   ```bash
+   python 4_train.py --person_dir test_person --intact_hand Right --config_name config.yaml --hyperparameter_search
+   ```
+
+3. **Testing the Model**
+
+   To test the model, use the --test argument. This will train the model on the training set and evaluate it on the test set.   
+   ```bash
+   python 4_train.py --person_dir test_person --intact_hand Right --config_name config.yaml --test
+   ```
+   
+4. **Saving the Model**
+   To save the trained model, use the --save_model argument. This will save the model to the specified directory.
+   ```bash
+   python 4_train.py --person_dir test_person --intact_hand Right --config_name config.yaml --save_model
+   ```
+   
+
+### 5. Control the Prosthetic Hand
 - Connect to the EMG board (see the 0.1. EMG Board Setup)
 - Connect to the hand:
 ```bash
@@ -152,24 +195,7 @@ python psyonicHand.py -e
 - Type `move` to start the hand.
 
 
-
-
-
-
-
 ## Data Output
-
-- aligned_emg.npy: EMG data aligned with the video data.
-- angles.parquet: Angles computed from the video data. To access individual angles:
-
-```python
-import pandas as pd
-from os.path import join
-data_dir = 'data/joris/test'
-angles = pd.read_parquet(join(data_dir, 'angles.parquet'))
-# To get the index angel for the left hand in the first frame:
-left_hand_index_angle = angles.loc[0, ('Left', 'indexAng')]
-```
 
 ### Angles Explanation
 Available angles: `['indexAng', 'midAng', 'ringAng', 'pinkyAng', 'thumbInPlaneAng', 'thumbOutPlaneAng', 'elbowAngle', 'wristRot', 'wristFlex']`

@@ -130,7 +130,7 @@ if __name__ == "__main__":
     parser.add_argument('--data_dir', type=str, required=True, help='Output directory')
     parser.add_argument('--experiment_name', type=str, required=True, help='Experiment name')
     parser.add_argument('--visualize', action='store_true', help='Visualize the output')
-    parser.add_argument('--intact_hand', type=str, default=None, help='Intact hand')
+    parser.add_argument('--intact_hand', type=str, default=None, help='Intact hand (Right/Left)')
     parser.add_argument('--hand_roi_size', type=int, default=800, help='Hand ROI size')
     parser.add_argument('--plane_frames_start', type=int, default=0, help='Start of the plane frames')
     parser.add_argument('--plane_frames_end', type=int, default=20, help='End of the plane frames')
@@ -221,6 +221,8 @@ if __name__ == "__main__":
 
     start = args.video_start
     end = args.video_end
+    if end == -1:
+        end = len(angles_df)
     angles_df = pd.read_parquet(join(experiment_dir, "angles.parquet"))
     angles_df = angles_df.loc[start:end-1]
     angles_df.to_parquet(join(experiment_dir, "cropped_angles.parquet"))
