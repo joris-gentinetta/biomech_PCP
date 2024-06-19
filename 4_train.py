@@ -9,7 +9,7 @@ import numpy as np
 from os.path import join
 import pandas as pd
 import wandb
-import tqdm
+from tqdm import tqdm
 from helpers.predict_utils import Config, train_model, TSDataset, TSDataLoader
 
 
@@ -95,7 +95,7 @@ if args.test:
         test_set.loc[:, (args.intact_hand, 'thumbInPlaneAng')] = test_set.loc[:, (args.intact_hand, 'thumbInPlaneAng')] - math.pi
         test_set.loc[:, (args.intact_hand, 'wristRot')] = (test_set.loc[:, (args.intact_hand, 'wristRot')] * 2) - math.pi
         test_set.loc[:, (args.intact_hand, 'wristFlex')] = (test_set.loc[:, (args.intact_hand, 'wristFlex')] - math.pi / 2)
-        test_set.to_parquet(join(data_dirs[set_id], f'pred_angles_{args.cofig_name}.parquet'))
+        test_set.to_parquet(join(data_dirs[set_id], f'pred_angles_{args.config_name}.parquet'))
 
 
 if args.save_model:
@@ -115,4 +115,5 @@ if args.save_model:
 
     model.to(torch.device('cpu'))
     os.makedirs(join('data', args.person_dir, 'models'), exist_ok=True)
-    model.save(join('data', args.person_dir, 'models', f'{args.config_name}.pt'))
+    model_name = args.config_name.split('.')[0]
+    model.save(join('data', args.person_dir, 'models', f'{model_name}.pt'))

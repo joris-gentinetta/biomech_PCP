@@ -9,6 +9,8 @@ import time
 import pandas as pd
 import platform
 from pathlib import Path
+import yaml
+from os.path import join
 
 sys.path.append('/home/haptix/haptix/haptix_controller/handsim/src')
 
@@ -16,6 +18,7 @@ from helpers.EMGClass import EMG
 from helpers.BesselFilter import BesselFilterArr
 from helpers.ExponentialFilter import ExponentialFilterArr
 from helpers.psyonicControllers import psyonicControllers
+from helpers.predict_utils import Config
 import numpy as np
 
 class psyonicArm():
@@ -1150,6 +1153,9 @@ if __name__ == '__main__':
 	parser.add_argument('-e', '--emg', help='Using EMG control?', action='store_true')
 	parser.add_argument('-l', '--laterality', type=str, help='Handedness', default='left')
 	parser.add_argument('-s', '--stuffing', help='Using byte stuffing?', action='store_true')
+	parser.add_argument('--person_dir', type=str, required=True, help='Person directory')
+	parser.add_argument('--config_name', type=str, required=True, help='Training configuration')
+
 	args = parser.parse_args()
 
 	emg = None
@@ -1159,11 +1165,19 @@ if __name__ == '__main__':
 	strInsert = ', byte stuffing' if args.stuffing else ', no byte stuffing'
 
 	if args.emg:
-		emg = EMG(usedChannels=[0, 1, 2, 4, 5, 8, 10, 11])
+		with open(join('data', args.person_dir, 'configs', args.config_name), 'r') as file:
+			wandb_config = yaml.safe_load(file)
+			config = Config(wandb_config)
+		channels = [feature[1] for feature in config.features]
+
+		emg = EMG(usedChannels=channels)
 		emg.startCommunication()
 		print(f'Starting Psyonic Hand (EMG control{strInsert})...')
 
-		controller = psyonicControllers(numMotors=arm.numMotors, arm=arm, freq_n=3, emg=emg)
+		model_name = args.config_name.split('.')[0]
+		model_path = join('data', args.person_dir, 'models', f'{model_name}.pt')
+
+		controller = psyonicControllers(numMotors=arm.numMotors, arm=arm, freq_n=3, emg=emg, config=config, model_path=model_path)
 		arm.runNetThread(controller)
 
 	elif args.tracker:

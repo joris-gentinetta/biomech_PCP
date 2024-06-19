@@ -47,7 +47,11 @@ rm -r temp
 
 - Connect to the EMG board:
 ```bash
-python emgInterface.py -p /dev/<port>
+python 0_emgInterface.py -p /dev/<port>
+```
+e.g.:
+```bash
+python 0_emgInterface.py -p /dev/tty.usbserial-DO02GBUB
 ```
 
 
@@ -162,27 +166,27 @@ The `4_train.py` script is used for training a time-series model on EMG data, pr
    To visualize the data for exploration, use the `--visualize` argument. This will plot the features and targets for the specified person.
 
    ```bash
-   python 4_train.py --person_dir test_person --intact_hand Right --config_name config.yaml --visualize
+   python 4_train.py --person_dir test_person --intact_hand Right --config_name test_sweep_config.yaml --visualize
    ```
 
 2. **Hyperparameter Search**
 
    To perform a hyperparameter search, use the `--hyperparameter_search` argument. This will run a sweep using the configuration specified in the YAML file.
    ```bash
-   python 4_train.py --person_dir test_person --intact_hand Right --config_name config.yaml --hyperparameter_search
+   python 4_train.py --person_dir test_person --intact_hand Right --config_name test_sweep_config.yaml --hyperparameter_search
    ```
 
 3. **Testing the Model**
 
    To test the model, use the --test argument. This will train the model on the training set and evaluate it on the test set.   
    ```bash
-   python 4_train.py --person_dir test_person --intact_hand Right --config_name config.yaml --test
+   python 4_train.py --person_dir test_person --intact_hand Right --config_name test_inference_config.yaml --test
    ```
    
 4. **Saving the Model**
    To save the trained model, use the --save_model argument. This will save the model to the specified directory.
    ```bash
-   python 4_train.py --person_dir test_person --intact_hand Right --config_name config.yaml --save_model
+   python 4_train.py --person_dir test_person --intact_hand Right --config_name test_inference_config.yaml --save_model
    ```
    
 
@@ -190,7 +194,7 @@ The `4_train.py` script is used for training a time-series model on EMG data, pr
 - Connect to the EMG board (see the 0.1. EMG Board Setup)
 - Connect to the hand:
 ```bash
-python psyonicHand.py -e
+python 5_inference.py -e --person_dir test_person --config_name test_inference_config.yaml
 ```
 - Type `move` to start the hand.
 

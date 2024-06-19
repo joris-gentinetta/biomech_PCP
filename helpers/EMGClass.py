@@ -9,6 +9,8 @@ import numpy as np
 import pandas as pd
 from helpers.BesselFilter import BesselFilterArr
 import threading
+import platform
+
 
 class EMG():
     def __init__(self, socketAddr='tcp://127.0.0.1:1235', numElectrodes=16, tauA=0.05, tauD=0.1, usedChannels=None, usingSynergies=False, samplingFreq=None, offlineData=None, maxVals=None, noiseLevel=None):
@@ -27,15 +29,21 @@ class EMG():
             self.offlineData = self.offline_data_gen(offlineData)
             self.maxVals = maxVals
             self.noiseLevel = noiseLevel
+        else:
+            self.offlineData = None
 
         self.emgHistory = np.empty((self.numElectrodes, 1))
         self.r_history = np.empty((self.numElectrodes, 1))
         self.f_history = np.empty((self.numElectrodes, 1))
 
-        self.boundsPath = '/home/haptix/haptix/haptix_controller/handsim/include/scaleFactors.txt'
-        self.deltasPath = '/home/haptix/haptix/haptix_controller/handsim/include/deltas.txt'
-        self.synergyPath = '/home/haptix/haptix/haptix_controller/handsim/include/synergyMat.csv'
-
+        if platform.system() == 'Linux':
+            self.boundsPath = '/home/haptix/haptix/haptix_controller/handsim/include/scaleFactors.txt'
+            self.deltasPath = '/home/haptix/haptix/haptix_controller/handsim/include/deltas.txt'
+            self.synergyPath = '/home/haptix/haptix/haptix_controller/handsim/include/synergyMat.csv'
+        else:
+            self.boundsPath = '/Users/jg/projects/biomech/UEA-AMI-Controller/handsim/include/scaleFactors.txt'
+            self.deltasPath = '/Users/jg/projects/biomech/UEA-AMI-Controller/handsim/include/deltas.txt'
+            self.synergyPath = '/Users/jg/projects/biomech/UEA-AMI-Controller/handsim/include/synergyMat.csv'
 
         self.socketAddr = socketAddr
         self.ctx = zmq.Context()

@@ -38,7 +38,7 @@ from helpers.EMGClass import EMG
 import threading
 
 class psyonicControllers():
-	def __init__(self, numMotors=6, arm=None, freq_n=3, numElectrodes=8, emg=None):
+	def __init__(self, numMotors=6, arm=None, freq_n=3, numElectrodes=8, emg=None, config=None, model_path=None):
 		self.emg = emg
 		self.arm = arm
 		self.numMotors = numMotors
@@ -52,38 +52,6 @@ class psyonicControllers():
 		self.loops = 0
 
 		self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-
-		side = 'Left'
-		channels = [0, 1, 2, 4, 5, 8, 10, 11]
-		features = [('emg', channel) for channel in channels]
-		targets = ['indexAng', 'midAng', 'ringAng', 'pinkyAng', 'thumbInPlaneAng', 'thumbOutPlaneAng', 'wristRot', 'wristFlex']
-		targets = [(side, target) for target in targets]
-
-		name = 'GRU_big_all_data'
-		model_path = f'model_files/{name}.pt'  # todo
-		# model_path = f'/home/haptix/haptix/biomech_datagen/model_files/{name}.pt'
-
-		# config = Config({'features': features,
-		# 						'targets': targets,
-		# 						'n_epochs': 35,
-		# 						'warmup_steps': 10,
-		# 						'learning_rate': 0.01,
-		# 						'hidden_size': 10,
-		# 						'seq_len': 125,
-		# 						'n_layers': 1,
-		# 						'model_type': 'GRU'}
-		# 						)
-		config = Config({'features': features,
-                         'targets': targets,
-                         'n_epochs': 35,
-                         'warmup_steps': 10,
-                         'learning_rate': 0.001,
-                         'hidden_size': 500,
-                         'seq_len': 125,
-                         'n_layers': 2,
-                         'model_type': 'GRU'}
-                        )
-
 
 		self.model = TorchTimeSeriesClassifier(input_size=len(config.features), hidden_size=config.hidden_size,
 										output_size=len(config.targets), n_epochs=config.n_epochs,
@@ -101,7 +69,7 @@ class psyonicControllers():
 		else:
 			self.states = torch.zeros(config.n_layers, 1, config.hidden_size)
 
-		#NOTE
+		#NOTE todo?
 		self.targets = ['indexAng', 'midAng', 'ringAng', 'pinkyAng', 'thumbInPlaneAng', 'thumbOutPlaneAng', 'wristRot', 'wristFlex']
 		self.output_dict = {target: 0 for target in self.targets}
 
@@ -202,17 +170,20 @@ class psyonicControllers():
 			output = output.squeeze().to('cpu').detach().numpy()
 			for j, target in enumerate(self.targets):
 				self.output_dict[target] = output[j]
-			self.output_dict['thumbInPlaneAng'] = self.output_dict['thumbInPlaneAng'] - math.pi/2
+			self.output_dict['thumbInPlaneAng'] = self.output_dict['thumbInPlaneAng'] - math.pi
 			self.output_dict['wristRot'] = (self.output_dict['wristRot'] * 2) - math.pi
 			self.output_dict['wristFlex'] = (self.output_dict['wristFlex'] - math.pi / 2)
 			# todo
 			# emg.printNormedEMG()
 
-			jointPos[0] = np.rad2deg(self.output_dict['indexAng'])
-			jointPos[1] = np.rad2deg(self.output_dict['midAng'])
-			jointPos[2] = np.rad2deg(self.output_dict['ringAng'])
-			jointPos[3] = np.rad2deg(self.output_dict['pinkyAng'])
-			jointPos[4] = np.rad2deg(self.output_dict['thumbOutPlaneAng'])
-			jointPos[5] = np.rad2deg(self.output_dict['thumbInPlaneAng'])
+			jointPos[0] = np.rad2deg(self.output_dict['indexAng'] * math.pi)
+			jointPos[1] = np.rad2deg(self.output_dict['midAng'] * math.pi)
+			jointPos[2] = np.rad2deg(self.output_dict['ringAng'] * math.pi)
+			jointPos[3] = np.rad2deg(self.output_dict['pinkyAng'] * math.pi)
+			jointPos[4] = np.rad2deg(self.output_dict['thumbOutPlaneAng'] * math.pi)
+			jointPos[5] = np.rad2deg(self.output_dict['thumbInPlaneAng'] * math.pi)
+
+			# for i in range(6):
+			# 	jointPos[i] = (np.rad2deg(self.output_dict['indexAng'] * math.pi) - 60) * 5
 
 		return jointPos
