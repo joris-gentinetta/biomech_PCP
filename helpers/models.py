@@ -56,7 +56,6 @@ class CNNClassifier(nn.Module):
 
         out = torch.concat([self.fc(out[:, i:i+10, :].flatten(start_dim=1, end_dim=2)).unsqueeze(1) for i in range(x.shape[2])], dim=1)
 
-
         return out, self.dummy_state
 
 
@@ -71,17 +70,20 @@ class TorchTimeSeriesClassifier:
         self.train_criterion = nn.MSELoss(reduction='mean')
         self.eval_criterion = nn.MSELoss(reduction='mean')
         self.optimizer = optim.Adam(self.model.parameters(), lr=learning_rate)
-        # self.sigmoid = nn.Sigmoid()
         self.n_epochs = n_epochs
         self.seq_len = seq_len
         self.warmup_steps = warmup_steps
 
+
     def save(self, path):
         torch.save(self.model.state_dict(), path)
+
 
     def load(self, path):
         self.model.load_state_dict(torch.load(path))
         return self
+
+
     def train_one_epoch(self, dataloader):
         self.model.train()
         for x, y in dataloader:
@@ -91,21 +93,12 @@ class TorchTimeSeriesClassifier:
             else:
                 states = torch.zeros(self.model.num_layers, dataloader.batch_size, self.model.hidden_size)
 
-
-            # Forward pass
             outputs, states = self.model(x, states)
-            # if self.model_type == 'LSTM':
-            #     states = (states[0].detach(), states[1].detach()) # Detach states to prevent backprop through time over the entire sequence
-            # else:
-            #     states = states.detach()
-            # start = self.warmup_steps if i == 0 or self.model_type == 'CNN' else 0
             loss = self.train_criterion(outputs[:, self.warmup_steps:], y[:, self.warmup_steps:])
 
-            # Backward and optimize
             self.optimizer.zero_grad()
             loss.backward()
             self.optimizer.step()
-
 
 
     def predict(self, test_set, features):
@@ -118,8 +111,8 @@ class TorchTimeSeriesClassifier:
                 states = torch.zeros(self.model.num_layers, 1, self.model.hidden_size)
 
             y_pred, _ = self.model(X_test, states=states)
-            # y_pred = self.sigmoid(y_pred).squeeze()
         return y_pred
+
 
     def to(self, device):
         self.device = device
