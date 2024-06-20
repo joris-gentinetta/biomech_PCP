@@ -25,10 +25,10 @@ args = parser.parse_args()
 
 sampling_frequency = 60
 
-with open(join('data', args.person_dir, 'configs', args.config_name), 'r') as file:
+with open(join('data', args.person_dir, 'configs', f'{args.config_name}.yaml'), 'r') as file:
     wandb_config = yaml.safe_load(file)
     config = Config(wandb_config)
-data_dirs = [join('data', args.person_dir, 'recordings', recording) for recording in config.recordings]
+data_dirs = [join('data', args.person_dir, 'recordings', recording, 'experiments', '1') for recording in config.recordings]
 
 
 trainsets = []
@@ -83,7 +83,8 @@ if args.test:
     dataset = TSDataset(trainsets, config.features, config.targets, sequence_len=125)
     dataloader = TSDataLoader(dataset, batch_size=2, shuffle=True, drop_last=True)
 
-    for epoch in range(model.n_epochs):
+    print('Training model...')
+    for epoch in tqdm(range(model.n_epochs)):
         model.train_one_epoch(dataloader)
 
     for set_id, test_set in enumerate(testsets):
@@ -95,7 +96,7 @@ if args.test:
         test_set.loc[:, (args.intact_hand, 'thumbInPlaneAng')] = test_set.loc[:, (args.intact_hand, 'thumbInPlaneAng')] - math.pi
         test_set.loc[:, (args.intact_hand, 'wristRot')] = (test_set.loc[:, (args.intact_hand, 'wristRot')] * 2) - math.pi
         test_set.loc[:, (args.intact_hand, 'wristFlex')] = (test_set.loc[:, (args.intact_hand, 'wristFlex')] - math.pi / 2)
-        test_set.to_parquet(join(data_dirs[set_id], f'pred_angles_{args.config_name}.parquet'))
+        test_set.to_parquet(join(data_dirs[set_id], f'pred_angles-{args.config_name}.parquet'))
 
 
 if args.save_model:
@@ -110,10 +111,10 @@ if args.save_model:
     dataset = TSDataset(combined_sets, config.features, config.targets, sequence_len=125)
     dataloader = TSDataLoader(dataset, batch_size=2, shuffle=True, drop_last=True)
 
+    print('Training model...')
     for epoch in tqdm(range(model.n_epochs)):
         model.train_one_epoch(dataloader)
 
     model.to(torch.device('cpu'))
     os.makedirs(join('data', args.person_dir, 'models'), exist_ok=True)
-    model_name = args.config_name.split('.')[0]
-    model.save(join('data', args.person_dir, 'models', f'{model_name}.pt'))
+    model.save(join('data', args.person_dir, 'models', f'{args.config_name}.pt'))

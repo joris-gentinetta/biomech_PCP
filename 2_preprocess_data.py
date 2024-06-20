@@ -129,6 +129,7 @@ def trigger_crop_emg(cap, data_dir, trigger_channel, trigger_value):
     for i in range(len(video_timestamps)):
         video_timestamps[i] = emg_timestamps[start_frame] + (emg_timestamps[end_frame] - emg_timestamps[start_frame]) * i / len(video_timestamps)
         np.save(join(data_dir, 'triggered_video_timestamps.npy'), video_timestamps)
+    return start_frame, end_frame
 
 
 def filter_emg(data_dir):
@@ -183,7 +184,7 @@ def downsample_video(cap, out_dir):
 def align_emg(data_dir, out_dir):
     emg = np.load(join(data_dir, 'filtered_emg.npy'))
     video_timestamps = np.load(join(out_dir, 'cropped_video_timestamps.npy'))
-    emg_timestamps = np.load(join(data_dir, 'emg_timestamps.npy'))
+    emg_timestamps = np.load(join(data_dir, 'triggered_emg_timestamps.npy'))
 
     # Align EMG data with video timestamps
     aligned_emg = np.zeros((len(video_timestamps), emg.shape[1]))
@@ -239,7 +240,7 @@ if __name__ == '__main__':
     parser.add_argument('--start_frame', type=int, default=0, help='Start frame for cropping')
     parser.add_argument('--end_frame', type=int, default=-1, help='End frame for cropping')
     parser.add_argument('--trigger_channel', type=int, required=True, help='Trigger channel')
-    parser.add_argument('--trigger_value', type=int, default=600, help='Trigger value')
+    parser.add_argument('--trigger_value', type=int, default=550, help='Trigger value')
     parser.add_argument('--process', action='store_true', help='Process video, otherwise show video and EMG trigger channel')
     args = parser.parse_args()
 
@@ -262,9 +263,17 @@ if __name__ == '__main__':
         trigger_crop_video(args.data_dir)
     cap = cv2.VideoCapture(join(args.data_dir, 'triggered_video.mp4'))
 
+    start_frame, end_frame = trigger_crop_emg(cap, args.data_dir, trigger_channel=args.trigger_channel, trigger_value=abs(args.trigger_value))
     emg = np.load(join(args.data_dir, 'emg.npy'))
     plt.figure(figsize=(10, 5))
     plt.plot(emg[:, args.trigger_channel])
+    plt.axvline(x=start_frame, color='r', linestyle='--')
+    plt.axvline(x=end_frame, color='g', linestyle='--')
+    # horizontal line at trigger value
+    if np.mean(emg[:, args.trigger_channel]) > 0:
+        plt.axhline(y=args.trigger_value, color='k', linestyle='--')
+    else:
+        plt.axhline(y=-args.trigger_value, color='k', linestyle='--')
     plt.title(f'Trigger value: {args.trigger_value}')
 
     if not args.process:
@@ -274,7 +283,6 @@ if __name__ == '__main__':
     else:
         plt.savefig(join(args.data_dir, 'trigger_channel.png'))
 
-        trigger_crop_emg(cap, args.data_dir, trigger_channel=args.trigger_channel, trigger_value=abs(args.trigger_value))
         filter_emg(args.data_dir)
 
         out_dir = join(args.data_dir, 'experiments', args.experiment_name)

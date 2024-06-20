@@ -181,7 +181,7 @@ class Visualization():
 
     def initVideo(self):
         i = self.start_frame
-        fig = plt.figure(figsize=(44, 24))
+        fig = plt.figure(figsize=(20, 10))
         spec = gridspec.GridSpec(ncols = 3, nrows = 1, width_ratios = [1.8, 1, 1],
                                 wspace = 0.1, hspace = 0.1 )
 
@@ -198,7 +198,7 @@ class Visualization():
         # axv.axis('off')
         
         # Linewidth for joints
-        lw = 4
+        lw = 2
 
         x_h_l, y_h_l, z_h_l = self.get_hand('Left', i)
         x_l, y_l, z_l = self.get_arm('Left', i)
