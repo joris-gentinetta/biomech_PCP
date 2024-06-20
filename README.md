@@ -166,41 +166,42 @@ The `4_train.py` script is used for training a time-series model on EMG data, pr
    To visualize the data for exploration, use the `--visualize` argument. This will plot the features and targets for the specified person.
 
    ```bash
-   python 4_train.py --person_dir test_person --intact_hand Right --config_name test_sweep_config.yaml --visualize
+   python 4_train.py --person_dir A_1 --intact_hand Left --config_name simple_GRU --visualize
    ```
 
 2. **Hyperparameter Search**
 
    To perform a hyperparameter search, use the `--hyperparameter_search` argument. This will run a sweep using the configuration specified in the YAML file.
    ```bash
-   python 4_train.py --person_dir test_person --intact_hand Right --config_name test_sweep_config.yaml --hyperparameter_search
+   python 4_train.py --person_dir A_1 --intact_hand Left --config_name simple_GRU --hyperparameter_search
    ```
 
 3. **Testing the Model**
 
    To test the model, use the --test argument. This will train the model on the training set and evaluate it on the test set.   
    ```bash
-   python 4_train.py --person_dir test_person --intact_hand Right --config_name test_inference_config.yaml --test
+   python 4_train.py --person_dir A_1 --intact_hand Left --config_name simple_GRU --test
    ```
    
 4. **Saving the Model**
    To save the trained model, use the --save_model argument. This will save the model to the specified directory.
    ```bash
-   python 4_train.py --person_dir test_person --intact_hand Right --config_name test_inference_config.yaml --save_model
+   python 4_train.py --person_dir A_1 --intact_hand Left --config_name simple_GRU --save_model
    ```
-   
+
 
 ### 5. Control the Prosthetic Hand
 - Connect to the EMG board (see the 0.1. EMG Board Setup)
 - Connect to the hand:
 ```bash
-python 5_inference.py -e --person_dir test_person --config_name test_inference_config.yaml
+python 5_inference.py -e --person_dir A_1 --config_name simple_GRU
 ```
 - Type `move` to start the hand.
 
+
 ### 6. Visualize the model output on the test data with `6_visualize_results.py`
-    To visualize the model output on the test data, use the `6_visualize_results.py` script. It will start a pybullet simulation and show the model output on the test data.
-    These are the command line arguments that you can use to customize the behavior of the script:
+To visualize the model output on the test data, use the `6_visualize_results.py` script. It will start a pybullet simulation and show the model output on the test data.
+These are the command line arguments that you can use to customize the behavior of the script:
 
 - `--data_dir`: This argument is required. It specifies the directory where the video data is stored.
 - `--experiment_name`: This argument is required. It specifies the name of the experiment to be used for saving the processed data.
