@@ -227,7 +227,7 @@ class upperExtremityModel(nn.Module):
         # Get the muscle activations then pass them into the joint model.
         # print(f'****************************************************************************\n**************************************New timestep************************************************\n')
         # Alphas = torch.matmul(EMG[:, :self.EMG_Channel_Count], self.EMG_to_Activation_Mat*self.EMG_mat_Lr)
-        Alphas = self.EMG_to_Activation_Layer(EMG[:, :self.EMG_Channel_Count])
+        Alphas = self.EMG_to_Activation_Layer(EMG)
 
         thetas = torch.empty((SS.shape[0], 0), device=self.device)
         states = torch.empty((SS.shape[0], 0), device=self.device)
@@ -364,7 +364,6 @@ class synergies_nn(nn.Module):
     def __init__(self, device, numDoF, EMG_Channel_Count):
         # Generate fully connected neural network.
         super(synergies_nn, self).__init__()
-        self.device = device
 
         numInputs = EMG_Channel_Count
         numOutputs = 2*numDoF
@@ -383,6 +382,7 @@ class synergies_nn(nn.Module):
             nn.Linear(hiddenSize, numOutputs),
             nn.Sigmoid()
         )
+        self.model.to(device)
 
     def forward(self, EMG):
         output = self.model(EMG)

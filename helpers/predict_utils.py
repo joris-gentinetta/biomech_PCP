@@ -84,7 +84,7 @@ class Config:
 
 
 class TSDataset(Dataset):
-    def __init__(self, data_sources, features, targets, sequence_len, index_shift=0):
+    def __init__(self, data_sources, features, targets, sequence_len, index_shift=0, dummy_labels=False, device='cpu'):
         self.data_sources = data_sources
         for i in range(len(self.data_sources)):
             self.data_sources[i] = self.data_sources[i].astype('float32')
@@ -94,6 +94,8 @@ class TSDataset(Dataset):
         self.index_shift = index_shift
         self.lengths = [len(data) // self.sequence_len - 1 for data in self.data_sources]
         self.starts = [0] + [sum(self.lengths[:i]) for i in range(1, len(self.lengths))]
+        self.dummy_labels = dummy_labels
+        self.device = device
 
 
     def __len__(self):
@@ -107,9 +109,13 @@ class TSDataset(Dataset):
                 break
             set_idx += 1
         idx = idx - self.starts[set_idx]
-        x = torch.tensor(self.data_sources[set_idx].loc[idx * self.sequence_len + self.index_shift: (idx + 1) * self.sequence_len + self.index_shift - 1, self.features].values).to(device)
-        y = torch.tensor(self.data_sources[set_idx].loc[idx * self.sequence_len + self.index_shift: (idx + 1) * self.sequence_len + self.index_shift - 1, self.targets].values).to(device)
-        return x, y
+        x = torch.tensor(self.data_sources[set_idx].loc[idx * self.sequence_len + self.index_shift: (idx + 1) * self.sequence_len + self.index_shift - 1, self.features].values, dtype=torch.float32, device=self.device)
+        y = torch.tensor(self.data_sources[set_idx].loc[idx * self.sequence_len + self.index_shift: (idx + 1) * self.sequence_len + self.index_shift - 1, self.targets].values, dtype=torch.float32, device=self.device)
+        if self.dummy_labels:
+            l = torch.ones_like(y, dtype=torch.float32, device=self.device)
+            return x, y, l
+        else:
+            return x, y
 
 
     def set_index_shift(self, shift):
