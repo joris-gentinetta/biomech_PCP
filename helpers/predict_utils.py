@@ -88,10 +88,12 @@ class TSDataset(Dataset):
         self.data_sources = data_sources
         for i in range(len(self.data_sources)):
             self.data_sources[i] = self.data_sources[i].astype('float32')
+            self.data_sources[i] = self.data_sources[i].reset_index(drop=True)
         self.features = features
         self.targets = targets
         self.sequence_len = sequence_len
         self.index_shift = index_shift
+        # self.lengths = [len(data) - 2 * self.sequence_len for data in self.data_sources]
         self.lengths = [len(data) // self.sequence_len - 1 for data in self.data_sources]
         self.starts = [0] + [sum(self.lengths[:i]) for i in range(1, len(self.lengths))]
         self.dummy_labels = dummy_labels
