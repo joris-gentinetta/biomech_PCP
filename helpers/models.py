@@ -1,11 +1,12 @@
 import torch
 import torch.nn as nn
 import torch.optim as optim
-
+import numpy as np
+from torch.functional import F
 
 class RNNClassifier(nn.Module):
     def __init__(self, input_size, hidden_size, output_size, num_layers, model_type='LSTM'):
-        super(RNNClassifier, self).__init__()
+        super().__init__()
         self.hidden_size = hidden_size
         self.model_type = model_type
         self.num_layers = num_layers
@@ -28,7 +29,7 @@ class RNNClassifier(nn.Module):
 
 class CNNClassifier(nn.Module):
     def __init__(self, input_size, hidden_size, output_size, num_layers):
-        super(CNNClassifier, self).__init__()
+        super().__init__()
         self.hidden_size = hidden_size
         self.num_layers = num_layers
         self.cnn = nn.Conv1d(input_size, out_channels=hidden_size, kernel_size=10, stride=1, padding=9)
@@ -59,12 +60,70 @@ class CNNClassifier(nn.Module):
         return out, self.dummy_state
 
 
-class TorchTimeSeriesClassifier:
+class upperExtremityModel(nn.Module):
+    def __init__(self, device, lr, input_size, muscleType='bilinear', output_size=4):
+        super().__init__()
+
+        self.device = device
+        self.lr = lr
+        self.scale = 1 / self.lr / input_size
+        self.output_size = output_size
+        self.muscleType = muscleType
+
+        jointModels = {'bilinear': self.bilinearInit}
+
+        if muscleType == 'bilinear':
+            from Dynamics2.Joint_1dof_Bilinear_NN import Joint_1dof
+        else:
+            raise ValueError(f'{muscleType} not implemented')
+
+        self.numStates = None
+        self.params = {}
+
+        jointModels[muscleType]()
+
+        self.AMIDict = []
+        self.JointDict = nn.ModuleList()
+        for i in range(self.output_size):
+            self.AMIDict.append([self.muscleDict[i][0], self.muscleDict[i][1]])
+            self.JointDict.append(Joint_1dof(self.device, self.AMIDict[i], self.params, self.lr))
+
+
+    def bilinearInit(self):
+        from Dynamics2.Muscle_bilinear import Muscle
+
+        # muscle params
+        K0 = 100
+        K1 = 2000
+        L0 = 0.06
+        L1 = 0.006
+        M = 0.05
+
+        self.muscleDict = []
+        for _ in range(self.output_size):
+            self.muscleDict.append([Muscle(K0, K1, L0, L1, [-M]), Muscle(K0, K1, L0, L1, [M])])
+
+        self.params = {'I': [0.004], 'K': 5, 'B': .3, 'K_': 5 / self.scale / self.lr, 'B_': .3 / self.scale / self.lr,
+                       'speed_mode': False, 'K0_': 2000, 'K1_': 40000, 'L0_': 1.2, 'L1_': 0.12, 'I_': 0.064, 'M_': 0.1}
+        self.numStates = 2
+
+    def forward(self, x, states, dt):
+        out = torch.zeros((x.shape[0], x.shape[1], self.output_size ), dtype=torch.float, device=self.device)
+        for i in range(x.shape[1]):
+            for j in range(self.output_size):
+                out[:, i, j], states[j] = self.JointDict[i](states[:, i * self.numStates:(i + 1) * self.numStates],
+                                                       x[:, 2 * i:2 * (i + 1)], dt)
+        return out, states
+
+
+class TorchTimeSeriesRegressor:
     def __init__(self, input_size, hidden_size, output_size, n_epochs, seq_len, learning_rate, warmup_steps, num_layers, model_type):
         self.model_type = model_type
         self.device = torch.device("cpu")
         if self.model_type == 'CNN':
             self.model = CNNClassifier(input_size, hidden_size, output_size, num_layers)
+        elif self.model_type == 'biophys':
+            self.model = upperExtremityModel(device=self.device, lr=learning_rate, input_size=input_size)
         else:
             self.model = RNNClassifier(input_size, hidden_size, output_size, num_layers, self.model_type)
         self.train_criterion = nn.MSELoss(reduction='mean')
@@ -87,8 +146,9 @@ class TorchTimeSeriesClassifier:
     def train_one_epoch(self, dataloader):
         self.model.train()
         for x, y in dataloader:
-
-            if self.model_type == 'LSTM':
+            if self.model_type == 'biophys':
+                states = torch.zeros((y.shape[0], 2 * y.shape[1]), dtype=torch.float, device=self.device)
+            elif self.model_type == 'LSTM':
                 states = (torch.zeros(self.model.num_layers, dataloader.batch_size, self.model.hidden_size), torch.zeros(self.model.num_layers, dataloader.batch_size, self.model.hidden_size))
             else:
                 states = torch.zeros(self.model.num_layers, dataloader.batch_size, self.model.hidden_size)
@@ -105,7 +165,9 @@ class TorchTimeSeriesClassifier:
         self.model.eval()
         X_test = torch.tensor(test_set.loc[:, features].values, dtype=torch.float32).unsqueeze(0).to(self.device)
         with torch.no_grad():
-            if self.model_type == 'LSTM':
+            if self.model_type == 'biophys':
+                states = torch.zeros((y.shape[0], 2 * y.shape[1]), dtype=torch.float, device=self.device)
+            elif self.model_type == 'LSTM':
                 states = (torch.zeros(self.model.num_layers, 1, self.model.hidden_size), torch.zeros(self.model.num_layers, 1, self.model.hidden_size))
             else:
                 states = torch.zeros(self.model.num_layers, 1, self.model.hidden_size)

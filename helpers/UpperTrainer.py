@@ -99,7 +99,7 @@ class Offline_Trainer():
             print(f'\t{method} loss: {averageLoss:.6f}')
 
         if scheduler is not None:
-            scheduler.step(averageLoss)
+            scheduler.step(averageLoss)  # todo
 
         print(f'Parameters at the end of epoch {epoch}:')
         self.model.print_params()
@@ -107,52 +107,7 @@ class Offline_Trainer():
         return averageLoss
 
 
-    def train(self, data_loaders, optimizer, scheduler, init_model_path=None, epoch_num=5, twoStep=True):
-        validLossMin = float('inf')
 
-        if init_model_path is not None:
-            checkpoint = torch.load(init_model_path)
-            self.model.load_state_dict(checkpoint['model_state_dict'])
-            # validLossMin = checkpoint['loss']
-            optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
-
-        # self.model.disable_NN()
-        self.model.to(self.device)
-
-        # turn off the recognition layer for initial training
-        classifierTrained = True
-        if twoStep:
-            classifierTrained = False
-            for name, param in self.model.named_parameters():
-                param.requires_grad = False if 'recognitionLayer' in name else True
-                # param.requires_grad = True if 'EMG_to_Activation_Layer' in name else False
-        else:
-            for name, param in self.model.named_parameters():
-                param.requires_grad = True
-
-        earlyStopCounter = 0
-        for epoch in range(epoch_num):
-            validationLoss = self.train_one_epoch(optimizer, data_loaders, epoch, scheduler)
-            
-            # Save the model if training has improved
-            if validationLoss < 0.98*validLossMin:
-                validLossMin = validationLoss
-                self.saveModel(epoch=epoch, optimizer=optimizer, loss=validationLoss)
-                earlyStopCounter = 0 # reset the early step counter
-
-            else:
-                earlyStopCounter += 1
-                if earlyStopCounter >= self.early_stopping:
-                    if classifierTrained: 
-                        print(f'Validation loss has not improved in 2x{self.early_stopping} generations, ending early.')
-                        break
-                    else:
-                        classifierTrained = True
-                        for name, param in self.model.named_parameters():
-                            param.requires_grad = True# if 'recognitionLayer' in name else False # train all layers
-                    print(f'Joint validation loss has not improved in {self.early_stopping} generations, training classifier.')
-
-                    earlyStopCounter = 0
 
     def saveModel(self, epoch, optimizer, loss):
         torch.save({

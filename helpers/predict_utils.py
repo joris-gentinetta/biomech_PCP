@@ -8,18 +8,7 @@ from torch.utils.data import Dataset, DataLoader
 import random
 from helpers.models import TorchTimeSeriesClassifier
 
-# if torch.backends.mps.is_available():
-#     device = torch.device("mps")
-#     print('Using MPS')
-# elif torch.cuda.is_available():
-#     device = torch.device("cuda")
-#     print('Using CUDA')
-# else:
-device = torch.device("cpu")
-#     print('Using CPU')
-
-
-def train_model(trainsets, testsets, mode='online', config=None):
+def train_model(trainsets, testsets, device,  mode='online', config=None):
     with wandb.init(mode=mode):
         if mode != 'disabled':
             config = wandb.config
