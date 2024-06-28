@@ -4,7 +4,7 @@ import torch.optim as optim
 import numpy as np
 from torch.functional import F
 
-class RNNClassifier(nn.Module):
+class RNN(nn.Module):
     def __init__(self, input_size, hidden_size, output_size, num_layers, model_type='LSTM'):
         super().__init__()
         self.hidden_size = hidden_size
@@ -27,7 +27,7 @@ class RNNClassifier(nn.Module):
         return out, states
 
 
-class CNNClassifier(nn.Module):
+class CNN(nn.Module):
     def __init__(self, input_size, hidden_size, output_size, num_layers):
         super().__init__()
         self.hidden_size = hidden_size
@@ -61,19 +61,17 @@ class CNNClassifier(nn.Module):
 
 
 class upperExtremityModel(nn.Module):
-    def __init__(self, device, lr, input_size, muscleType='bilinear', output_size=4):
+    def __init__(self, device, input_size, muscleType='bilinear', output_size=4):
         super().__init__()
 
         self.device = device
-        self.lr = lr
-        self.scale = 1 / self.lr / input_size
         self.output_size = output_size
         self.muscleType = muscleType
 
         jointModels = {'bilinear': self.bilinearInit}
 
         if muscleType == 'bilinear':
-            from Dynamics2.Joint_1dof_Bilinear_NN import Joint_1dof
+            from dynamics.Joint_1dof_Bilinear_NN import Joint_1dof
         else:
             raise ValueError(f'{muscleType} not implemented')
 
@@ -90,7 +88,7 @@ class upperExtremityModel(nn.Module):
 
 
     def bilinearInit(self):
-        from Dynamics2.Muscle_bilinear import Muscle
+        from dynamics.Muscle_bilinear import Muscle
 
         # muscle params
         K0 = 100
@@ -103,7 +101,7 @@ class upperExtremityModel(nn.Module):
         for _ in range(self.output_size):
             self.muscleDict.append([Muscle(K0, K1, L0, L1, [-M]), Muscle(K0, K1, L0, L1, [M])])
 
-        self.params = {'I': [0.004], 'K': 5, 'B': .3, 'K_': 5 / self.scale / self.lr, 'B_': .3 / self.scale / self.lr,
+        self.params = {'I': [0.004], 'K': 5, 'B': .3, 'K_': 5, 'B_': .3,
                        'speed_mode': False, 'K0_': 2000, 'K1_': 40000, 'L0_': 1.2, 'L1_': 0.12, 'I_': 0.064, 'M_': 0.1}
         self.numStates = 2
 
@@ -116,16 +114,16 @@ class upperExtremityModel(nn.Module):
         return out, states
 
 
-class TorchTimeSeriesRegressor:
+class TimeSeriesRegressor:
     def __init__(self, input_size, hidden_size, output_size, n_epochs, seq_len, learning_rate, warmup_steps, num_layers, model_type):
         self.model_type = model_type
         self.device = torch.device("cpu")
         if self.model_type == 'CNN':
-            self.model = CNNClassifier(input_size, hidden_size, output_size, num_layers)
+            self.model = CNN(input_size, hidden_size, output_size, num_layers)
         elif self.model_type == 'biophys':
-            self.model = upperExtremityModel(device=self.device, lr=learning_rate, input_size=input_size)
+            self.model = upperExtremityModel(device=self.device, input_size=input_size)
         else:
-            self.model = RNNClassifier(input_size, hidden_size, output_size, num_layers, self.model_type)
+            self.model = RNN(input_size, hidden_size, output_size, num_layers, self.model_type)
         self.train_criterion = nn.MSELoss(reduction='mean')
         self.eval_criterion = nn.MSELoss(reduction='mean')
         self.optimizer = optim.Adam(self.model.parameters(), lr=learning_rate)
@@ -163,16 +161,16 @@ class TorchTimeSeriesRegressor:
 
     def predict(self, test_set, features):
         self.model.eval()
-        X_test = torch.tensor(test_set.loc[:, features].values, dtype=torch.float32).unsqueeze(0).to(self.device)
+        x = torch.tensor(test_set.loc[:, features].values, dtype=torch.float32).unsqueeze(0).to(self.device)
         with torch.no_grad():
             if self.model_type == 'biophys':
-                states = torch.zeros((y.shape[0], 2 * y.shape[1]), dtype=torch.float, device=self.device)
+                states = torch.zeros((x.shape[0], 2 * x.shape[1]), dtype=torch.float, device=self.device)
             elif self.model_type == 'LSTM':
                 states = (torch.zeros(self.model.num_layers, 1, self.model.hidden_size), torch.zeros(self.model.num_layers, 1, self.model.hidden_size))
             else:
                 states = torch.zeros(self.model.num_layers, 1, self.model.hidden_size)
 
-            y_pred, _ = self.model(X_test, states=states)
+            y_pred, _ = self.model(x, states=states)
         return y_pred
 
 

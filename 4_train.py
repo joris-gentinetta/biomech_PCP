@@ -3,7 +3,7 @@ import math
 import os
 import yaml
 import torch
-from helpers.models import TorchTimeSeriesClassifier
+from helpers.models import TimeSeriesRegressor
 import matplotlib.pyplot as plt
 import numpy as np
 from os.path import join
@@ -73,7 +73,7 @@ if args.hyperparameter_search:
 
 if args.test:
     device = torch.device("cpu")
-    model = TorchTimeSeriesClassifier(input_size=len(config.features), hidden_size=config.hidden_size,
+    model = TimeSeriesRegressor(input_size=len(config.features), hidden_size=config.hidden_size,
                                       output_size=len(config.targets), n_epochs=config.n_epochs,
                                       seq_len=config.seq_len,
                                       learning_rate=config.learning_rate,

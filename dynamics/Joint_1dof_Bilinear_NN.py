@@ -6,21 +6,33 @@ In this model, the total force is the sum of bilinear model force and neural net
 
 import torch
 from torch import nn
-from torch.functional import F
 import numpy as np
-from Dynamics2.Muscle_bilinear import Muscle
-from Dynamics2.Joint_Bilinear import Joint
 
-class Joint_1dof(Joint):
-    # def __init__(self, device, muscles, inertias, Lr_scale, NN_ratio, \
-    #              K0_scale=2000, K1_scale=40000, L0_scale=0.03, L1_scale=0.006, \
-    #              I_scale=0.008, M_scale=0.05, speed_mode=False):
-    def __init__(self, device, muscles, parameters, Lr_scale, NN_ratio):
-        # super().__init__(device, muscles, parameters['I'], Lr_scale, \
-        #                  K0_scale, K1_scale, L0_scale, L1_scale, I_scale, M_scale)
-        super().__init__(device, muscles, parameters['I'], parameters['B'], parameters['K'], Lr_scale, \
-                         parameters['K0_'], parameters['K1_'], parameters['L0_'], parameters['L1_'], parameters['I_'], parameters['B_'], parameters['K_'], parameters['M_'])
-        # For the __compensational_nn
+class Joint_1dof(nn.Module):
+    def __init__(self, device, muscles, parameters, NN_ratio):
+        super().__init__()
+
+        self.device = device
+        self.muscle_num = len(muscles)
+
+        self.K0s = nn.ParameterList(
+            [nn.Parameter(data=torch.tensor([m.K0], dtype=torch.float, device=self.device)) for m in muscles])
+        self.K1s = nn.ParameterList(
+            [nn.Parameter(data=torch.tensor([m.K1], dtype=torch.float, device=self.device)) for m in muscles])
+        self.L0s = nn.ParameterList(
+            [nn.Parameter(data=torch.tensor([m.L0], dtype=torch.float, device=self.device)) for m in muscles])
+        self.L1s = nn.ParameterList(
+            [nn.Parameter(data=torch.tensor([m.L1], dtype=torch.float, device=self.device)) for m in muscles])
+        self.Ms = nn.ParameterList(
+            [nn.Parameter(data=torch.tensor(np.array(m.M), dtype=torch.float, device=self.device)) for m in
+             muscles])  # Muscle moment arm [x,y]
+        self.As = nn.ParameterList(
+            [nn.Parameter(data=torch.tensor([m.A], dtype=torch.float, device=self.device)) for m in muscles])
+        self.I = nn.Parameter(data=torch.tensor(np.array(parameters['I']), dtype=torch.float, device=self.device))
+        self.B = nn.Parameter(data=torch.tensor(np.array(parameters['B']), dtype=torch.float, device=self.device))
+        self.K = nn.Parameter(data=torch.tensor(np.array(parameters['K']), dtype=torch.float, device=self.device))
+
+        # For the compensational_nn
         self.compensational_nns = nn.ModuleList([compensational_nn(device=self.device) for i in range(self.muscle_num)])
         self.speed_mode = parameters['speed_mode']
         self.designed_NN_ratio = NN_ratio
@@ -37,20 +49,6 @@ class Joint_1dof(Joint):
             dt (float, optional): Delta t between each iteration. Defaults to 0.0166667.
         """
         batch_size = len(Alphas)
-        
-        # Scale parameters back
-        K0s = [torch.abs(self.K0s[i]*self.K0_scale*self.Lr_scale)
-               for i in range(self.muscle_num)]
-        K1s = [torch.abs(self.K1s[i]*self.K1_scale*self.Lr_scale)
-               for i in range(self.muscle_num)]
-        L0s = [torch.abs(self.L0s[i]*self.L0_scale*self.Lr_scale)
-               for i in range(self.muscle_num)]
-        L1s = [torch.abs(self.L1s[i]*self.L1_scale*self.Lr_scale)
-               for i in range(self.muscle_num)]
-        Ms = [self.Ms[i]*self.M_scale*self.Lr_scale for i in range(self.muscle_num)]
-        I = torch.abs(self.I*self.I_scale*self.Lr_scale)
-        B_joint = torch.abs(self.B*self.B_scale*self.Lr_scale)
-        K_joint = torch.abs(self.K*self.K_scale*self.Lr_scale)
         
         #################################
         # Calculate the offset          #
@@ -136,11 +134,11 @@ class Joint_1dof(Joint):
         # print("K1s[0]", K1s[0])
         K = 0
         for i in range(self.muscle_num):
-            K_muscle = K0s[i] + K1s[i]*Alphas[:, i].view(batch_size, 1)
+            K_muscle = self.K0s[i] + self.K1s[i]*Alphas[:, i].view(batch_size, 1)
             # The following K is respect to w(angle)
-            K += K_muscle*Ms[i]*Ms[i]
+            K += K_muscle*self.Ms[i]*self.Ms[i]
 
-        A10= -(K + K_joint)/I[0] # with joint stiffness
+        A10= -(K + self.K)/self.I[0] # with joint stiffness
         # A10= -K/I[0]
 
         #############################
@@ -149,10 +147,10 @@ class Joint_1dof(Joint):
         # Calculate DAMPING
         # TODO: #2 To make critical damping
         # Currently use unaccurated damping for place holder
-        D = torch.sqrt(K*I)*2
+        D = torch.sqrt(K * self.I)*2
         # D_x = torch.zeros(batch_size,1)
         # D_y = torch.zeros(batch_size,1)
-        A11 = -(D + B_joint*torch.ones_like(D, device=self.device))/I[0] # with joint damping
+        A11 = -(D + self.B * torch.ones_like(D, device=self.device)) / self.I[0] # with joint damping
         # A11 = -D/I[0]
         A1 = torch.hstack([A10, A11])
         A = torch.stack([A0, A1],1)
@@ -169,17 +167,17 @@ class Joint_1dof(Joint):
             # The total force from one muscle (the if the muscle is not stretched)
             # B_F = (K0s[i] + K1s[i]*Alphas[:, i].view(batch_size, 1)) * (L0s[i] + L1s[i]* Alphas[:, i].view(batch_size, 1)) + \
             #     K1s[i]*L1s[i] * Alphas[:, i].view(batch_size, 1)*Alphas[:, i].view(batch_size, 1) * nn_outputs[i][:,0].view(batch_size, 1)
-            B_F = (K0s[i] + K1s[i]*Alphas[:, i].view(batch_size, 1)) * (L0s[i] + L1s[i]* Alphas[:, i].view(batch_size, 1) - torch.abs(muscle_SSs[i][0]).view(batch_size, 1)) + \
-                K1s[i]*L1s[i] * Alphas[:, i].view(batch_size, 1)*Alphas[:, i].view(batch_size, 1) * nn_outputs[i][:,0].view(batch_size, 1)
+            B_F = (self.K0s[i] + self.K1s[i]*Alphas[:, i].view(batch_size, 1)) * (self.L0s[i] + self.L1s[i]* Alphas[:, i].view(batch_size, 1) - torch.abs(muscle_SSs[i][0]).view(batch_size, 1)) + \
+                self.K1s[i]*self.L1s[i] * Alphas[:, i].view(batch_size, 1)*Alphas[:, i].view(batch_size, 1) * nn_outputs[i][:,0].view(batch_size, 1)
 
             # if this is negative, then the muscle should produce no force?
             # B_F = (torch.max(torch.hstack((B_F, torch.zeros_like(B_F))), dim=1).values)[:, None]
             # B_F = torch.where(L0s[i] + L1s[i]* Alphas[:, i].view(batch_size, 1) - torch.abs(muscle_SSs[i][0]).view(batch_size, 1) > 0, B_F, torch.zeros_like(B_F))
 
             # The following K is respect to w(angle)
-            B10 += B_F*Ms[i][0]/I[0]
+            B10 += B_F * self.Ms[i][0] / self.I[0]
 
-        B11 = torch.tensor([[1/I[0]]]*batch_size, dtype=torch.float, device=self.device)
+        B11 = torch.tensor([[1 / self.I[0]]]*batch_size, dtype=torch.float, device=self.device)
         B1 = torch.hstack([B10, B11])
         B = torch.stack([B0, B1], 1)
         # print("B:", B)
@@ -243,28 +241,14 @@ class Joint_1dof(Joint):
         self.NN_ratio = NN_ratio
 
     def print_params(self):
-        K0s = [torch.abs(self.K0s[i]*self.K0_scale*self.Lr_scale).detach().cpu().numpy()[0]
-               for i in range(self.muscle_num)]
-        K1s = [torch.abs(self.K1s[i]*self.K1_scale*self.Lr_scale).detach().cpu().numpy()[0]
-               for i in range(self.muscle_num)]
-        L0s = [torch.abs(self.L0s[i]*self.L0_scale*self.Lr_scale).detach().cpu().numpy()[0]
-               for i in range(self.muscle_num)]
-        L1s = [torch.abs(self.L1s[i]*self.L1_scale*self.Lr_scale).detach().cpu().numpy()[0]
-               for i in range(self.muscle_num)]
-        Ms = [(self.Ms[i]*self.M_scale *self.Lr_scale).detach().cpu().numpy()
-              for i in range(self.muscle_num)]
-        I = torch.abs(self.I*self.I_scale*self.Lr_scale).detach().cpu().numpy()
-        B = torch.abs(self.B*self.B_scale*self.Lr_scale).detach().cpu().numpy()
-        K = torch.abs(self.K*self.K_scale*self.Lr_scale).detach().cpu().numpy()
-
-        print(f'K0s: {K0s}')
-        print(f'K1s: {K1s}')
-        print(f'L0s: {L0s}')
-        print(f'L1s: {L1s}')
-        print(f'Moment arms: {Ms}')
-        print(f'I: {I}')
-        print(f'B: {B}')
-        print(f'K: {K}')        
+        print(f'K0s: {self.K0s}')
+        print(f'K1s: {self.K1s}')
+        print(f'L0s: {self.L0s}')
+        print(f'L1s: {self.L1s}')
+        print(f'Moment arms: {self.Ms}')
+        print(f'I: {self.I}')
+        print(f'B: {self.B}')
+        print(f'K: {self.K}')
 
 class compensational_nn(nn.Module):
     """ This class is the fully connected neural network to compensate the stiffness generated from the

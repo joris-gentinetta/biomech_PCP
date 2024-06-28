@@ -6,13 +6,13 @@ import wandb
 import torch
 from torch.utils.data import Dataset, DataLoader
 import random
-from helpers.models import TorchTimeSeriesClassifier
+from helpers.models import TimeSeriesRegressor
 
 def train_model(trainsets, testsets, device,  mode='online', config=None):
     with wandb.init(mode=mode):
         if mode != 'disabled':
             config = wandb.config
-        model = TorchTimeSeriesClassifier(input_size=len(config.features), hidden_size=config.hidden_size,
+        model = TimeSeriesRegressor(input_size=len(config.features), hidden_size=config.hidden_size,
                                           output_size=len(config.targets), n_epochs=config.n_epochs, seq_len=config.seq_len,
                                           learning_rate=config.learning_rate,
                                           warmup_steps=config.warmup_steps, num_layers=config.n_layers,
