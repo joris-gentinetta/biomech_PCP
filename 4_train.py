@@ -2,8 +2,9 @@ import argparse
 import math
 import os
 import yaml
+os.environ['PYTORCH_ENABLE_MPS_FALLBACK'] = '1'
 import torch
-from helpers.models import TimeSeriesRegressor
+from helpers.models import TimeSeriesRegressorWrapper
 import matplotlib.pyplot as plt
 import numpy as np
 from os.path import join
@@ -24,6 +25,17 @@ parser.add_argument('-s', '--save_model', action='store_true', help='Save a mode
 args = parser.parse_args()
 
 sampling_frequency = 60
+
+if torch.backends.mps.is_available():
+    device = torch.device("mps")
+    print('Using MPS')
+elif torch.cuda.is_available():
+    device = torch.device("cuda")
+    print('Using CUDA')
+else:
+    device = torch.device("cpu")
+    print('Using CPU')
+
 
 with open(join('data', args.person_dir, 'configs', f'{args.config_name}.yaml'), 'r') as file:
     wandb_config = yaml.safe_load(file)
@@ -72,15 +84,10 @@ if args.hyperparameter_search:
 
 
 if args.test:
-    device = torch.device("cpu")
-    model = TimeSeriesRegressor(input_size=len(config.features), hidden_size=config.hidden_size,
-                                      output_size=len(config.targets), n_epochs=config.n_epochs,
-                                      seq_len=config.seq_len,
-                                      learning_rate=config.learning_rate,
-                                      warmup_steps=config.warmup_steps, num_layers=config.n_layers,
-                                      model_type=config.model_type)
+    model = TimeSeriesRegressorWrapper(device=device, input_size=len(config.features), output_size=len(config.targets), **(config.to_dict()))
+
     model.to(device)
-    dataset = TSDataset(trainsets, config.features, config.targets, sequence_len=125)
+    dataset = TSDataset(trainsets, config.features, config.targets, sequence_len=125, device=device)
     dataloader = TSDataLoader(dataset, batch_size=2, shuffle=True, drop_last=True)
 
     print('Training model...')
@@ -88,7 +95,7 @@ if args.test:
         model.train_one_epoch(dataloader)
 
     for set_id, test_set in enumerate(testsets):
-        val_pred = model.predict(test_set, config.features).squeeze(0).to(device).detach().numpy()
+        val_pred = model.predict(test_set, config.features).squeeze(0).to('cpu').detach().numpy()
 
         val_pred = np.clip(val_pred, 0, 1) * math.pi
         test_set[config.targets] = val_pred
@@ -100,15 +107,14 @@ if args.test:
 
 
 if args.save_model:
-    device = torch.device("cpu")
-    model = TorchTimeSeriesClassifier(input_size=len(config.features), hidden_size=config.hidden_size,
+    model = TimeSeriesRegressorWrapper(input_size=len(config.features), hidden_size=config.hidden_size,
                                       output_size=len(config.targets), n_epochs=config.n_epochs,
                                       seq_len=config.seq_len,
                                       learning_rate=config.learning_rate,
                                       warmup_steps=config.warmup_steps, num_layers=config.n_layers,
                                       model_type=config.model_type)
     model.to(device)
-    dataset = TSDataset(combined_sets, config.features, config.targets, sequence_len=125)
+    dataset = TSDataset(combined_sets, config.features, config.targets, sequence_len=125, device=device)
     dataloader = TSDataLoader(dataset, batch_size=2, shuffle=True, drop_last=True)
 
     print('Training model...')

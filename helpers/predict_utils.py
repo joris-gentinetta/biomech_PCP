@@ -1,7 +1,3 @@
-from sklearn.metrics import roc_auc_score
-from sklearn.metrics import roc_curve
-import matplotlib.pyplot as plt
-import numpy as np
 import wandb
 import torch
 from torch.utils.data import Dataset, DataLoader
@@ -71,9 +67,12 @@ class Config:
                             value_2[id] = tuple(value_3)
                 setattr(self, key, value_2)
 
+    def to_dict(self):
+        return {key: value for key, value in self.__dict__.items() if not key.startswith('_')}
+
 
 class TSDataset(Dataset):
-    def __init__(self, data_sources, features, targets, sequence_len, index_shift=0, dummy_labels=False, device='cpu'):
+    def __init__(self, data_sources, features, targets, sequence_len, device, index_shift=0, dummy_labels=False):
         self.data_sources = data_sources
         for i in range(len(self.data_sources)):
             self.data_sources[i] = self.data_sources[i].astype('float32')

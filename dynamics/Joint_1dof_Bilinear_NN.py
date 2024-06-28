@@ -9,11 +9,12 @@ from torch import nn
 import numpy as np
 
 class Joint_1dof(nn.Module):
-    def __init__(self, device, muscles, parameters, NN_ratio):
+    def __init__(self, device, muscles, parameters, NN_ratio, dt):
         super().__init__()
 
         self.device = device
         self.muscle_num = len(muscles)
+        self.dt = dt
 
         self.K0s = nn.ParameterList(
             [nn.Parameter(data=torch.tensor([m.K0], dtype=torch.float, device=self.device)) for m in muscles])
@@ -39,14 +40,14 @@ class Joint_1dof(nn.Module):
         self.NN_ratio = NN_ratio
         self.loops = 0
 
-    def forward(self, SS, Alphas, dt=0.0166667, jointID=None):
+    def forward(self, SS, Alphas):
         """Calculate the Joint dynamic for one step
         Output the new system state
 
         Args:
             SS (torch.tensor): System states. They are [wx, wy, dwx, dwy]. 
             Alphas (torch.tensor): Muscle activations, [batch_size * muscle_number]
-            dt (float, optional): Delta t between each iteration. Defaults to 0.0166667.
+            self.dt (float, optional): Delta t between each iteration. Defaults to 0.0166667.
         """
         batch_size = len(Alphas)
         
@@ -77,7 +78,7 @@ class Joint_1dof(nn.Module):
         muscle_SSs = []
         nn_outputs = []
         for i in range(self.muscle_num):
-            # Calculate Muscle States from the joint state. Muscle States are L and dL/dt for each muscle
+            # Calculate Muscle States from the joint state. Muscle States are L and dL/self.dt for each muscle
             # [[wx, wy]]*batch_size
             w = SS[:, 0:1].view(batch_size, 1, -1)
             # [[dwx, dwy]]*batch_size
@@ -100,14 +101,14 @@ class Joint_1dof(nn.Module):
         System state simulation
         xdot = A x + B u
         # Linear interpolation between steps
-        # Algorithm: to integrate from time 0 to time dt, with linear
-        # interpolation between inputs u(0) = u0 and u(dt) = u1, we solve
+        # Algorithm: to integrate from time 0 to time self.dt, with linear
+        # interpolation between inputs u(0) = u0 and u(self.dt) = u1, we solve
         #   xdot = A x + B u,        x(0) = x0
-        #   udot = (u1 - u0) / dt,   u(0) = u0.
+        #   udot = (u1 - u0) / self.dt,   u(0) = u0.
         #
         # Solution is
-        #   [ x(dt) ]       [ A*dt  B*dt  0 ] [  x0   ]
-        #   [ u(dt) ] = exp [  0     0    I ] [  u0   ]
+        #   [ x(self.dt) ]       [ A*self.dt  B*self.dt  0 ] [  x0   ]
+        #   [ u(self.dt) ] = exp [  0     0    I ] [  u0   ]
         #   [u1 - u0]       [  0     0    0 ] [u1 - u0]
         
         In this case,
@@ -117,7 +118,7 @@ class Joint_1dof(nn.Module):
         Args:
             X : System States [Position, Speed]
             a1, a2 ([type]): The activation level of the two muscle.
-            dt : Time between this frame to last frame
+            self.dt : Time between this frame to last frame
         """
 
         #################
@@ -190,16 +191,16 @@ class Joint_1dof(nn.Module):
         U1 = torch.tensor(
             np.array([[[1, 0]]]*batch_size), dtype=torch.float, device=self.device)
 
-        # if torch.any(torch.abs(torch.bmm(A*dt, SS.view(batch_size, 2, 1)) + torch.bmm(B*dt, U0.view(batch_size, 2, 1)) + SS.view(batch_size, 2, 1))[:, 0] > 1000):
-        #     idx = (torch.abs(torch.bmm(A*dt, SS.view(batch_size, 2, 1)) + torch.bmm(B*dt, U0.view(batch_size, 2, 1)) + SS.view(batch_size, 2, 1)) > 1000).nonzero(as_tuple=True)
-        #     print(dt*self.loops, SS[idx], A[idx], B[idx])
+        # if torch.any(torch.abs(torch.bmm(A*self.dt, SS.view(batch_size, 2, 1)) + torch.bmm(B*self.dt, U0.view(batch_size, 2, 1)) + SS.view(batch_size, 2, 1))[:, 0] > 1000):
+        #     idx = (torch.abs(torch.bmm(A*self.dt, SS.view(batch_size, 2, 1)) + torch.bmm(B*self.dt, U0.view(batch_size, 2, 1)) + SS.view(batch_size, 2, 1)) > 1000).nonzero(as_tuple=True)
+        #     print(self.dt*self.loops, SS[idx], A[idx], B[idx])
         #     raise ValueError('exploding')
 
         if not self.speed_mode:
             #############################
             #   Accurate Simulation     #
             #############################
-            M = torch.hstack([torch.dstack([A*dt, B*dt, torch.zeros((batch_size, 2, 2), dtype=torch.float, device=self.device)]),
+            M = torch.hstack([torch.dstack([A*self.dt, B*self.dt, torch.zeros((batch_size, 2, 2), dtype=torch.float, device=self.device)]),
                               torch.dstack([torch.zeros((batch_size, 2, 4), dtype=torch.float, device=self.device), 
                               torch.tensor(np.array([np.eye(2)]*batch_size), dtype=torch.float, device=self.device)]),
                               torch.zeros((batch_size, 2, 6), dtype=torch.float, device=self.device)])
@@ -224,11 +225,11 @@ class Joint_1dof(nn.Module):
             #############################
             # The simplified simulation addition instead of intergration
             # xdot = A x + B u
-            SSout = torch.bmm(A*dt, SS.view(batch_size, 2, 1)) + torch.bmm(B*dt, U0.view(batch_size, 2, 1)) + SS.view(batch_size, 2, 1)
+            SSout = torch.bmm(A*self.dt, SS.view(batch_size, 2, 1)) + torch.bmm(B*self.dt, U0.view(batch_size, 2, 1)) + SS.view(batch_size, 2, 1)
 
         self.loops += 1     
 
-        return SSout.view(batch_size, 2)[:, :1] , SSout.view(batch_size, 2)
+        return SSout.view(batch_size, 2)[:, 0], SSout.view(batch_size, 2)
 
     def disable_NN(self):
         # Disable the contribution of the neural network
