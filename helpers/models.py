@@ -5,7 +5,7 @@ import torch.nn as nn
 import torch.optim as optim
 torch.autograd.set_detect_anomaly(True)
 from abc import ABC, abstractmethod
-
+from tqdm import tqdm
 
 class TimeSeriesRegressor(nn.Module, ABC):
     def __init__(self, input_size, output_size, device):
@@ -87,6 +87,28 @@ class CNN(TimeSeriesRegressor):
         return out, None
 
 
+class DenseNet(TimeSeriesRegressor):
+    def __init__(self, input_size, output_size, device, hidden_size, num_layers):
+        super().__init__(input_size, output_size, device)
+        layers = []
+        layers.append(nn.Linear(self.input_size, hidden_size))
+        layers.append(nn.LeakyReLU())
+        layers.append(nn.Dropout(p=0.4))
+
+        for _ in range(num_layers - 1):
+            layers.append(nn.Linear(hidden_size, hidden_size))
+            layers.append(nn.LeakyReLU())
+            layers.append(nn.Dropout(p=0.4))
+
+        layers.append(nn.Linear(hidden_size, self.output_size))
+
+        self.model = nn.Sequential(*layers)
+
+    def forward(self, x, states=None):
+        out = self.model(x)
+        return out, states
+
+
 class upperExtremityModel(TimeSeriesRegressor):
     def __init__(self, input_size, output_size, device, muscleType='bilinear', nn_ratio=0.2):
         super().__init__(input_size, output_size, device)
@@ -130,17 +152,18 @@ class upperExtremityModel(TimeSeriesRegressor):
         self.numStates = 2
 
     def get_starting_states(self, batch_size):
-        return torch.zeros((batch_size, self.numStates * self.output_size), dtype=torch.float, device=self.device)
+        return [torch.zeros((batch_size, self.numStates), dtype=torch.float, device=self.device, requires_grad=False) for _ in range(self.output_size)]
 
     def forward(self, x, states):
         out = torch.zeros((x.shape[0], x.shape[1], self.output_size), dtype=torch.float, device=self.device)
+
         for i in range(x.shape[1]):
             for j in range(self.output_size):
+                out[:, i, j], states[j] = self.JointDict[j](states[j], x[:, i, j * 2:(j + 1) * 2])
 
-                a, b = self.JointDict[j](states[:, j * self.numStates:(j + 1) * self.numStates],
-                                                       x[:, i, j * 2:(j + 1) * 2])
-                out[:, i, j], states[:, j * self.numStates:(j + 1) * self.numStates] = a, b
         return out, states
+
+
 
 
 class TimeSeriesRegressorWrapper:
@@ -168,7 +191,7 @@ class TimeSeriesRegressorWrapper:
 
     def train_one_epoch(self, dataloader):
         self.model.train()
-        for x, y in dataloader:
+        for x, y in tqdm(dataloader, leave=False):
             states = self.model.get_starting_states(dataloader.batch_size)
             outputs, states = self.model(x, states)
             loss = self.criterion(outputs[:, self.warmup_steps:], y[:, self.warmup_steps:])
