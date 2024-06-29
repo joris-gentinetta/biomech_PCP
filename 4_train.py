@@ -92,13 +92,15 @@ if args.test:
 
     print('Training model...')
     for epoch in tqdm(range(model.n_epochs)):
-        model.train_one_epoch(dataloader)
+        epoch_loss = model.train_one_epoch(dataloader)
+        print(f'Epoch {epoch}, loss: {epoch_loss}')
 
     for set_id, test_set in enumerate(testsets):
         val_pred = model.predict(test_set, config.features).squeeze(0).to('cpu').detach().numpy()
 
-        val_pred = np.clip(val_pred, 0, 1) * math.pi
+        val_pred = np.clip(val_pred, 0, 1)
         test_set[config.targets] = val_pred
+        test_set = test_set * math.pi
 
         test_set.loc[:, (args.intact_hand, 'thumbInPlaneAng')] = test_set.loc[:, (args.intact_hand, 'thumbInPlaneAng')] - math.pi
         test_set.loc[:, (args.intact_hand, 'wristRot')] = (test_set.loc[:, (args.intact_hand, 'wristRot')] * 2) - math.pi

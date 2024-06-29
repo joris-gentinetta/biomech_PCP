@@ -27,16 +27,17 @@ class RNN(TimeSeriesRegressor):
     def __init__(self, input_size, output_size, device, model_type, hidden_size, n_layers, **kwargs):
         super().__init__(input_size, output_size, device)
         self.model_type = model_type
+        self.hidden_size = hidden_size
         self.n_layers = n_layers
         if self.model_type == 'RNN':
-            self.rnn = nn.RNN(self.input_size, hidden_size, n_layers, batch_first=True)
+            self.rnn = nn.RNN(self.input_size, self.hidden_size, n_layers, batch_first=True)
         elif self.model_type == 'LSTM':
-            self.rnn = nn.LSTM(self.input_size, hidden_size, n_layers, batch_first=True)
+            self.rnn = nn.LSTM(self.input_size, self.hidden_size, n_layers, batch_first=True)
         elif self.model_type == 'GRU':
-            self.rnn = nn.GRU(self.input_size, hidden_size, n_layers, batch_first=True)
+            self.rnn = nn.GRU(self.input_size, self.hidden_size, n_layers, batch_first=True)
         else:
             raise ValueError(f'Unknown RNN type {self.model_type}')
-        self.fc = nn.Linear(hidden_size, self.output_size)
+        self.fc = nn.Linear(self.hidden_size, self.output_size)
 
     def get_starting_states(self, batch_size):
         if self.model_type == 'LSTM':
@@ -182,6 +183,7 @@ class ActivationAndBiophysModel(TimeSeriesRegressor):
             raise ValueError(f'Unknown model type {activation_config["model_type"]}')
 
         self.biophys_model = upperExtremityModel(output_size * 2, output_size, device, **biophys_config)
+        self.sigmoid = nn.Sigmoid()
 
     def get_starting_states(self, batch_size):
         return [self.activation_model.get_starting_states(batch_size), self.biophys_model.get_starting_states(batch_size)]
@@ -190,6 +192,7 @@ class ActivationAndBiophysModel(TimeSeriesRegressor):
         out = torch.zeros((x.shape[0], x.shape[1], self.output_size), dtype=torch.float, device=self.device)
         for i in range(x.shape[1]):
             activation_out, states[0] = self.activation_model(x[:, i:i+1, :], states[0])
+            activation_out = self.sigmoid(activation_out)
             out[:, i:i+1, :], states[1] = self.biophys_model(activation_out, states[1])
         return out, states
 
@@ -231,12 +234,12 @@ class TimeSeriesRegressorWrapper:
             states = self.model.get_starting_states(dataloader.batch_size)
             outputs, states = self.model(x, states)
             loss = self.criterion(outputs[:, self.warmup_steps:], y[:, self.warmup_steps:])
-
+            # todo outputs are nan
             self.optimizer.zero_grad()
             loss.backward()
-            torch.nn.utils.clip_grad_norm_(self.model.parameters(), 1)
+            # torch.nn.utils.clip_grad_norm_(self.model.parameters(), 1)
             self.optimizer.step()
-            print(loss.item())
+            # print(loss.item())
             epoch_loss += loss.item()
         return epoch_loss / len(dataloader)
 
