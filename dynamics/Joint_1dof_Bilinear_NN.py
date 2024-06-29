@@ -31,7 +31,6 @@ class Joint_1dof(nn.Module):
         self.speed_mode = parameters['speed_mode']
         self.designed_NN_ratio = NN_ratio
         self.NN_ratio = NN_ratio
-        self.loops = 0
 
     def forward(self, SS, Alphas):
         """Calculate the Joint dynamic for one step
@@ -67,34 +66,7 @@ class Joint_1dof(nn.Module):
 
         Alphas = torch.clamp(Alphas, 0, 1)
 
-        # Get muscles' states and neural networks' outputs
-        muscle_SSs = []
-        muscle_SSs2 = [] # todo
-        nn_outputs = []
-        for i in range(self.muscle_num):
-            # Calculate Muscle States from the joint state. Muscle States are L and dL/self.dt for each muscle
-            # [[wx, wy]]*batch_size
-            w = SS[:, 0:1].view(batch_size, 1, -1)
-            # [[dwx, dwy]]*batch_size
-            dw_dt = SS[:, 1:2].view(batch_size, 1, -1)
-            moment_arm = self.Ms[i].view(-1, 1)
-            l = torch.matmul(w, moment_arm)[:, 0]             # Muscle length
-            # Muscle length changing speed
-            dl_dt = torch.matmul(dw_dt, moment_arm)[:, 0]
-            muscle_SSs.append((l, dl_dt))
-            # Neural Network
-            # Each neural network's output is in the form of [k, l]
-            nn_output = self.compensational_nns[i](l, dl_dt, Alphas[:, i].view(batch_size, 1))*self.NN_ratio
-            # print("nn_output", nn_output)
-            nn_outputs.append(nn_output)
-        # print("NN_ratio", self.NN_ratio)
-        # print("nn outputs:", nn_outputs)
-
-        for i in range(self.muscle_num):
-            l = SS[:, 0] * self.Ms[i]
-            dl_dt = SS[:, 1] * self.Ms[i] # jeweils einer der Ms muss negativ sein
-            muscle_SSs2.append((l, dl_dt))
-        print()
+        muscle_SSs = SS.unsqueeze(2) * self.Ms.unsqueeze(0).unsqueeze(0) # [batch_size, 2, muscle_num]
         # Compute the dynamic model
         """
         System state simulation
@@ -129,91 +101,67 @@ class Joint_1dof(nn.Module):
         A00 = torch.zeros(batch_size, dtype=torch.float, device=self.device)
         A01 = torch.ones(batch_size, dtype=torch.float, device=self.device)
 
-        K = self.K0s + self.K1s * Alphas
-        K = K * self.Ms * self.Ms
+        K = self.K0s.unsqueeze(0) + self.K1s.unsqueeze(0) * Alphas
+        K = K * self.Ms.unsqueeze(0) * self.Ms.unsqueeze(0)
         K = K.sum(dim=1)
-        A10= -(K + self.K)/self.I # with joint stiffness
+        A10 = -(K + self.K)/self.I # with joint stiffness
 
-        #############################
-        #   DAMPING                 #
-        #############################
-        # Calculate DAMPING
-        D = torch.sqrt(K * self.I)*2
-        A11 = -(D + self.B) / self.I # with joint damping
+            #############################
+            #   DAMPING                 #
+            #############################
+        D = torch.sqrt(K * self.I) * 2
+        A11 = -(D + self.B) / self.I  # with joint damping
 
-        A = torch.stack([torch.hstack([A00, A01]),torch.hstack([A10, A11])],1)
+        A = torch.stack([torch.stack([A00, A01], dim=1), torch.stack([A10, A11], dim=1)], dim=1)
 
 
         #########################
         #   MATRIX B            #
         #########################
-        B0 = torch.zeros(batch_size, 2, dtype=torch.float,
-                         device=self.device)
-        B10 = 0
-        for i in range(self.muscle_num):
-            # The total force from one muscle (the if the muscle is not stretched)
-            # B_F = (K0s[i] + K1s[i]*Alphas[:, i].view(batch_size, 1)) * (L0s[i] + L1s[i]* Alphas[:, i].view(batch_size, 1)) + \
-            #     K1s[i]*L1s[i] * Alphas[:, i].view(batch_size, 1)*Alphas[:, i].view(batch_size, 1) * nn_outputs[i][:,0].view(batch_size, 1)
-            B_F = (self.K0s[i] + self.K1s[i]*Alphas[:, i].view(batch_size, 1)) * (self.L0s[i] + self.L1s[i]* Alphas[:, i].view(batch_size, 1) - torch.abs(muscle_SSs[i][0]).view(batch_size, 1)) + \
-                self.K1s[i]*self.L1s[i] * Alphas[:, i].view(batch_size, 1)*Alphas[:, i].view(batch_size, 1) * nn_outputs[i][:,0].view(batch_size, 1)
+        B0 = torch.zeros(batch_size, 2, dtype=torch.float, device=self.device)
 
-            # if this is negative, then the muscle should produce no force?
-            # B_F = (torch.max(torch.hstack((B_F, torch.zeros_like(B_F))), dim=1).values)[:, None]
-            # B_F = torch.where(L0s[i] + L1s[i]* Alphas[:, i].view(batch_size, 1) - torch.abs(muscle_SSs[i][0]).view(batch_size, 1) > 0, B_F, torch.zeros_like(B_F))
+        # The total force from one muscle (if the muscle is not stretched)
+        B_F = ((self.K0s.unsqueeze(0) + self.K1s.unsqueeze(0) * Alphas)
+               * (self.L0s.unsqueeze(0) + self.L1s.unsqueeze(0) * Alphas - torch.abs(muscle_SSs[:, 0, :]))
+               + self.K1s.unsqueeze(0) * self.L1s.unsqueeze(0) * Alphas * Alphas) # todo nn_outputs
 
-            # The following K is respect to w(angle)
-            B10 += B_F * self.Ms[i][0] / self.I[0]
+        # The following K is respect to w(angle)
+        B10 = B_F * self.Ms.unsqueeze(0) / self.I
+        B10 = B10.sum(dim=1)
+        B11 = torch.ones(batch_size, dtype=torch.float, device=self.device) / self.I
+        B1 = torch.stack([B10, B11], dim=1)
 
-        B11 = torch.tensor([[1 / self.I[0]]]*batch_size, dtype=torch.float, device=self.device)
-        B1 = torch.hstack([B10, B11])
-        B = torch.stack([B0, B1], 1)
-        # print("B:", B)
+        B = torch.stack([B0, B1], dim=1)
+
 
         #########################
         #   U (1,1,Tx,Ty)       #
         #########################
-        U0 = torch.tensor(
-            np.array([[[1, 0]]]*batch_size), dtype=torch.float, device=self.device)
-        U1 = torch.tensor(
-            np.array([[[1, 0]]]*batch_size), dtype=torch.float, device=self.device)
-
-        # if torch.any(torch.abs(torch.bmm(A*self.dt, SS.view(batch_size, 2, 1)) + torch.bmm(B*self.dt, U0.view(batch_size, 2, 1)) + SS.view(batch_size, 2, 1))[:, 0] > 1000):
-        #     idx = (torch.abs(torch.bmm(A*self.dt, SS.view(batch_size, 2, 1)) + torch.bmm(B*self.dt, U0.view(batch_size, 2, 1)) + SS.view(batch_size, 2, 1)) > 1000).nonzero(as_tuple=True)
-        #     print(self.dt*self.loops, SS[idx], A[idx], B[idx])
-        #     raise ValueError('exploding')
+        U0 = torch.zeros(batch_size, 2, dtype=torch.float, device=self.device)
+        U0[:, 0] = 1
+        U1 = U0 # todo
 
         if not self.speed_mode:
             #############################
             #   Accurate Simulation     #
             #############################
             M = torch.hstack([torch.dstack([A*self.dt, B*self.dt, torch.zeros((batch_size, 2, 2), dtype=torch.float, device=self.device)]),
-                              torch.dstack([torch.zeros((batch_size, 2, 4), dtype=torch.float, device=self.device), 
-                              torch.tensor(np.array([np.eye(2)]*batch_size), dtype=torch.float, device=self.device)]),
+                              torch.dstack([torch.zeros((batch_size, 2, 4), dtype=torch.float, device=self.device),  torch.eye(2).unsqueeze(0).repeat(batch_size, 1, 1)]),
                               torch.zeros((batch_size, 2, 6), dtype=torch.float, device=self.device)])
-            # print("M:", M)
 
             expMT = torch.matrix_exp(M)
             Ad = expMT[:, :2, :2]
             Bd1 = expMT[:, :2, 4:]
             Bd0 = expMT[:, :2, 2:4] - Bd1
 
-            # print(Ad.shape, Bd1.shape, Bd0.shape)
-            # print(SS.shape, U0.shape, U1.shape)
-            # torch.bmm(Bd0, U0.view(batch_size, 2, 1))
-            # torch.bmm(Bd1, U1.view(batch_size, 2, 1))
-            # torch.bmm(Ad, SS.view(batch_size, 2, 1))
-            # print(SS.view(batch_size, 2, 1).shape, U0.view(batch_size, 2, 1).shape, U1.view(batch_size, 2, 1).shape)
-
-            SSout = (torch.bmm(Ad, SS.view(batch_size, 2, 1)) + torch.bmm(Bd0, U0.view(batch_size, 2, 1)) + torch.bmm(Bd1, U1.view(batch_size, 2, 1)))
+            SSout = (torch.bmm(Ad, SS.unsqueeze(2)) + torch.bmm(Bd0, U0.unsqueeze(2)) + torch.bmm(Bd1, U1.unsqueeze(2)))
         else:
             #############################
             #   Simplified Simulation   #
             #############################
-            # The simplified simulation addition instead of intergration
+            # The simplified simulation addition instead of integration
             # xdot = A x + B u
-            SSout = torch.bmm(A*self.dt, SS.view(batch_size, 2, 1)) + torch.bmm(B*self.dt, U0.view(batch_size, 2, 1)) + SS.view(batch_size, 2, 1)
-
-        self.loops += 1     
+            SSout = (torch.bmm(A*self.dt, SS.unsqueeze(2)) + torch.bmm(B*self.dt, U0.unsqueeze(2)) + SS.unsqueeze(2)).squeeze(2)
 
         return SSout[:, 0:1], SSout.view(batch_size, 2)
 
