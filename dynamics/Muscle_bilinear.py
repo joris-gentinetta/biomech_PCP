@@ -23,7 +23,7 @@ class Muscle():
             L0 (float): L0
             L1 (float): L1
             A (float, optional): The nonlinear factor between [-3, 0) to map EMG to muscle activation. Defaults to -2. As A approach to 0, EMG to muscle activation becomes linear.
-            M (tuple of float): Moment arm of the muscle in the joint of interest.
+            M (float): Moment arm of the muscle in the joint of interest.
         """
         
         super().__init__()
@@ -32,4 +32,4 @@ class Muscle():
         self.L0 = L0
         self.L1 = L1
         self.A = A
-        self.M = np.array(M)
+        self.M = M

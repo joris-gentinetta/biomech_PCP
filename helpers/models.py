@@ -149,9 +149,9 @@ class upperExtremityModel(TimeSeriesRegressor):
 
         self.muscleDict = []
         for _ in range(self.output_size):
-            self.muscleDict.append([Muscle(K0, K1, L0, L1, [-M]), Muscle(K0, K1, L0, L1, [M])])
+            self.muscleDict.append([Muscle(K0, K1, L0, L1, -M), Muscle(K0, K1, L0, L1, M)])
 
-        self.params = {'I': [0.004], 'K': 5, 'B': .3, 'K_': 5, 'B_': .3,
+        self.params = {'I': 0.004, 'K': 5, 'B': .3, 'K_': 5, 'B_': .3,
                        'speed_mode': False, 'K0_': 2000, 'K1_': 40000, 'L0_': 1.2, 'L1_': 0.12, 'I_': 0.064, 'M_': 0.1}
         self.numStates = 2
 

@@ -16,19 +16,12 @@ class Joint_1dof(nn.Module):
         self.muscle_num = len(muscles)
         self.dt = dt
 
-        self.K0s = nn.ParameterList(
-            [nn.Parameter(data=torch.tensor([m.K0], dtype=torch.float, device=self.device)) for m in muscles])
-        self.K1s = nn.ParameterList(
-            [nn.Parameter(data=torch.tensor([m.K1], dtype=torch.float, device=self.device)) for m in muscles])
-        self.L0s = nn.ParameterList(
-            [nn.Parameter(data=torch.tensor([m.L0], dtype=torch.float, device=self.device)) for m in muscles])
-        self.L1s = nn.ParameterList(
-            [nn.Parameter(data=torch.tensor([m.L1], dtype=torch.float, device=self.device)) for m in muscles])
-        self.Ms = nn.ParameterList(
-            [nn.Parameter(data=torch.tensor(np.array(m.M), dtype=torch.float, device=self.device)) for m in
-             muscles])  # Muscle moment arm [x,y]
-        self.As = nn.ParameterList(
-            [nn.Parameter(data=torch.tensor([m.A], dtype=torch.float, device=self.device)) for m in muscles])
+        self.K0s = nn.Parameter(data=torch.tensor([m.K0 for m in muscles], dtype=torch.float, device=self.device))
+        self.K1s = nn.Parameter(data=torch.tensor([m.K1 for m in muscles], dtype=torch.float, device=self.device))
+        self.L0s = nn.Parameter(data=torch.tensor([m.L0 for m in muscles], dtype=torch.float, device=self.device))
+        self.L1s = nn.Parameter(data=torch.tensor([m.L1 for m in muscles], dtype=torch.float, device=self.device))
+        self.Ms = nn.Parameter(data=torch.tensor([m.M for m in muscles], dtype=torch.float, device=self.device))
+        self.As = nn.Parameter(data=torch.tensor([m.A for m in muscles], dtype=torch.float, device=self.device))
         self.I = nn.Parameter(data=torch.tensor(np.array(parameters['I']), dtype=torch.float, device=self.device))
         self.B = nn.Parameter(data=torch.tensor(np.array(parameters['B']), dtype=torch.float, device=self.device))
         self.K = nn.Parameter(data=torch.tensor(np.array(parameters['K']), dtype=torch.float, device=self.device))
@@ -76,6 +69,7 @@ class Joint_1dof(nn.Module):
 
         # Get muscles' states and neural networks' outputs
         muscle_SSs = []
+        muscle_SSs2 = [] # todo
         nn_outputs = []
         for i in range(self.muscle_num):
             # Calculate Muscle States from the joint state. Muscle States are L and dL/self.dt for each muscle
@@ -96,6 +90,11 @@ class Joint_1dof(nn.Module):
         # print("NN_ratio", self.NN_ratio)
         # print("nn outputs:", nn_outputs)
 
+        for i in range(self.muscle_num):
+            l = SS[:, 0] * self.Ms[i]
+            dl_dt = SS[:, 1] * self.Ms[i] # jeweils einer der Ms muss negativ sein
+            muscle_SSs2.append((l, dl_dt))
+        print()
         # Compute the dynamic model
         """
         System state simulation
@@ -127,36 +126,23 @@ class Joint_1dof(nn.Module):
         # For matrix A: A00, A01, A10, A11 are all 2x2 matrix
         # System states are [Wx, Wy, dWx_dt, dWy_dt]
         # A00 = torch.tensor(np.array([[0,0],[0,0]]*batch_size), dtype=torch.float, device=self.device)
-        A00 = torch.zeros(batch_size, 1, dtype=torch.float, device=self.device)
-        A01 = torch.tensor(np.array([[1]]*batch_size), dtype=torch.float, device=self.device)
-        A0 = torch.hstack([A00, A01])
+        A00 = torch.zeros(batch_size, dtype=torch.float, device=self.device)
+        A01 = torch.ones(batch_size, dtype=torch.float, device=self.device)
 
-        # print("nn_outputs[0][:,0]", nn_outputs[0][:,0].view(batch_size, 1))
-        # print("K1s[0]", K1s[0])
-        K = 0
-        for i in range(self.muscle_num):
-            K_muscle = self.K0s[i] + self.K1s[i]*Alphas[:, i].view(batch_size, 1)
-            # The following K is respect to w(angle)
-            K += K_muscle*self.Ms[i]*self.Ms[i]
-
-        A10= -(K + self.K)/self.I[0] # with joint stiffness
-        # A10= -K/I[0]
+        K = self.K0s + self.K1s * Alphas
+        K = K * self.Ms * self.Ms
+        K = K.sum(dim=1)
+        A10= -(K + self.K)/self.I # with joint stiffness
 
         #############################
         #   DAMPING                 #
         #############################
         # Calculate DAMPING
-        # TODO: #2 To make critical damping
-        # Currently use unaccurated damping for place holder
         D = torch.sqrt(K * self.I)*2
-        # D_x = torch.zeros(batch_size,1)
-        # D_y = torch.zeros(batch_size,1)
-        A11 = -(D + self.B * torch.ones_like(D, device=self.device)) / self.I[0] # with joint damping
-        # A11 = -D/I[0]
-        A1 = torch.hstack([A10, A11])
-        A = torch.stack([A0, A1],1)
-        # print("A shape:",A.shape)
-        # print("A:",A)
+        A11 = -(D + self.B) / self.I # with joint damping
+
+        A = torch.stack([torch.hstack([A00, A01]),torch.hstack([A10, A11])],1)
+
 
         #########################
         #   MATRIX B            #

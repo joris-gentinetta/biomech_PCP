@@ -88,7 +88,7 @@ if args.test:
 
     model.to(device)
     dataset = TSDataset(trainsets, config.features, config.targets, sequence_len=125, device=device)
-    dataloader = TSDataLoader(dataset, batch_size=2, shuffle=True, drop_last=True)
+    dataloader = TSDataLoader(dataset, batch_size=config.batch_size, shuffle=True, drop_last=True)
 
     print('Training model...')
     for epoch in tqdm(range(model.n_epochs)):
@@ -120,7 +120,7 @@ if args.save_model:
                                       model_type=config.model_type)
     model.to(device)
     dataset = TSDataset(combined_sets, config.features, config.targets, sequence_len=125, device=device)
-    dataloader = TSDataLoader(dataset, batch_size=2, shuffle=True, drop_last=True)
+    dataloader = TSDataLoader(dataset, batch_size=config.batch_size, shuffle=True, drop_last=True)
 
     print('Training model...')
     for epoch in tqdm(range(model.n_epochs)):
