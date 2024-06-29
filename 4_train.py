@@ -26,12 +26,12 @@ args = parser.parse_args()
 
 sampling_frequency = 60
 
-if torch.backends.mps.is_available():
-    device = torch.device("mps")
-    print('Using MPS')
-elif torch.cuda.is_available():
+if torch.cuda.is_available():
     device = torch.device("cuda")
     print('Using CUDA')
+# elif torch.backends.mps.is_available():
+#     device = torch.device("mps")
+#     print('Using MPS')
 else:
     device = torch.device("cpu")
     print('Using CPU')
@@ -46,7 +46,7 @@ data_dirs = [join('data', args.person_dir, 'recordings', recording, 'experiments
 trainsets = []
 testsets = []
 combined_sets = []
-for data_dir in data_dirs:
+for recording_id, data_dir in enumerate(data_dirs):
     angles = pd.read_parquet(join(data_dir, 'cropped_smooth_angles.parquet'))
     angles.index = range(len(angles))
     emg = np.load(join(data_dir, 'cropped_aligned_emg.npy'))
@@ -64,7 +64,7 @@ for data_dir in data_dirs:
 
     if args.visualize:
         data[config.features].plot(subplots=True)
-        plt.title('Features')
+        plt.title(f'Features {config.recordings[recording_id]}')
         plt.show()
 
         data[config.targets].plot(subplots=True)
@@ -92,6 +92,9 @@ if args.test:
 
     print('Training model...')
     for epoch in tqdm(range(model.n_epochs)):
+        if config.model_type == 'ActivationAndBiophys':
+            for param in model.model.biophys_model.parameters():
+                param.requires_grad = False if epoch < config.biophys_config['n_freeze_epochs'] else True
         epoch_loss = model.train_one_epoch(dataloader)
         print(f'Epoch {epoch}, loss: {epoch_loss}')
 
@@ -121,7 +124,11 @@ if args.save_model:
 
     print('Training model...')
     for epoch in tqdm(range(model.n_epochs)):
+        if config.model_type == 'ActivationAndBiophys':
+            for param in model.model.biophys_model.parameters():
+                param.requires_grad = False if epoch < config.biophys_config['n_freeze_epochs'] else True
         model.train_one_epoch(dataloader)
+
 
     model.to(torch.device('cpu'))
     os.makedirs(join('data', args.person_dir, 'models'), exist_ok=True)

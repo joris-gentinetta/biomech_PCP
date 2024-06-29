@@ -164,6 +164,8 @@ class upperExtremityModel(TimeSeriesRegressor):
         for i in range(x.shape[1]):
             for j in range(self.output_size):
                 o, s = self.JointDict[j](states[j], x[:, i, j * 2:(j + 1) * 2])
+                if torch.isnan(o).any():
+                    print('nan in o')
                 out[:, i:i+1, j:j+1], states[j] = o, s
 
         return out, states
@@ -233,13 +235,17 @@ class TimeSeriesRegressorWrapper:
         for x, y in tqdm(dataloader, leave=False):
             states = self.model.get_starting_states(dataloader.batch_size)
             outputs, states = self.model(x, states)
+            if torch.isnan(outputs).any():
+                print('nan in outputs')
+
             loss = self.criterion(outputs[:, self.warmup_steps:], y[:, self.warmup_steps:])
-            # todo outputs are nan
+            if torch.isnan(loss):
+                print('nan in loss')
             self.optimizer.zero_grad()
             loss.backward()
-            # torch.nn.utils.clip_grad_norm_(self.model.parameters(), 1)
+            torch.nn.utils.clip_grad_norm_(self.model.parameters(), 1)
             self.optimizer.step()
-            # print(loss.item())
+            print(loss.item())
             epoch_loss += loss.item()
         return epoch_loss / len(dataloader)
 
