@@ -229,7 +229,7 @@ class Joint_1dof(nn.Module):
 
         self.loops += 1     
 
-        return SSout.view(batch_size, 2)[:, 0], SSout.view(batch_size, 2)
+        return SSout[:, 0:1], SSout.view(batch_size, 2)
 
     def disable_NN(self):
         # Disable the contribution of the neural network

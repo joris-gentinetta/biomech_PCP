@@ -3,7 +3,7 @@ os.environ['PYTORCH_ENABLE_MPS_FALLBACK'] = '1'
 import torch
 import torch.nn as nn
 import torch.optim as optim
-torch.autograd.set_detect_anomaly(True)
+# torch.autograd.set_detect_anomaly(True)
 from abc import ABC, abstractmethod
 from tqdm import tqdm
 
@@ -24,26 +24,26 @@ class TimeSeriesRegressor(nn.Module, ABC):
 
 
 class RNN(TimeSeriesRegressor):
-    def __init__(self, input_size, output_size, device, model_type, hidden_size, num_layers):
+    def __init__(self, input_size, output_size, device, model_type, hidden_size, n_layers, **kwargs):
         super().__init__(input_size, output_size, device)
         self.model_type = model_type
-        self.num_layers = num_layers
+        self.n_layers = n_layers
         if self.model_type == 'RNN':
-            self.rnn = nn.RNN(self.input_size, hidden_size, num_layers, batch_first=True)
+            self.rnn = nn.RNN(self.input_size, hidden_size, n_layers, batch_first=True)
         elif self.model_type == 'LSTM':
-            self.rnn = nn.LSTM(self.input_size, hidden_size, num_layers, batch_first=True)
+            self.rnn = nn.LSTM(self.input_size, hidden_size, n_layers, batch_first=True)
         elif self.model_type == 'GRU':
-            self.rnn = nn.GRU(self.input_size, hidden_size, num_layers, batch_first=True)
+            self.rnn = nn.GRU(self.input_size, hidden_size, n_layers, batch_first=True)
         else:
             raise ValueError(f'Unknown RNN type {self.model_type}')
         self.fc = nn.Linear(hidden_size, self.output_size)
 
     def get_starting_states(self, batch_size):
         if self.model_type == 'LSTM':
-            states = (torch.zeros(self.num_layers, batch_size, self.hidden_size, dtype=torch.float, device=self.device),
-                  torch.zeros(self.num_layers, batch_size, self.hidden_size, dtype=torch.float, device=self.device))
+            states = (torch.zeros(self.n_layers, batch_size, self.hidden_size, dtype=torch.float, device=self.device),
+                  torch.zeros(self.n_layers, batch_size, self.hidden_size, dtype=torch.float, device=self.device))
         else:
-            states = torch.zeros(self.num_layers, batch_size, self.hidden_size, dtype=torch.float, device=self.device)
+            states = torch.zeros(self.n_layers, batch_size, self.hidden_size, dtype=torch.float, device=self.device)
         return states
 
     def forward(self, x, states):
@@ -53,17 +53,17 @@ class RNN(TimeSeriesRegressor):
 
 
 class CNN(TimeSeriesRegressor):
-    def __init__(self, input_size, output_size, device, hidden_size, num_layers):
+    def __init__(self, input_size, output_size, device, hidden_size, n_layers, **kwargs):
         super().__init__(input_size, output_size, device)
         self.hidden_size = hidden_size
-        self.num_layers = num_layers
+        self.n_layers = n_layers
         self.cnn = nn.Conv1d(self.input_size, out_channels=hidden_size, kernel_size=10, stride=1, padding=9)
-        if self.num_layers == 2:
+        if self.n_layers == 2:
             self.cnn2 = nn.Conv1d(hidden_size, out_channels=2*hidden_size, kernel_size=20, stride=1, padding=19)
             self.fc = nn.Linear(2*hidden_size*10, self.output_size)
         else:
             self.fc = nn.Linear(hidden_size*10, self.output_size)
-        # self.dummy_state = torch.zeros(self.num_layers, 1, 1, requires_grad=False)
+        # self.dummy_state = torch.zeros(self.n_layers, 1, 1, requires_grad=False)
 
     def get_starting_states(self, batch_size):
         return None
@@ -72,7 +72,7 @@ class CNN(TimeSeriesRegressor):
         # x.shape = (batch_size, seq_len, input_size)
         x = x.permute(0, 2, 1)  # x.shape = (batch_size, input_size, seq_len)
         out = self.cnn(x)  # out.shape = (batch_size, hidden_size, seq_len)
-        if self.num_layers == 2:
+        if self.n_layers == 2:
             out = self.cnn2(out)
         out = out.permute(0, 2, 1)  # out.shape = (batch_size, seq_len, hidden_size)
         out = out[:, :x.shape[2], :]
@@ -88,14 +88,14 @@ class CNN(TimeSeriesRegressor):
 
 
 class DenseNet(TimeSeriesRegressor):
-    def __init__(self, input_size, output_size, device, hidden_size, num_layers):
+    def __init__(self, input_size, output_size, device, hidden_size, n_layers, **kwargs):
         super().__init__(input_size, output_size, device)
         layers = []
         layers.append(nn.Linear(self.input_size, hidden_size))
         layers.append(nn.LeakyReLU())
         layers.append(nn.Dropout(p=0.4))
 
-        for _ in range(num_layers - 1):
+        for _ in range(n_layers - 1):
             layers.append(nn.Linear(hidden_size, hidden_size))
             layers.append(nn.LeakyReLU())
             layers.append(nn.Dropout(p=0.4))
@@ -104,13 +104,16 @@ class DenseNet(TimeSeriesRegressor):
 
         self.model = nn.Sequential(*layers)
 
+    def get_starting_states(self, batch_size):
+        return None
+
     def forward(self, x, states=None):
         out = self.model(x)
         return out, states
 
 
 class upperExtremityModel(TimeSeriesRegressor):
-    def __init__(self, input_size, output_size, device, muscleType='bilinear', nn_ratio=0.2):
+    def __init__(self, input_size, output_size, device, muscleType='bilinear', nn_ratio=0.2, **kwargs):
         super().__init__(input_size, output_size, device)
 
         self.muscleType = muscleType
@@ -159,10 +162,36 @@ class upperExtremityModel(TimeSeriesRegressor):
 
         for i in range(x.shape[1]):
             for j in range(self.output_size):
-                out[:, i, j], states[j] = self.JointDict[j](states[j], x[:, i, j * 2:(j + 1) * 2])
+                o, s = self.JointDict[j](states[j], x[:, i, j * 2:(j + 1) * 2])
+                out[:, i:i+1, j:j+1], states[j] = o, s
 
         return out, states
 
+
+class ActivationAndBiophysModel(TimeSeriesRegressor):
+    def __init__(self, input_size, output_size, device, activation_config, biophys_config, **kwargs):
+        super().__init__(input_size, output_size, device)
+
+        if activation_config['model_type'] == 'DenseNet':
+            self.activation_model = DenseNet(input_size, output_size * 2, device, **activation_config)
+        elif activation_config['model_type'] == 'CNN':
+            self.activation_model = CNN(input_size, output_size * 2, device, **activation_config)
+        elif activation_config['model_type'] in ['RNN', 'LSTM', 'GRU']:
+            self.activation_model = RNN(input_size, output_size * 2, device, **activation_config)
+        else:
+            raise ValueError(f'Unknown model type {activation_config["model_type"]}')
+
+        self.biophys_model = upperExtremityModel(output_size * 2, output_size, device, **biophys_config)
+
+    def get_starting_states(self, batch_size):
+        return [self.activation_model.get_starting_states(batch_size), self.biophys_model.get_starting_states(batch_size)]
+
+    def forward(self, x, states):
+        out = torch.zeros((x.shape[0], x.shape[1], self.output_size), dtype=torch.float, device=self.device)
+        for i in range(x.shape[1]):
+            activation_out, states[0] = self.activation_model(x[:, i:i+1, :], states[0])
+            out[:, i:i+1, :], states[1] = self.biophys_model(activation_out, states[1])
+        return out, states
 
 
 
@@ -171,10 +200,16 @@ class TimeSeriesRegressorWrapper:
 
         if model_type == 'biophys':
             self.model = upperExtremityModel(input_size, output_size, device, kwargs.get('muscleType'))
+        elif model_type == 'DenseNet':
+            self.model = DenseNet(input_size, output_size, device, kwargs.get('hidden_size'), kwargs.get('n_layers'))
         elif model_type == 'CNN':
-            self.model = CNN(input_size, output_size, device, kwargs.get('hidden_size'), kwargs.get('num_layers'))
+            self.model = CNN(input_size, output_size, device, kwargs.get('hidden_size'), kwargs.get('n_layers'))
+        elif model_type in ['RNN', 'LSTM', 'GRU']:
+            self.model = RNN(input_size, output_size, device, model_type, kwargs.get('hidden_size'), kwargs.get('n_layers'))
+        elif model_type == 'ActivationAndBiophys':
+            self.model = ActivationAndBiophysModel(input_size, output_size, device, kwargs.get('activation_config'), kwargs.get('biophys_config'))
         else:
-            self.model = RNN(input_size, output_size, device, model_type, kwargs.get('hidden_size'), kwargs.get('num_layers'))
+            raise ValueError(f'Unknown model type {model_type}')
 
         self.criterion = nn.MSELoss(reduction='mean')
         self.optimizer = optim.Adam(self.model.parameters(), lr=learning_rate)
@@ -191,6 +226,7 @@ class TimeSeriesRegressorWrapper:
 
     def train_one_epoch(self, dataloader):
         self.model.train()
+        epoch_loss = 0
         for x, y in tqdm(dataloader, leave=False):
             states = self.model.get_starting_states(dataloader.batch_size)
             outputs, states = self.model(x, states)
@@ -198,7 +234,11 @@ class TimeSeriesRegressorWrapper:
 
             self.optimizer.zero_grad()
             loss.backward()
+            torch.nn.utils.clip_grad_norm_(self.model.parameters(), 1)
             self.optimizer.step()
+            print(loss.item())
+            epoch_loss += loss.item()
+        return epoch_loss / len(dataloader)
 
     def predict(self, test_set, features):
         self.model.eval()
