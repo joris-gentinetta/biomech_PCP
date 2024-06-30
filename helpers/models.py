@@ -117,12 +117,16 @@ class upperExtremityModel(TimeSeriesRegressor):
     def __init__(self, input_size, output_size, device, muscleType='bilinear', nn_ratio=0.2, **kwargs):
         super().__init__(input_size, output_size, device)
 
+        if input_size != output_size * 2:
+            raise ValueError(f'UpperExtremityModel: Input size must be 2 times the output size, got {input_size} and {output_size}')
+
         self.muscleType = muscleType
 
         jointModels = {'bilinear': self.bilinearInit}
 
         if muscleType == 'bilinear':
-            from dynamics.Joint_1dof_Bilinear_NN import Joint_1dof
+            # from dynamics.Joint_1dof_Bilinear_NN import Joint_1dof
+            from dynamics.BilinearJoints import BilinearJoints
         else:
             raise ValueError(f'{muscleType} not implemented')
 
@@ -135,7 +139,8 @@ class upperExtremityModel(TimeSeriesRegressor):
         self.JointDict = nn.ModuleList()
         for i in range(self.output_size):
             self.AMIDict.append([self.muscleDict[i][0], self.muscleDict[i][1]])
-            self.JointDict.append(Joint_1dof(self.device, self.AMIDict[i], self.params, nn_ratio, 1/60))
+
+        self.joints = BilinearJoints(self.device, self.AMIDict, self.params, 1/60, False)
 
     def bilinearInit(self):
         from dynamics.Muscle_bilinear import Muscle
@@ -155,18 +160,18 @@ class upperExtremityModel(TimeSeriesRegressor):
                        'speed_mode': False, 'K0_': 2000, 'K1_': 40000, 'L0_': 1.2, 'L1_': 0.12, 'I_': 0.064, 'M_': 0.1}
         self.numStates = 2
 
+
     def get_starting_states(self, batch_size):
-        return [torch.zeros((batch_size, self.numStates), dtype=torch.float, device=self.device, requires_grad=False) for _ in range(self.output_size)]
+        return torch.zeros((batch_size, self.output_size, self.numStates), dtype=torch.float, device=self.device, requires_grad=False)
 
     def forward(self, x, states):
         out = torch.zeros((x.shape[0], x.shape[1], self.output_size), dtype=torch.float, device=self.device)
-
+        x = x.reshape(x.shape[0], x.shape[1], self.output_size, 2)
         for i in range(x.shape[1]):
-            for j in range(self.output_size):
-                o, s = self.JointDict[j](states[j], x[:, i, j * 2:(j + 1) * 2])
+                o, s = self.joints(states, x[:, i, :, :])
                 if torch.isnan(o).any():
                     print('nan in o')
-                out[:, i:i+1, j:j+1], states[j] = o, s
+                out[:, i, :], states = o, s
 
         return out, states
 
@@ -245,7 +250,7 @@ class TimeSeriesRegressorWrapper:
             loss.backward()
             torch.nn.utils.clip_grad_norm_(self.model.parameters(), 1)
             self.optimizer.step()
-            print(loss.item())
+            # print(loss.item())
             epoch_loss += loss.item()
         return epoch_loss / len(dataloader)
 
@@ -263,4 +268,13 @@ class TimeSeriesRegressorWrapper:
         return self
 
 
+
+if __name__ == '__main__':
+    model = upperExtremityModel(device=torch.device('cpu'), input_size=8, output_size=4, muscleType='bilinear', nn_ratio=0.2)
+    states = model.get_starting_states(5)
+
+
+    x = torch.tensor([[[1, 2], [1, 2], [1, 2], [1, 2]], [[1, 2], [1, 2], [1, 2], [1, 2]], [[1, 2], [1, 2], [1, 2], [1, 2]], [[1, 2], [1, 2], [1, 2], [1, 2]], [[1, 2], [1, 2], [1, 2], [1, 2]]], dtype=torch.float).unsqueeze(1).repeat(1, 125, 1, 1) / 2
+    out, states = model(x, states) # x.shape = (batch_size, seq_len, n_joints, n_muscles_per_joint)
+    print(out)
 
