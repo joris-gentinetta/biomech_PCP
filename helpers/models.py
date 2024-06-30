@@ -7,6 +7,8 @@ import torch.optim as optim
 from abc import ABC, abstractmethod
 from tqdm import tqdm
 
+SR = 60
+
 class TimeSeriesRegressor(nn.Module, ABC):
     def __init__(self, input_size, output_size, device):
         super().__init__()
@@ -15,7 +17,7 @@ class TimeSeriesRegressor(nn.Module, ABC):
         self.device = device
 
     @abstractmethod
-    def get_starting_states(self, batch_size):
+    def get_starting_states(self, batch_size, x=None):
         pass
 
     @abstractmethod
@@ -39,7 +41,7 @@ class RNN(TimeSeriesRegressor):
             raise ValueError(f'Unknown RNN type {self.model_type}')
         self.fc = nn.Linear(self.hidden_size, self.output_size)
 
-    def get_starting_states(self, batch_size):
+    def get_starting_states(self, batch_size, x=None):
         if self.model_type == 'LSTM':
             states = (torch.zeros(self.n_layers, batch_size, self.hidden_size, dtype=torch.float, device=self.device),
                   torch.zeros(self.n_layers, batch_size, self.hidden_size, dtype=torch.float, device=self.device))
@@ -66,7 +68,7 @@ class CNN(TimeSeriesRegressor):
             self.fc = nn.Linear(hidden_size*10, self.output_size)
         # self.dummy_state = torch.zeros(self.n_layers, 1, 1, requires_grad=False)
 
-    def get_starting_states(self, batch_size):
+    def get_starting_states(self, batch_size, x=None):
         return None
 
     def forward(self, x, states=None):
@@ -105,7 +107,7 @@ class DenseNet(TimeSeriesRegressor):
 
         self.model = nn.Sequential(*layers)
 
-    def get_starting_states(self, batch_size):
+    def get_starting_states(self, batch_size, x=None):
         return None
 
     def forward(self, x, states=None):
@@ -140,7 +142,7 @@ class upperExtremityModel(TimeSeriesRegressor):
         for i in range(self.output_size):
             self.AMIDict.append([self.muscleDict[i][0], self.muscleDict[i][1]])
 
-        self.joints = BilinearJoints(self.device, self.AMIDict, self.params, 1/60, False)
+        self.joints = BilinearJoints(self.device, self.AMIDict, self.params, 1/SR, False)
 
     def bilinearInit(self):
         from dynamics.Muscle_bilinear import Muscle
@@ -161,18 +163,17 @@ class upperExtremityModel(TimeSeriesRegressor):
         self.numStates = 2
 
 
-    def get_starting_states(self, batch_size):
-        return torch.zeros((batch_size, self.output_size, self.numStates), dtype=torch.float, device=self.device, requires_grad=False)
+    def get_starting_states(self, batch_size, x=None):
+        theta = x[:, 0, :]
+        d_theta = (x[:, 1, :] - x[:, 0, :]) * SR  # todo
+        return torch.stack([theta, d_theta], dim=2)
+        # return torch.zeros((batch_size, self.output_size, self.numStates), dtype=torch.float, device=self.device, requires_grad=False)
 
     def forward(self, x, states):
         out = torch.zeros((x.shape[0], x.shape[1], self.output_size), dtype=torch.float, device=self.device)
         x = x.reshape(x.shape[0], x.shape[1], self.output_size, 2)
         for i in range(x.shape[1]):
-                o, s = self.joints(states, x[:, i, :, :])
-                if torch.isnan(o).any():
-                    print('nan in o')
-                out[:, i, :], states = o, s
-
+                out[:, i, :], states = self.joints(states, x[:, i, :, :])
         return out, states
 
 
@@ -192,8 +193,8 @@ class ActivationAndBiophysModel(TimeSeriesRegressor):
         self.biophys_model = upperExtremityModel(output_size * 2, output_size, device, **biophys_config)
         self.sigmoid = nn.Sigmoid()
 
-    def get_starting_states(self, batch_size):
-        return [self.activation_model.get_starting_states(batch_size), self.biophys_model.get_starting_states(batch_size)]
+    def get_starting_states(self, batch_size, x=None):
+        return [self.activation_model.get_starting_states(batch_size, x), self.biophys_model.get_starting_states(batch_size, x)]
 
     def forward(self, x, states):
         out = torch.zeros((x.shape[0], x.shape[1], self.output_size), dtype=torch.float, device=self.device)
@@ -237,8 +238,8 @@ class TimeSeriesRegressorWrapper:
     def train_one_epoch(self, dataloader):
         self.model.train()
         epoch_loss = 0
-        for x, y in tqdm(dataloader, leave=False):
-            states = self.model.get_starting_states(dataloader.batch_size)
+        for x, y in dataloader:
+            states = self.model.get_starting_states(dataloader.batch_size, x)
             outputs, states = self.model(x, states)
             if torch.isnan(outputs).any():
                 print('nan in outputs')
@@ -258,7 +259,7 @@ class TimeSeriesRegressorWrapper:
         self.model.eval()
         x = torch.tensor(test_set.loc[:, features].values, dtype=torch.float32).unsqueeze(0).to(self.device)
         with torch.no_grad():
-            states = self.model.get_starting_states(1)
+            states = self.model.get_starting_states(1, x)
             y_pred, _ = self.model(x, states=states)
         return y_pred
 
@@ -271,10 +272,8 @@ class TimeSeriesRegressorWrapper:
 
 if __name__ == '__main__':
     model = upperExtremityModel(device=torch.device('cpu'), input_size=8, output_size=4, muscleType='bilinear', nn_ratio=0.2)
-    states = model.get_starting_states(5)
-
-
     x = torch.tensor([[[1, 2], [1, 2], [1, 2], [1, 2]], [[1, 2], [1, 2], [1, 2], [1, 2]], [[1, 2], [1, 2], [1, 2], [1, 2]], [[1, 2], [1, 2], [1, 2], [1, 2]], [[1, 2], [1, 2], [1, 2], [1, 2]]], dtype=torch.float).unsqueeze(1).repeat(1, 125, 1, 1) / 2
+    states = model.get_starting_states(5, x)
     out, states = model(x, states) # x.shape = (batch_size, seq_len, n_joints, n_muscles_per_joint)
     print(out)
 
