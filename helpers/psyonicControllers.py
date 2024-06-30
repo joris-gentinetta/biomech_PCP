@@ -137,8 +137,8 @@ class psyonicControllers():
 
 		# print(f'{thumbFlex:06.3f} | {indAng:06.3f} | {midAng:06.3f}')
 
-		newThumbFlex = (1 + thumbFlex)/2*120
-		newThumbRot = -(thumbRot + 1)/2*120
+		newThumbFlex = (1 + thumbFlex)/2*120  # todo now #thumbOutPlaneAng
+		newThumbRot = -(thumbRot + 1)/2*120  # thumbInPlaneAng
 		newIndex = (indAng + 1)/2*120
 		newMid = (midAng + 1)/2*120
 		# newRing = (rinAng + 1)/2*90

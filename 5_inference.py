@@ -921,7 +921,7 @@ class psyonicArm():
 			T = time.time()
 
 			self.lastposCom = self.NetCom
-			# posCom = controller.forwardDynamics()
+			# posCom = controller.forwardDynamics() # todo biophysical model
 			posCom = controller.runModel()
 			self.NetCom = np.asarray(self.lowpassCommands.filter(np.asarray([posCom]).T).T[0])
 

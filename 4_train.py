@@ -56,8 +56,8 @@ for recording_id, data_dir in enumerate(data_dirs):
     data.loc[:, (args.intact_hand, 'wristRot')] = (data.loc[:, (args.intact_hand, 'wristRot')] + math.pi) / 2
     data.loc[:, (args.intact_hand, 'wristFlex')] = (data.loc[:, (args.intact_hand, 'wristFlex')] + math.pi / 2)
 
-    data = data / math.pi
-    data = np.clip(data, 0, 1)
+    data = (2 * data - math.pi) / math.pi
+    data = np.clip(data, -1, 1)
 
     for feature in config.features:
         data[feature] = emg[:, feature[1]]
@@ -101,9 +101,9 @@ if args.test:
     for set_id, test_set in enumerate(testsets):
         val_pred = model.predict(test_set, config.features).squeeze(0).to('cpu').detach().numpy()
 
-        val_pred = np.clip(val_pred, 0, 1)
+        val_pred = np.clip(val_pred, -1, 1)
         test_set[config.targets] = val_pred
-        test_set = test_set * math.pi
+        test_set = (test_set * math.pi + math.pi) / 2
 
         test_set.loc[:, (args.intact_hand, 'thumbInPlaneAng')] = test_set.loc[:, (args.intact_hand, 'thumbInPlaneAng')] - math.pi
         test_set.loc[:, (args.intact_hand, 'wristRot')] = (test_set.loc[:, (args.intact_hand, 'wristRot')] * 2) - math.pi
