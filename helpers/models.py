@@ -171,12 +171,12 @@ class upperExtremityModel(TimeSeriesRegressor):
         return torch.stack([theta, d_theta], dim=2)
         # return torch.zeros((batch_size, self.output_size, self.numStates), dtype=torch.float, device=self.device, requires_grad=False)
 
-    def forward(self, x, states):
+    def forward(self, x, states, forces=None):
         out = torch.zeros((x.shape[0], x.shape[1], self.output_size), dtype=torch.float, device=self.device)
         x = x.reshape(x.shape[0], x.shape[1], self.output_size, 2)
         for i in range(x.shape[1]):
-                out[:, i, :], states = self.joints(states, x[:, i, :, :])
-        return out, states
+                out[:, i, :], states, forces = self.joints(states, x[:, i, :, :], forces)
+        return out, states, forces
 
 
 class ActivationAndBiophysModel(TimeSeriesRegressor):
@@ -203,7 +203,9 @@ class ActivationAndBiophysModel(TimeSeriesRegressor):
         for i in range(x.shape[1]):
             activation_out, states[0] = self.activation_model(x[:, i:i+1, :], states[0])
             activation_out = self.sigmoid(activation_out)
-            out[:, i:i+1, :], states[1] = self.biophys_model(activation_out, states[1])
+            # forces = self.force_model(...)
+            forces = None
+            out[:, i:i+1, :], states[1], forces = self.biophys_model(activation_out, states[1], forces)
         return out, states
 
 
