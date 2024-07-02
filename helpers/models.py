@@ -116,6 +116,8 @@ class DenseNet(TimeSeriesRegressor):
         out = self.model(x)
         return out, states
 
+class PhysMuscle(nn.Module):
+
 
 class upperExtremityModel(TimeSeriesRegressor):
     def __init__(self, input_size, output_size, device, muscleType='bilinear', nn_ratio=0.2, **kwargs):
@@ -179,33 +181,54 @@ class upperExtremityModel(TimeSeriesRegressor):
         return out, states, forces
 
 
-class ActivationAndBiophysModel(TimeSeriesRegressor):
-    def __init__(self, input_size, output_size, device, activation_config, biophys_config, **kwargs):
+class ModularModel(TimeSeriesRegressor):
+    def __init__(self, input_size, output_size, device, config, **kwargs):
         super().__init__(input_size, output_size, device)
 
-        if activation_config['model_type'] == 'DenseNet':
-            self.activation_model = DenseNet(input_size, output_size * 2, device, **activation_config)
-        elif activation_config['model_type'] == 'CNN':
-            self.activation_model = CNN(input_size, output_size * 2, device, **activation_config)
-        elif activation_config['model_type'] in ['RNN', 'LSTM', 'GRU']:
-            self.activation_model = RNN(input_size, output_size * 2, device, **activation_config)
-        else:
-            raise ValueError(f'Unknown model type {activation_config["model_type"]}')
+        next_input_size = input_size
+        if next_input_size != config['activation_model']['input_size']:
+            raise ValueError(f'Activation model input size must be the same as ModularModel input size. Got {config["activation_model"]["input_size"]} and {input_size}')
 
-        self.biophys_model = upperExtremityModel(output_size * 2, output_size, device, **biophys_config)
+        self.activation_model, next_input_size = self.get_model(config['activation_model'])
+        if next_input_size != config['muscle_model']['input_size']:
+            raise ValueError(f'Muscle model input size must be the same as Activation model output size. Got {config["muscle_model"]["input_size"]} and {next_input_size}')
+
         self.sigmoid = nn.Sigmoid()
 
+        self.muscle_model, next_input_size = self.get_model(config['muscle_model'])
+        if next_input_size != config['joint_model']['input_size']:
+            raise ValueError(f'Joint model input size must be the same as Muscle model output size. Got {config["joint_model"]["input_size"]} and {next_input_size}')
+
+        self.joint_model, next_input_size = self.get_model(config['joint_model'])
+        if next_input_size != output_size:
+            raise ValueError(f'Joint model output size must be the same as ModularModel output size. Got {next_input_size} and {output_size}')
+
+
+
+
+    def get_model(self, config):
+        if config['model_type'] == 'DenseNet':
+            modelclass = DenseNet
+        elif config['model_type'] == 'CNN':
+            modelclass = CNN
+        elif config['model_type'] in ['RNN', 'LSTM', 'GRU']:
+            modelclass = RNN
+        else:
+            raise ValueError(f'Unknown model type {config["model_type"]}')
+        return modelclass(config['input_size'], config['output_size'], self.device, config['hidden_size'], config['n_layers']), config['output_size']
+
+
     def get_starting_states(self, batch_size, x=None):
-        return [self.activation_model.get_starting_states(batch_size, x), self.biophys_model.get_starting_states(batch_size, x)]
+        return [self.activation_model.get_starting_states(batch_size, x), self.muscle_model.get_starting_states(batch_size, x), self.joint_model.get_starting_states(batch_size, x, self.muscle_model)]
 
     def forward(self, x, states):
         out = torch.zeros((x.shape[0], x.shape[1], self.output_size), dtype=torch.float, device=self.device)
         for i in range(x.shape[1]):
             activation_out, states[0] = self.activation_model(x[:, i:i+1, :], states[0])
             activation_out = self.sigmoid(activation_out)
-            # forces = self.force_model(...)
-            forces = None
-            out[:, i:i+1, :], states[1], forces = self.biophys_model(activation_out, states[1], forces)
+            F, K = self.muscle_model(activation_out, states[1])
+            out[:, i:i+1, :], states[1], states[2] = self.joint_model(states[2], F, K)
+
         return out, states
 
 
