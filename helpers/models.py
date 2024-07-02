@@ -1,8 +1,10 @@
+import math
 import os
 os.environ['PYTORCH_ENABLE_MPS_FALLBACK'] = '1'
 import torch
 import torch.nn as nn
 import torch.optim as optim
+
 # torch.autograd.set_detect_anomaly(True)
 from abc import ABC, abstractmethod
 from tqdm import tqdm
@@ -138,34 +140,34 @@ class upperExtremityModel(TimeSeriesRegressor):
         jointModels[muscleType]()
 
         self.AMIDict = []
-        self.JointDict = nn.ModuleList()
         for i in range(self.output_size):
             self.AMIDict.append([self.muscleDict[i][0], self.muscleDict[i][1]])
 
         self.joints = BilinearJoints(self.device, self.AMIDict, self.params, 1/SR, False)
 
+
+
     def bilinearInit(self):
         from dynamics.Muscle_bilinear import Muscle
 
         # muscle params
-        K0 = 100
-        K1 = 2000
-        L0 = 0.06
-        L1 = 0.006
+        K0 = math.log(100)
+        K1 = math.log(2000)
+        L0 = math.log(0.06)
+        L1 = math.log(0.006)
         M = 0.05
 
         self.muscleDict = []
         for _ in range(self.output_size):
             self.muscleDict.append([Muscle(K0, K1, L0, L1, -M), Muscle(K0, K1, L0, L1, M)])
 
-        self.params = {'I': 0.004, 'K': 5, 'B': .3, 'K_': 5, 'B_': .3,
-                       'speed_mode': False, 'K0_': 2000, 'K1_': 40000, 'L0_': 1.2, 'L1_': 0.12, 'I_': 0.064, 'M_': 0.1}
+        self.params = {'I': math.log(0.004), 'K': math.log(5), 'B': math.log(.3)}
         self.numStates = 2
 
 
     def get_starting_states(self, batch_size, x=None):
         theta = x[:, 0, :]
-        d_theta = (x[:, 1, :] - x[:, 0, :]) * SR  # todo
+        d_theta = (x[:, 1, :] - x[:, 0, :]) * SR
         return torch.stack([theta, d_theta], dim=2)
         # return torch.zeros((batch_size, self.output_size, self.numStates), dtype=torch.float, device=self.device, requires_grad=False)
 
@@ -224,6 +226,9 @@ class TimeSeriesRegressorWrapper:
 
         self.criterion = nn.MSELoss(reduction='mean')
         self.optimizer = optim.Adam(self.model.parameters(), lr=learning_rate)
+        self.scheduler = optim.lr_scheduler.ReduceLROnPlateau(self.optimizer, mode='min', factor=0.5, patience=3)
+
+
         self.n_epochs = n_epochs
         self.seq_len = seq_len
         self.warmup_steps = warmup_steps
@@ -241,18 +246,16 @@ class TimeSeriesRegressorWrapper:
         for x, y in dataloader:
             states = self.model.get_starting_states(dataloader.batch_size, x)
             outputs, states = self.model(x, states)
-            if torch.isnan(outputs).any():
-                print('nan in outputs')
 
             loss = self.criterion(outputs[:, self.warmup_steps:], y[:, self.warmup_steps:])
-            if torch.isnan(loss):
-                print('nan in loss')
+
             self.optimizer.zero_grad()
             loss.backward()
             torch.nn.utils.clip_grad_norm_(self.model.parameters(), 1)
             self.optimizer.step()
             # print(loss.item())
             epoch_loss += loss.item()
+
         return epoch_loss / len(dataloader)
 
     def predict(self, test_set, features):

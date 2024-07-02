@@ -95,8 +95,11 @@ if args.test:
         if config.model_type == 'ActivationAndBiophys':
             for param in model.model.biophys_model.parameters():
                 param.requires_grad = False if epoch < config.biophys_config['n_freeze_epochs'] else True
-        epoch_loss = model.train_one_epoch(dataloader)
-        print(f'Epoch {epoch}, loss: {epoch_loss}')
+        train_loss = model.train_one_epoch(dataloader)
+        lr = model.scheduler.get_last_lr()[0]
+        # todo val_loss
+        model.scheduler.step(train_loss)  # Update the learning rate after each epoch
+        print(f'Epoch {epoch}, lr: {lr}, loss: {train_loss}')
 
     for set_id, test_set in enumerate(testsets):
         val_pred = model.predict(test_set, config.features).squeeze(0).to('cpu').detach().numpy()
@@ -127,7 +130,10 @@ if args.save_model:
         if config.model_type == 'ActivationAndBiophys':
             for param in model.model.biophys_model.parameters():
                 param.requires_grad = False if epoch < config.biophys_config['n_freeze_epochs'] else True
-        model.train_one_epoch(dataloader)
+        train_loss = model.train_one_epoch(dataloader)
+        # todo val_loss
+        model.scheduler.step(train_loss)  # Update the learning rate after each epoch
+
 
 
     model.to(torch.device('cpu'))

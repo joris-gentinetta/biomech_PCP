@@ -6,8 +6,8 @@ In this model, the total force is the sum of bilinear model force and neural net
 
 import torch
 from torch import nn
-import numpy as np
-
+from torch.nn.utils.parametrize import register_parametrization
+from utils import Exponential
 class BilinearJoints(nn.Module):
     def __init__(self, device, muscles, parameters, dt, speed_mode=False):
         super().__init__()
@@ -29,6 +29,10 @@ class BilinearJoints(nn.Module):
 
         self.speed_mode = speed_mode
 
+        parameterization = Exponential()
+        for parameter in ['K0s', 'K1s', 'L0s', 'L1s', 'I', 'B', 'K']:
+            register_parametrization(self, parameter, parameterization)
+
     def forward(self, SS, Alphas):
         """Calculate the Joint dynamic for one step
         Output the new system state
@@ -38,6 +42,8 @@ class BilinearJoints(nn.Module):
             Alphas (torch.tensor): Muscle activations, [batch_size * muscle_number]
             self.dt (float, optional): Delta t between each iteration. Defaults to 0.0166667.
         """
+
+
         batch_size = len(Alphas)
         
         #################################
@@ -103,6 +109,16 @@ class BilinearJoints(nn.Module):
             #############################
             #   DAMPING                 #
             #############################
+        # helper = torch.abs(K * self.I.unsqueeze(0))
+        # helper = torch.sqrt(helper * helper)
+        # D = torch.sqrt(helper) * 2
+        # helper = K * self.I.unsqueeze(0)
+        # if (helper < 0).any():
+        #     helper = torch.abs(helper)
+        # D = torch.sqrt(helper) * 2
+
+
+        # D = torch.sqrt(torch.abs(K * self.I.unsqueeze(0))) * 2  # todo abs
         D = torch.sqrt(K * self.I.unsqueeze(0)) * 2
         A11 = -(D + self.B.unsqueeze(0)) / self.I.unsqueeze(0)  # with joint damping
 
@@ -116,8 +132,8 @@ class BilinearJoints(nn.Module):
 
         # The total force from one muscle (if the muscle is not stretched)
         B_F = ((self.K0s.unsqueeze(0) + self.K1s.unsqueeze(0) * Alphas)
-               * (self.L0s.unsqueeze(0) + self.L1s.unsqueeze(0) * Alphas - torch.abs(muscle_SSs[:, :, 0, :]))
-               + self.K1s.unsqueeze(0) * self.L1s.unsqueeze(0) * Alphas * Alphas)
+               * (self.L0s.unsqueeze(0) + self.L1s.unsqueeze(0) * Alphas - torch.abs(muscle_SSs[:, :, 0, :]))) # todo abs
+               # + self.K1s.unsqueeze(0) * self.L1s.unsqueeze(0) * Alphas * Alphas) # todo * nn_outputs compensating cross term only
 
         # The following K is respect to w(angle)
         B10 = B_F * self.Ms.unsqueeze(0) / self.I.unsqueeze(0).unsqueeze(2)
@@ -133,7 +149,7 @@ class BilinearJoints(nn.Module):
         #########################
         U0 = torch.zeros(batch_size, self.joint_num, 2, dtype=torch.float, device=self.device)
         U0[:, :, 0] = 1
-        U1 = U0.clone()  # todo
+        U1 = U0 # todo
 
         if not self.speed_mode:
             #############################
@@ -156,7 +172,6 @@ class BilinearJoints(nn.Module):
             # The simplified simulation addition instead of integration
             # xdot = A x + B u
             SSout = (torch.matmul(A*self.dt, SS.unsqueeze(3)) + torch.matmul(B*self.dt, U0.unsqueeze(3)) + SS.unsqueeze(3)).squeeze(3)
-
         return SSout[:, :, 0], SSout
 
     def print_params(self):
