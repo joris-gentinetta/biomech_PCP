@@ -3,24 +3,31 @@
 The joint with only 1 degree of freedom
 In this model, the total force is the sum of bilinear model force and neural network force
 """
-
+import math
 import torch
 from torch import nn
 from torch.nn.utils.parametrize import register_parametrization
 from utils import Exponential
+
 class Joints(nn.Module):
-    def __init__(self, device, parameters, dt, speed_mode=False):
+    def __init__(self, device, n_joints, dt, speed_mode=False):
         super().__init__()
 
         self.device = device
+        self.speed_mode = speed_mode
 
-        self.joint_num = parameters['M'].shape[0]
+        self.n_joints = n_joints
         self.dt = dt
 
-        self.Ms = nn.Parameter(data=torch.tensor(parameters['M'], dtype=torch.float, device=self.device).repeat(self.joint_num))
-        self.I = nn.Parameter(data=torch.tensor(parameters['I'], dtype=torch.float, device=self.device).repeat(self.joint_num))
-        self.B = nn.Parameter(data=torch.tensor(parameters['B'], dtype=torch.float, device=self.device).repeat(self.joint_num))
-        self.K = nn.Parameter(data=torch.tensor(parameters['K'], dtype=torch.float, device=self.device).repeat(self.joint_num))
+        M = math.log(0.05)
+        I = math.log(0.004)
+        B = math.log(.3)
+        K = math.log(5)
+
+        self.M = nn.Parameter(data=torch.ones(self.n_joints, dtype=torch.float, device=self.device) * M)
+        self.I = nn.Parameter(data=torch.ones(self.n_joints, dtype=torch.float, device=self.device) * I)
+        self.B = nn.Parameter(data=torch.ones(self.n_joints, dtype=torch.float, device=self.device) * B)
+        self.K = nn.Parameter(data=torch.ones(self.n_joints, dtype=torch.float, device=self.device) * K)
 
         self.speed_mode = speed_mode
 
@@ -71,7 +78,7 @@ class Joints(nn.Module):
         A00 = torch.zeros((batch_size, self.joint_num), dtype=torch.float, device=self.device)  # [batch_size, joint_num]
         A01 = torch.ones((batch_size, self.joint_num), dtype=torch.float, device=self.device)
 
-        K = K * self.Ms.unsqueeze(0) * self.Ms.unsqueeze(0)  # [batch_size, joint_num, muscle_num]
+        K = K * self.M.unsqueeze(0) * self.M.unsqueeze(0)  # [batch_size, joint_num, muscle_num]
         K = K.sum(dim=2) # sum over muscles - > [batch_size, joint_num]
         A10 = -(K + self.K.unsqueeze(0))/self.I.unsqueeze(0)  # [batch_size, joint_num] # todo
 
@@ -137,17 +144,21 @@ class Joints(nn.Module):
 
 
 class Muscles(nn.Module):
-    def __init__(self, device, parameters):
+    def __init__(self, device, n_joints):
         super().__init__()
 
         self.device = device
-        self.joint_num = parameters['K0'].shape[0]
-        self.muscle_num = parameters['K0'].shape[1]
 
-        self.K0s = nn.Parameter(data=torch.tensor(parameters['K0'], dtype=torch.float, device=self.device))
-        self.K1s = nn.Parameter(data=torch.tensor(parameters['K1'], dtype=torch.float, device=self.device))
-        self.L0s = nn.Parameter(data=torch.tensor(parameters['L0'], dtype=torch.float, device=self.device))
-        self.L1s = nn.Parameter(data=torch.tensor(parameters['L1'], dtype=torch.float, device=self.device))
+        K0 = math.log(100)
+        K1 = math.log(2000)
+        L0 = math.log(0.06)
+        L1 = math.log(0.006)
+
+        self.K0 = nn.Parameter(data=torch.ones((n_joints, 2), dtype=torch.float, device=self.device) * K0) #todo size
+        self.K1 = nn.Parameter(data=torch.ones((n_joints, 2), dtype=torch.float, device=self.device) * K1)
+        self.L0 = nn.Parameter(data=torch.ones((n_joints, 2), dtype=torch.float, device=self.device) * L0)
+        self.L1 = nn.Parameter(data=torch.ones((n_joints, 2), dtype=torch.float, device=self.device) * L1)
+
 
         parameterization = Exponential()
         for parameter in ['K0', 'K1', 'L0', 'L1']:

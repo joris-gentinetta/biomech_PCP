@@ -149,24 +149,6 @@ class upperExtremityModel(TimeSeriesRegressor):
 
 
 
-    def bilinearInit(self):
-        from dynamics.Muscle_bilinear import Muscle
-
-        # muscle params
-        K0 = math.log(100)
-        K1 = math.log(2000)
-        L0 = math.log(0.06)
-        L1 = math.log(0.006)
-        M = 0.05
-
-        self.muscleDict = []
-        for _ in range(self.output_size):
-            self.muscleDict.append([Muscle(K0, K1, L0, L1, -M), Muscle(K0, K1, L0, L1, M)])
-
-        self.params = {'I': math.log(0.004), 'K': math.log(5), 'B': math.log(.3)}
-        self.numStates = 2
-
-
     def get_starting_states(self, batch_size, x=None):
         theta = x[:, 0, :]
         d_theta = (x[:, 1, :] - x[:, 0, :]) * SR
