@@ -132,18 +132,14 @@ class PhysMuscleModel(TimeSeriesRegressor):
 
         self.model = Muscles(device=device, n_joints=output_size // 4)
 
-
     def get_starting_states(self, batch_size, x=None):
-        # physJointModel = PhysJointModel(input_size=self.output_size, output_size=self.output_size // 4, device=self.device) # todo this is only correct in the very first batch
-        # return physJointModel.get_starting_states(batch_size, x)[1]
-        raise NotImplementedError('The Joint Model must provide the starting states for the Muscle Model')
-
+        return None
 
     def forward(self, x, states):
         out = torch.zeros((x.shape[0], x.shape[1], self.output_size), dtype=torch.float, device=self.device)
         activations = x.reshape(x.shape[0], x.shape[1], self.input_size // 2, 2)
         for i in range(x.shape[1]):
-                F, K = self.model(activations[:, i, :, :], states)
+                F, K = self.model(activations[:, i, :, :], states[1])
                 out[:, i, :] = torch.cat([F, K], dim=2).reshape(out.shape[0], out.shape[2])
         return out, None
 
@@ -205,15 +201,15 @@ class ModularModel(TimeSeriesRegressor):
 
 
     def get_starting_states(self, batch_size, x=None):
-        return [self.activation_model.get_starting_states(batch_size, x),  self.joint_model.get_starting_states(batch_size, x)[0], self.joint_model.get_starting_states(batch_size, x)[1]]
+        return [self.activation_model.get_starting_states(batch_size, x),  [self.muscle_model.get_starting_states(batch_size, x), self.joint_model.get_starting_states(batch_size, x)[0]], self.joint_model.get_starting_states(batch_size, x)[1]]
 
     def forward(self, x, states):
         out = torch.zeros((x.shape[0], x.shape[1], self.output_size), dtype=torch.float, device=self.device)
         for i in range(x.shape[1]):
             activation_out, states[0] = self.activation_model(x[:, i:i+1, :], states[0])
             activation_out = self.sigmoid(activation_out)
-            muscle_out, _ = self.muscle_model(activation_out, states[1])
-            out[:, i:i+1, :], states[1], states[2] = self.joint_model(muscle_out, states[2])
+            muscle_out, states[1][0] = self.muscle_model(activation_out, states[1])
+            out[:, i:i+1, :], states[1][1], states[2] = self.joint_model(muscle_out, states[2])
 
         return out, states
 

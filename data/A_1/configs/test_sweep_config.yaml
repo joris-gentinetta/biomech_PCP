@@ -1,0 +1,57 @@
+method: grid
+metric:
+  goal: minimize
+  name: mean_best_val_loss
+parameters:
+  recordings:
+    value:
+    - test_recording/experiments/1
+  features:
+    value:
+    - [emg, 0]
+    - [emg, 1]
+    - [emg, 2]
+    - [emg, 4]
+    - [emg, 5]
+    - [emg, 8]
+    - [emg, 10]
+    - [emg, 11]
+  hidden_size:
+    values:
+    - 30
+    - 60
+    - 90
+    - 120
+    - 150
+    - 500
+  learning_rate:
+    values:
+    - 0.01
+    - 0.001
+    - 0.0001
+  model_type:
+    values:
+    - CNN
+    - RNN
+    - LSTM
+    - GRU
+  n_epochs:
+    value: 2500
+  n_layers:
+    values:
+    - 1
+    - 2
+  seq_len:
+    value: 125
+  targets:
+    value:
+    - [Left, indexAng]
+    - [Left, midAng]
+    - [Left, ringAng]
+    - [Left, pinkyAng]
+    - [Left, thumbInPlaneAng]
+    - [Left, thumbOutPlaneAng]
+    - [Left, wristRot]
+    - [Left, wristFlex]
+  warmup_steps:
+    value: 10
