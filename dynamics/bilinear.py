@@ -17,7 +17,7 @@ L0 = math.log(0.06)
 L1 = math.log(0.006)
 
 ## Joint parameters
-M = math.log(0.05)
+M = 0.05
 I = math.log(0.004)
 B = math.log(.3)
 K = math.log(5)
