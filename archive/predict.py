@@ -15,23 +15,17 @@ from helpers.predict_utils import Config, train_model, TSDataset, TSDataLoader
 # from helpers.EMGClass import EMG
 import sys
 sys.path.append('/home/haptix/haptix/haptix_controller/handsim/src/')
-from helpers.EMGClass import EMG
+from EMGClass import EMG
 import threading
 
-device = torch.device('cpu')
+device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
 
-parser = argparse.ArgumentParser(description='Timeseries data analysis')
-parser.add_argument('--person_dir', type=str, required=True, help='Person directory')
-parser.add_argument('--intact_hand', type=str, required=True, help='Intact hand (Right/Left)')
-parser.add_argument('--config_name', type=str, required=True, help='Training configuration')
-parser.add_argument('-v', '--visualize', action='store_true', help='Plot data exploration results')
-parser.add_argument('-hs', '--hyperparameter_search', action='store_true', help='Perform hyperparameter search')
-parser.add_argument('-t', '--test', action='store_true', help='Test the model')
-parser.add_argument('-s', '--save_model', action='store_true', help='Save a model')
-args = parser.parse_args()
-
-
+side = 'Left'
+channels = [0, 1, 2, 4, 5, 8, 10, 11]
+features = [('emg', channel) for channel in channels]
+targets = ['indexAng', 'midAng', 'ringAng', 'pinkyAng', 'thumbInPlaneAng', 'thumbOutPlaneAng', 'wristRot', 'wristFlex']
+targets = [(side, target) for target in targets]
 
 name = 'GRU'
 model_path = f'model_files/{name}.pt'  # todo
