@@ -8,6 +8,7 @@ import torch.optim as optim
 # torch.autograd.set_detect_anomaly(True)
 from abc import ABC, abstractmethod
 from tqdm import tqdm
+from bilinear import Muscles, Joints
 
 SR = 60
 
@@ -28,17 +29,18 @@ class TimeSeriesRegressor(nn.Module, ABC):
 
 
 class RNN(TimeSeriesRegressor):
-    def __init__(self, input_size, output_size, device, model_type, hidden_size, n_layers, **kwargs):
+    def __init__(self, input_size, output_size, device, **kwargs):
         super().__init__(input_size, output_size, device)
-        self.model_type = model_type
-        self.hidden_size = hidden_size
-        self.n_layers = n_layers
+        self.model_type = kwargs.get('model_type')
+        self.hidden_size = kwargs.get('hidden_size')
+        self.n_layers = kwargs.get('n_layers')
+
         if self.model_type == 'RNN':
-            self.rnn = nn.RNN(self.input_size, self.hidden_size, n_layers, batch_first=True)
+            self.rnn = nn.RNN(self.input_size, self.hidden_size, self.n_layers, batch_first=True)
         elif self.model_type == 'LSTM':
-            self.rnn = nn.LSTM(self.input_size, self.hidden_size, n_layers, batch_first=True)
+            self.rnn = nn.LSTM(self.input_size, self.hidden_size, self.n_layers, batch_first=True)
         elif self.model_type == 'GRU':
-            self.rnn = nn.GRU(self.input_size, self.hidden_size, n_layers, batch_first=True)
+            self.rnn = nn.GRU(self.input_size, self.hidden_size, self.n_layers, batch_first=True)
         else:
             raise ValueError(f'Unknown RNN type {self.model_type}')
         self.fc = nn.Linear(self.hidden_size, self.output_size)
@@ -58,17 +60,16 @@ class RNN(TimeSeriesRegressor):
 
 
 class CNN(TimeSeriesRegressor):
-    def __init__(self, input_size, output_size, device, hidden_size, n_layers, **kwargs):
+    def __init__(self, input_size, output_size, device, **kwargs):
         super().__init__(input_size, output_size, device)
-        self.hidden_size = hidden_size
-        self.n_layers = n_layers
-        self.cnn = nn.Conv1d(self.input_size, out_channels=hidden_size, kernel_size=10, stride=1, padding=9)
+        self.hidden_size = kwargs.get('hidden_size')
+        self.n_layers = kwargs.get('n_layers')
+        self.cnn = nn.Conv1d(self.input_size, out_channels=self.hidden_size, kernel_size=10, stride=1, padding=9)
         if self.n_layers == 2:
-            self.cnn2 = nn.Conv1d(hidden_size, out_channels=2*hidden_size, kernel_size=20, stride=1, padding=19)
-            self.fc = nn.Linear(2*hidden_size*10, self.output_size)
+            self.cnn2 = nn.Conv1d(self.hidden_size, out_channels=2*self.hidden_size, kernel_size=20, stride=1, padding=19)
+            self.fc = nn.Linear(2*self.hidden_size*10, self.output_size)
         else:
-            self.fc = nn.Linear(hidden_size*10, self.output_size)
-        # self.dummy_state = torch.zeros(self.n_layers, 1, 1, requires_grad=False)
+            self.fc = nn.Linear(self.hidden_size*10, self.output_size)
 
     def get_starting_states(self, batch_size, x=None):
         return None
@@ -93,8 +94,11 @@ class CNN(TimeSeriesRegressor):
 
 
 class DenseNet(TimeSeriesRegressor):
-    def __init__(self, input_size, output_size, device, hidden_size, n_layers, **kwargs):
+    def __init__(self, input_size, output_size, device, **kwargs):
         super().__init__(input_size, output_size, device)
+        hidden_size = kwargs.get('hidden_size')
+        n_layers = kwargs.get('n_layers')
+
         layers = []
         layers.append(nn.Linear(self.input_size, hidden_size))
         layers.append(nn.LeakyReLU())
@@ -116,100 +120,100 @@ class DenseNet(TimeSeriesRegressor):
         out = self.model(x)
         return out, states
 
-class PhysMuscle(nn.Module):
 
-
-class upperExtremityModel(TimeSeriesRegressor):
-    def __init__(self, input_size, output_size, device, muscleType='bilinear', nn_ratio=0.2, **kwargs):
+class PhysMuscleModel(TimeSeriesRegressor):
+    def __init__(self, input_size, output_size, device, **kwargs):
         super().__init__(input_size, output_size, device)
 
-        if input_size != output_size * 2:
-            raise ValueError(f'UpperExtremityModel: Input size must be 2 times the output size, got {input_size} and {output_size}')
+        self.output_size = output_size
 
-        self.muscleType = muscleType
+        if input_size * 2 != output_size:
+            raise ValueError(f'PhysMuscleModel: Input size must be 1/2 times the output size, got {input_size} and {output_size}')
 
-        jointModels = {'bilinear': self.bilinearInit}
-
-        if muscleType == 'bilinear':
-            # from dynamics.Joint_1dof_Bilinear_NN import Joint_1dof
-            from dynamics.BilinearJoints import BilinearJoints
-        else:
-            raise ValueError(f'{muscleType} not implemented')
-
-        self.numStates = None
-        self.params = {}
-
-        jointModels[muscleType]()
-
-        self.AMIDict = []
-        for i in range(self.output_size):
-            self.AMIDict.append([self.muscleDict[i][0], self.muscleDict[i][1]])
-
-        self.joints = BilinearJoints(self.device, self.AMIDict, self.params, 1/SR, False)
+        self.model = Muscles(device=device, n_joints=output_size // 4)
 
 
+    def get_starting_states(self, batch_size, x=None):
+        # physJointModel = PhysJointModel(input_size=self.output_size, output_size=self.output_size // 4, device=self.device) # todo this is only correct in the very first batch
+        # return physJointModel.get_starting_states(batch_size, x)[1]
+        raise NotImplementedError('The Joint Model must provide the starting states for the Muscle Model')
+
+
+    def forward(self, x, states):
+        out = torch.zeros((x.shape[0], x.shape[1], self.output_size), dtype=torch.float, device=self.device)
+        activations = x.reshape(x.shape[0], x.shape[1], self.input_size // 2, 2)
+        for i in range(x.shape[1]):
+                F, K = self.model(activations[:, i, :, :], states)
+                out[:, i, :] = torch.cat([F, K], dim=2).reshape(out.shape[0], out.shape[2])
+        return out, None
+
+
+class PhysJointModel(TimeSeriesRegressor):
+    def __init__(self, input_size, output_size, device, **kwargs):
+        super().__init__(input_size, output_size, device)
+
+        self.output_size = output_size
+
+        if input_size != output_size * 4:
+            raise ValueError(
+                f'PhysJointModel: Input size must be 4 times the output size, got {input_size} and {output_size}')
+
+        self.model = Joints(device=device, n_joints=output_size, dt=1 / SR, speed_mode=False)
 
     def get_starting_states(self, batch_size, x=None):
         theta = x[:, 0, :]
         d_theta = (x[:, 1, :] - x[:, 0, :]) * SR
-        return torch.stack([theta, d_theta], dim=2)
-        # return torch.zeros((batch_size, self.output_size, self.numStates), dtype=torch.float, device=self.device, requires_grad=False)
+        states = torch.stack([theta, d_theta], dim=2)
+        return [states.unsqueeze(3) * self.model.M.unsqueeze(0).unsqueeze(2), states] # todo dimensions
 
-    def forward(self, x, states, forces=None):
+    def forward(self, x, joint_states):
         out = torch.zeros((x.shape[0], x.shape[1], self.output_size), dtype=torch.float, device=self.device)
-        x = x.reshape(x.shape[0], x.shape[1], self.output_size, 2)
+        F, K = x.reshape(x.shape[0], x.shape[1], self.output_size, 4).split(dim=3, split_size=2)
         for i in range(x.shape[1]):
-                out[:, i, :], states, forces = self.joints(states, x[:, i, :, :], forces)
-        return out, states, forces
+            out[:, i, :], muscle_states, joint_states = self.model(F[:, i, :], K[:, i, :], joint_states)
+        return out, muscle_states, joint_states
 
 
 class ModularModel(TimeSeriesRegressor):
-    def __init__(self, input_size, output_size, device, config, **kwargs):
+    def __init__(self, input_size, output_size, device, **kwargs):
         super().__init__(input_size, output_size, device)
+        activation_model = kwargs.get('activation_model')
+        muscle_model = kwargs.get('muscle_model')
+        joint_model = kwargs.get('joint_model')
 
-        next_input_size = input_size
-        if next_input_size != config['activation_model']['input_size']:
-            raise ValueError(f'Activation model input size must be the same as ModularModel input size. Got {config["activation_model"]["input_size"]} and {input_size}')
+        self.device = device
 
-        self.activation_model, next_input_size = self.get_model(config['activation_model'])
-        if next_input_size != config['muscle_model']['input_size']:
-            raise ValueError(f'Muscle model input size must be the same as Activation model output size. Got {config["muscle_model"]["input_size"]} and {next_input_size}')
-
+        self.activation_model = self.get_model(input_size, output_size * 2, activation_model)
         self.sigmoid = nn.Sigmoid()
+        self.muscle_model = self.get_model(output_size * 2, output_size * 4, muscle_model)
+        self.joint_model = self.get_model(output_size * 4, output_size, joint_model)
 
-        self.muscle_model, next_input_size = self.get_model(config['muscle_model'])
-        if next_input_size != config['joint_model']['input_size']:
-            raise ValueError(f'Joint model input size must be the same as Muscle model output size. Got {config["joint_model"]["input_size"]} and {next_input_size}')
-
-        self.joint_model, next_input_size = self.get_model(config['joint_model'])
-        if next_input_size != output_size:
-            raise ValueError(f'Joint model output size must be the same as ModularModel output size. Got {next_input_size} and {output_size}')
-
-
-
-
-    def get_model(self, config):
+    def get_model(self, input_size, output_size, config):
         if config['model_type'] == 'DenseNet':
             modelclass = DenseNet
         elif config['model_type'] == 'CNN':
             modelclass = CNN
         elif config['model_type'] in ['RNN', 'LSTM', 'GRU']:
             modelclass = RNN
+        elif config['model_type'] == 'PhysMuscleModel':
+            modelclass = PhysMuscleModel
+        elif config['model_type'] == 'PhysJointModel':
+            modelclass = PhysJointModel
         else:
             raise ValueError(f'Unknown model type {config["model_type"]}')
-        return modelclass(config['input_size'], config['output_size'], self.device, config['hidden_size'], config['n_layers']), config['output_size']
+        return modelclass(input_size, output_size, self.device, **config)
 
 
     def get_starting_states(self, batch_size, x=None):
-        return [self.activation_model.get_starting_states(batch_size, x), self.muscle_model.get_starting_states(batch_size, x), self.joint_model.get_starting_states(batch_size, x, self.muscle_model)]
+        return [self.activation_model.get_starting_states(batch_size, x),  self.joint_model.get_starting_states(batch_size, x)[0], self.joint_model.get_starting_states(batch_size, x)[1]]
 
     def forward(self, x, states):
         out = torch.zeros((x.shape[0], x.shape[1], self.output_size), dtype=torch.float, device=self.device)
         for i in range(x.shape[1]):
             activation_out, states[0] = self.activation_model(x[:, i:i+1, :], states[0])
             activation_out = self.sigmoid(activation_out)
-            F, K = self.muscle_model(activation_out, states[1])
-            out[:, i:i+1, :], states[1], states[2] = self.joint_model(states[2], F, K)
+            muscle_out, _ = self.muscle_model(activation_out, states[1])
+            out[:, i:i+1, :], states[1], states[2] = self.joint_model(muscle_out, states[2])
 
         return out, states
 
@@ -218,16 +222,14 @@ class ModularModel(TimeSeriesRegressor):
 class TimeSeriesRegressorWrapper:
     def __init__(self, input_size, output_size, device, n_epochs, seq_len, learning_rate, warmup_steps, model_type, **kwargs):
 
-        if model_type == 'biophys':
-            self.model = upperExtremityModel(input_size, output_size, device, kwargs.get('muscleType'))
-        elif model_type == 'DenseNet':
-            self.model = DenseNet(input_size, output_size, device, kwargs.get('hidden_size'), kwargs.get('n_layers'))
+        if model_type == 'DenseNet':
+            self.model = DenseNet(input_size, output_size, device, **kwargs)
         elif model_type == 'CNN':
-            self.model = CNN(input_size, output_size, device, kwargs.get('hidden_size'), kwargs.get('n_layers'))
+            self.model = CNN(input_size, output_size, device, **kwargs)
         elif model_type in ['RNN', 'LSTM', 'GRU']:
-            self.model = RNN(input_size, output_size, device, model_type, kwargs.get('hidden_size'), kwargs.get('n_layers'))
-        elif model_type == 'ActivationAndBiophys':
-            self.model = ActivationAndBiophysModel(input_size, output_size, device, kwargs.get('activation_config'), kwargs.get('biophys_config'))
+            self.model = RNN(input_size, output_size, device, **kwargs)
+        elif model_type == 'ModularModel':
+            self.model = ModularModel(input_size, output_size, device, **kwargs)
         else:
             raise ValueError(f'Unknown model type {model_type}')
 
@@ -280,10 +282,10 @@ class TimeSeriesRegressorWrapper:
 
 
 
-if __name__ == '__main__':
-    model = upperExtremityModel(device=torch.device('cpu'), input_size=8, output_size=4, muscleType='bilinear', nn_ratio=0.2)
-    x = torch.tensor([[[1, 2], [1, 2], [1, 2], [1, 2]], [[1, 2], [1, 2], [1, 2], [1, 2]], [[1, 2], [1, 2], [1, 2], [1, 2]], [[1, 2], [1, 2], [1, 2], [1, 2]], [[1, 2], [1, 2], [1, 2], [1, 2]]], dtype=torch.float).unsqueeze(1).repeat(1, 125, 1, 1) / 2
-    states = model.get_starting_states(5, x)
-    out, states = model(x, states) # x.shape = (batch_size, seq_len, n_joints, n_muscles_per_joint)
-    print(out)
+# if __name__ == '__main__':
+#     model = ModularModel(device=torch.device('cpu'), input_size=8, output_size=4, muscleType='bilinear', nn_ratio=0.2)
+#     x = torch.tensor([[[1, 2], [1, 2], [1, 2], [1, 2]], [[1, 2], [1, 2], [1, 2], [1, 2]], [[1, 2], [1, 2], [1, 2], [1, 2]], [[1, 2], [1, 2], [1, 2], [1, 2]], [[1, 2], [1, 2], [1, 2], [1, 2]]], dtype=torch.float).unsqueeze(1).repeat(1, 125, 1, 1) / 2
+#     states = model.get_starting_states(5, x)
+#     out, states = model(x, states) # x.shape = (batch_size, seq_len, n_joints, n_muscles_per_joint)
+#     print(out)
 

@@ -9,33 +9,70 @@ from torch import nn
 from torch.nn.utils.parametrize import register_parametrization
 from utils import Exponential
 
+
+## Muscle parameters
+K0 = math.log(100)
+K1 = math.log(2000)
+L0 = math.log(0.06)
+L1 = math.log(0.006)
+
+## Joint parameters
+M = math.log(0.05)
+I = math.log(0.004)
+B = math.log(.3)
+K = math.log(5)
+
+
+
+class Muscles(nn.Module):
+    def __init__(self, device, n_joints):
+        super().__init__()
+
+        self.device = device
+
+        self.K0 = nn.Parameter(data=torch.ones((n_joints, 2), dtype=torch.float, device=self.device) * K0)
+        self.K1 = nn.Parameter(data=torch.ones((n_joints, 2), dtype=torch.float, device=self.device) * K1)
+        self.L0 = nn.Parameter(data=torch.ones((n_joints, 2), dtype=torch.float, device=self.device) * L0)
+        self.L1 = nn.Parameter(data=torch.ones((n_joints, 2), dtype=torch.float, device=self.device) * L1)
+
+
+        parameterization = Exponential()
+        for parameter in ['K0', 'K1', 'L0', 'L1']:
+            register_parametrization(self, parameter, parameterization)
+
+    def forward(self, alphas, muscle_SS):
+        alphas = torch.clamp(alphas, 0, 1)
+
+        F = ((self.K0.unsqueeze(0) + self.K1.unsqueeze(0) * alphas)
+               * (self.L0.unsqueeze(0) + self.L1.unsqueeze(0) * alphas - torch.abs(muscle_SS[:, :, 0, :])))  # todo abs
+
+        K = self.K0.unsqueeze(0) + self.K1.unsqueeze(0) * alphas
+        return F, K
+
+
 class Joints(nn.Module):
     def __init__(self, device, n_joints, dt, speed_mode=False):
         super().__init__()
 
         self.device = device
-        self.speed_mode = speed_mode
-
         self.n_joints = n_joints
         self.dt = dt
+        self.speed_mode = speed_mode
 
-        M = math.log(0.05)
-        I = math.log(0.004)
-        B = math.log(.3)
-        K = math.log(5)
 
-        self.M = nn.Parameter(data=torch.ones(self.n_joints, dtype=torch.float, device=self.device) * M)
         self.I = nn.Parameter(data=torch.ones(self.n_joints, dtype=torch.float, device=self.device) * I)
         self.B = nn.Parameter(data=torch.ones(self.n_joints, dtype=torch.float, device=self.device) * B)
         self.K = nn.Parameter(data=torch.ones(self.n_joints, dtype=torch.float, device=self.device) * K)
 
-        self.speed_mode = speed_mode
+        moment_arms = torch.ones((self.n_joints, 2), dtype=torch.float, device=self.device) * M
+        moment_arms[:, 1] = moment_arms[:, 1] * -1
+        self.M = nn.Parameter(data=moment_arms)
 
         parameterization = Exponential()
         for parameter in ['I', 'B', 'K']:
             register_parametrization(self, parameter, parameterization)
 
-    def forward(self, SS, F, K):
+    def forward(self, F, K, SS):
         """Calculate the Joint dynamic for one step
         Output the new system state
 
@@ -75,12 +112,12 @@ class Joints(nn.Module):
         #################
         #   Matrix A    #
         #################
-        A00 = torch.zeros((batch_size, self.joint_num), dtype=torch.float, device=self.device)  # [batch_size, joint_num]
-        A01 = torch.ones((batch_size, self.joint_num), dtype=torch.float, device=self.device)
+        A00 = torch.zeros((batch_size, self.n_joints), dtype=torch.float, device=self.device)  # [batch_size, n_joints]
+        A01 = torch.ones((batch_size, self.n_joints), dtype=torch.float, device=self.device)
 
-        K = K * self.M.unsqueeze(0) * self.M.unsqueeze(0)  # [batch_size, joint_num, muscle_num]
-        K = K.sum(dim=2) # sum over muscles - > [batch_size, joint_num]
-        A10 = -(K + self.K.unsqueeze(0))/self.I.unsqueeze(0)  # [batch_size, joint_num] # todo
+        K = K * self.M.unsqueeze(0) * self.M.unsqueeze(0)  # [batch_size, n_joints, muscle_num]
+        K = K.sum(dim=2) # sum over muscles - > [batch_size, n_joints]
+        A10 = -(K + self.K.unsqueeze(0))/self.I.unsqueeze(0)  # [batch_size, n_joints] # todo
 
             #############################
             #   DAMPING                 #
@@ -89,20 +126,20 @@ class Joints(nn.Module):
         D = torch.sqrt(K * self.I.unsqueeze(0)) * 2
         A11 = -(D + self.B.unsqueeze(0)) / self.I.unsqueeze(0)  # with joint damping
 
-        A = torch.stack([torch.stack([A00, A01], dim=2), torch.stack([A10, A11], dim=2)], dim=2)  # [batch_size, joint_num, 2, 2]
+        A = torch.stack([torch.stack([A00, A01], dim=2), torch.stack([A10, A11], dim=2)], dim=2)  # [batch_size, n_joints, 2, 2]
 
 
         #########################
         #   MATRIX B            #
         #########################
-        B0 = torch.zeros(batch_size, self.joint_num, 2, dtype=torch.float, device=self.device)
+        B0 = torch.zeros(batch_size, self.n_joints, 2, dtype=torch.float, device=self.device)
 
         B_F = F
 
         # The following K is respect to w(angle)
-        B10 = B_F * self.Ms.unsqueeze(0) / self.I.unsqueeze(0).unsqueeze(2)
+        B10 = B_F * self.M.unsqueeze(0) / self.I.unsqueeze(0).unsqueeze(2)
         B10 = B10.sum(dim=2)
-        B11 = torch.ones((batch_size, self.joint_num), dtype=torch.float, device=self.device) / self.I.unsqueeze(0)
+        B11 = torch.ones((batch_size, self.n_joints), dtype=torch.float, device=self.device) / self.I.unsqueeze(0)
         B1 = torch.stack([B10, B11], dim=2)
 
         B = torch.stack([B0, B1], dim=2)
@@ -111,7 +148,7 @@ class Joints(nn.Module):
         #########################
         #   U (1,1,Tx,Ty)       #
         #########################
-        U0 = torch.zeros(batch_size, self.joint_num, 2, dtype=torch.float, device=self.device)
+        U0 = torch.zeros(batch_size, self.n_joints, 2, dtype=torch.float, device=self.device)
         U0[:, :, 0] = 1
         U1 = U0 # todo
 
@@ -119,9 +156,9 @@ class Joints(nn.Module):
             #############################
             #   Accurate Simulation     #
             #############################
-            M = torch.cat([torch.cat([A*self.dt, B*self.dt, torch.zeros((batch_size, self.joint_num, 2, 2), dtype=torch.float, device=self.device)], dim=3),
-                              torch.cat([torch.zeros((batch_size, self.joint_num, 2, 4), dtype=torch.float, device=self.device),  torch.eye(2, dtype=torch.float, device=self.device).unsqueeze(0).repeat(batch_size, self.joint_num, 1, 1)], dim=3),
-                              torch.zeros((batch_size, self.joint_num, 2, 6), dtype=torch.float, device=self.device)], dim=2)
+            M = torch.cat([torch.cat([A*self.dt, B*self.dt, torch.zeros((batch_size, self.n_joints, 2, 2), dtype=torch.float, device=self.device)], dim=3),
+                              torch.cat([torch.zeros((batch_size, self.n_joints, 2, 4), dtype=torch.float, device=self.device),  torch.eye(2, dtype=torch.float, device=self.device).unsqueeze(0).repeat(batch_size, self.n_joints, 1, 1)], dim=3),
+                              torch.zeros((batch_size, self.n_joints, 2, 6), dtype=torch.float, device=self.device)], dim=2)
 
             expMT = torch.matrix_exp(M)
             Ad = expMT[:, :, :2, :2]
@@ -137,38 +174,8 @@ class Joints(nn.Module):
             # xdot = A x + B u
             SSout = (torch.matmul(A*self.dt, SS.unsqueeze(3)) + torch.matmul(B*self.dt, U0.unsqueeze(3)) + SS.unsqueeze(3)).squeeze(3)
 
-        muscle_SSs = SSout.unsqueeze(3) * self.Ms.unsqueeze(0).unsqueeze(2) # [batch_size, joint_num, state_num (2), muscle_num (2)]
+        muscle_SSs = SSout.unsqueeze(3) * self.M.unsqueeze(0).unsqueeze(2) # [batch_size, n_joints, state_num (2), muscle_num (2)]
 
         return SSout[:, :, 0], muscle_SSs, SSout
 
 
-
-class Muscles(nn.Module):
-    def __init__(self, device, n_joints):
-        super().__init__()
-
-        self.device = device
-
-        K0 = math.log(100)
-        K1 = math.log(2000)
-        L0 = math.log(0.06)
-        L1 = math.log(0.006)
-
-        self.K0 = nn.Parameter(data=torch.ones((n_joints, 2), dtype=torch.float, device=self.device) * K0) #todo size
-        self.K1 = nn.Parameter(data=torch.ones((n_joints, 2), dtype=torch.float, device=self.device) * K1)
-        self.L0 = nn.Parameter(data=torch.ones((n_joints, 2), dtype=torch.float, device=self.device) * L0)
-        self.L1 = nn.Parameter(data=torch.ones((n_joints, 2), dtype=torch.float, device=self.device) * L1)
-
-
-        parameterization = Exponential()
-        for parameter in ['K0', 'K1', 'L0', 'L1']:
-            register_parametrization(self, parameter, parameterization)
-
-    def forward(self, alphas, muscle_SS):
-        alphas = torch.clamp(alphas, 0, 1)
-
-        F = ((self.K0.unsqueeze(0) + self.K1.unsqueeze(0) * alphas)
-               * (self.L0.unsqueeze(0) + self.L1.unsqueeze(0) * alphas - torch.abs(muscle_SS[:, :, 0, :])))  # todo abs
-
-        K = self.K0.unsqueeze(0) + self.K1.unsqueeze(0) * alphas
-        return F, K
