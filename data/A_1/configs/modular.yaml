@@ -32,7 +32,7 @@ parameters:
   model_type:
     value: ModularModel
   n_epochs:
-    value: 50
+    value: 200
   n_layers:
     value: 1
   seq_len:
@@ -50,7 +50,7 @@ parameters:
   warmup_steps:
     value: 10
   batch_size:
-    value: 5
+    value: 64
 
   activation_model:
     value: {model_type: DenseNet,

@@ -91,15 +91,19 @@ if args.test:
     dataloader = TSDataLoader(dataset, batch_size=config.batch_size, shuffle=True, drop_last=True)
 
     print('Training model...')
-    for epoch in tqdm(range(model.n_epochs)):
-        if config.model_type == 'ActivationAndBiophys':
-            for param in model.model.biophys_model.parameters():
-                param.requires_grad = False if epoch < config.biophys_config['n_freeze_epochs'] else True
-        train_loss = model.train_one_epoch(dataloader)
-        lr = model.scheduler.get_last_lr()[0]
-        # todo val_loss
-        model.scheduler.step(train_loss)  # Update the learning rate after each epoch
-        print(f'Epoch {epoch}, lr: {lr}, loss: {train_loss}')
+    with tqdm(range(model.n_epochs)) as pbar:
+        for epoch in pbar:
+            pbar.set_description(f'Epoch {epoch}')
+            # for epoch in tqdm(range(model.n_epochs)):
+            if config.model_type == 'ActivationAndBiophys':
+                for param in model.model.biophys_model.parameters():
+                    param.requires_grad = False if epoch < config.biophys_config['n_freeze_epochs'] else True
+            train_loss = model.train_one_epoch(dataloader)
+            lr = model.scheduler.get_last_lr()[0]
+            # todo val_loss
+            model.scheduler.step(train_loss)  # Update the learning rate after each epoch
+            pbar.set_postfix({'lr': lr, 'loss': train_loss})
+            # print(f'Epoch {epoch}, lr: {lr}, loss: {train_loss}')
 
     for set_id, test_set in enumerate(testsets):
         val_pred = model.predict(test_set, config.features).squeeze(0).to('cpu').detach().numpy()
