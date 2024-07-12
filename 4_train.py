@@ -12,89 +12,42 @@ import pandas as pd
 import wandb
 from tqdm import tqdm
 from helpers.predict_utils import Config, train_model, TSDataset, TSDataLoader
+from helpers.parallelization_utils import UnevenDistributedDataParallel
+import torch.distributed as dist
+import torch.multiprocessing as mp
 
+def setup(rank, world_size):
+    os.environ['MASTER_ADDR'] = 'localhost'
+    os.environ['MASTER_PORT'] = '12355'
 
-parser = argparse.ArgumentParser(description='Timeseries data analysis')
-parser.add_argument('--person_dir', type=str, required=True, help='Person directory')
-parser.add_argument('--intact_hand', type=str, required=True, help='Intact hand (Right/Left)')
-parser.add_argument('--config_name', type=str, required=True, help='Training configuration')
-parser.add_argument('-v', '--visualize', action='store_true', help='Plot data exploration results')
-parser.add_argument('-hs', '--hyperparameter_search', action='store_true', help='Perform hyperparameter search')
-parser.add_argument('-t', '--test', action='store_true', help='Test the model')
-parser.add_argument('-s', '--save_model', action='store_true', help='Save a model')
-args = parser.parse_args()
+    # initialize the process group
+    dist.init_process_group("nccl", rank=rank, world_size=world_size)
 
-sampling_frequency = 60
+def cleanup():
+    dist.destroy_process_group()
 
-if torch.cuda.is_available():
-    device = torch.device("cuda")
-    print('Using CUDA')
-# elif torch.backends.mps.is_available():
-#     device = torch.device("mps")
-#     print('Using MPS')
-else:
-    device = torch.device("cpu")
-    print('Using CPU')
+def func_test(rank, world_size, args, config, data_dirs, trainsets, testsets):
+    setup(rank, world_size)
+    torch.cuda.set_device(rank)
+    device = torch.device(f'cuda:{rank}')
 
+    model = TimeSeriesRegressorWrapper(device=device, input_size=len(config.features),
+                                       output_size=len(config.targets), **(config.to_dict()))
 
-with open(join('data', args.person_dir, 'configs', f'{args.config_name}.yaml'), 'r') as file:
-    wandb_config = yaml.safe_load(file)
-    config = Config(wandb_config)
-data_dirs = [join('data', args.person_dir, 'recordings', recording, 'experiments', '1') for recording in config.recordings]
+    model.to(device)
 
-
-trainsets = []
-testsets = []
-combined_sets = []
-for recording_id, data_dir in enumerate(data_dirs):
-    angles = pd.read_parquet(join(data_dir, 'cropped_smooth_angles.parquet'))
-    angles.index = range(len(angles))
-    emg = np.load(join(data_dir, 'cropped_aligned_emg.npy'))
-
-    data = angles.copy()
-    data.loc[:, (args.intact_hand, 'thumbInPlaneAng')] = data.loc[:, (args.intact_hand, 'thumbInPlaneAng')] + math.pi
-    data.loc[:, (args.intact_hand, 'wristRot')] = (data.loc[:, (args.intact_hand, 'wristRot')] + math.pi) / 2
-    data.loc[:, (args.intact_hand, 'wristFlex')] = (data.loc[:, (args.intact_hand, 'wristFlex')] + math.pi / 2)
-
-    data = (2 * data - math.pi) / math.pi
-    data = np.clip(data, -1, 1)
-
-    for feature in config.features:
-        data[feature] = emg[:, feature[1]]
-
-    if args.visualize:
-        data[config.features].plot(subplots=True)
-        plt.title(f'Features {config.recordings[recording_id]}')
-        plt.show()
-
-        data[config.targets].plot(subplots=True)
-        plt.title('Targets')
-        plt.show()
-
-    test_set = data.loc[len(data) // 5 * 4:].copy()
-    train = data.loc[: len(data) // 5 * 4].copy()
-    trainsets.append(train)
-    testsets.append(test_set)
-    combined_sets.append(data.copy())
-
-
-if args.hyperparameter_search:
-    sweep_id = wandb.sweep(wandb_config, project=f'{args.person_dir}_{args.config_name}')
-    wandb.agent(sweep_id, lambda config=None: train_model(trainsets, testsets, config=config))
-
-
-if args.test:
-    model = TimeSeriesRegressorWrapper(device=device, input_size=len(config.features), output_size=len(config.targets), **(config.to_dict()))
+    if args.multi_gpu and world_size > 1:
+        # model = torch.nn.DataParallel(model)
+        device_ratio = [4, 1] # do 80% of the processing on the first GPU
+        model = UnevenDistributedDataParallel(model, device_ids=[rank], device_ratio=device_ratio)
 
     model.to(device)
     dataset = TSDataset(trainsets, config.features, config.targets, sequence_len=125, device=device)
     dataloader = TSDataLoader(dataset, batch_size=config.batch_size, shuffle=True, drop_last=True)
 
-    print('Training model...')
     with tqdm(range(model.n_epochs)) as pbar:
         for epoch in pbar:
             pbar.set_description(f'Epoch {epoch}')
-            # for epoch in tqdm(range(model.n_epochs)):
             if config.model_type == 'ActivationAndBiophys':
                 for param in model.model.biophys_model.parameters():
                     param.requires_grad = False if epoch < config.biophys_config['n_freeze_epochs'] else True
@@ -102,44 +55,179 @@ if args.test:
             lr = model.scheduler.get_last_lr()[0]
             # todo val_loss
             model.scheduler.step(train_loss)  # Update the learning rate after each epoch
-            pbar.set_postfix({'lr': lr, 'loss': train_loss})
-            # print(f'Epoch {epoch}, lr: {lr}, loss: {train_loss}')
+            pbar.set_postfix({'gpu': rank, 'lr': lr, 'loss': train_loss})
 
-    for set_id, test_set in enumerate(testsets):
-        val_pred = model.predict(test_set, config.features).squeeze(0).to('cpu').detach().numpy()
+    if rank == 0: # only run validation from one?
+        model.eval()
+        with torch.no_grad():
+            for set_id, test_set in enumerate(testsets):
+                val_pred = model.predict(test_set, config.features).squeeze(0).to('cpu').detach().numpy()
 
-        val_pred = np.clip(val_pred, -1, 1)
-        test_set[config.targets] = val_pred
-        test_set = (test_set * math.pi + math.pi) / 2
+                val_pred = np.clip(val_pred, -1, 1)
+                test_set[config.targets] = val_pred
+                test_set = (test_set + 1) * math.pi / 2
 
-        test_set.loc[:, (args.intact_hand, 'thumbInPlaneAng')] = test_set.loc[:, (args.intact_hand, 'thumbInPlaneAng')] - math.pi
-        test_set.loc[:, (args.intact_hand, 'wristRot')] = (test_set.loc[:, (args.intact_hand, 'wristRot')] * 2) - math.pi
-        test_set.loc[:, (args.intact_hand, 'wristFlex')] = (test_set.loc[:, (args.intact_hand, 'wristFlex')] - math.pi / 2)
-        test_set.to_parquet(join(data_dirs[set_id], f'pred_angles-{args.config_name}.parquet'))
+                test_set.loc[:, (args.intact_hand, 'thumbInPlaneAng')] = test_set.loc[:,
+                                                                         (args.intact_hand, 'thumbInPlaneAng')] - math.pi
+                test_set.loc[:, (args.intact_hand, 'wristRot')] = (test_set.loc[:,
+                                                                   (args.intact_hand, 'wristRot')] * 2) - math.pi
+                test_set.loc[:, (args.intact_hand, 'wristFlex')] = (
+                            test_set.loc[:, (args.intact_hand, 'wristFlex')] - math.pi / 2)
+                test_set.to_parquet(join(data_dirs[set_id], f'pred_angles-{args.config_name}.parquet'))
+
+    cleanup()
+
+if __name__ == '__main__':
+    parser = argparse.ArgumentParser(description='Timeseries data analysis')
+    parser.add_argument('--person_dir', type=str, required=True, help='Person directory')
+    parser.add_argument('--intact_hand', type=str, required=True, help='Intact hand (Right/Left)')
+    parser.add_argument('--config_name', type=str, required=True, help='Training configuration')
+    parser.add_argument('-v', '--visualize', action='store_true', help='Plot data exploration results')
+    parser.add_argument('-hs', '--hyperparameter_search', action='store_true', help='Perform hyperparameter search')
+    parser.add_argument('-t', '--test', action='store_true', help='Test the model')
+    parser.add_argument('-tf32', '--allow_tf32', action='store_true', help='Allow TF32 mixed precision matrix multiply')
+    parser.add_argument('-s', '--save_model', action='store_true', help='Save a model')
+    parser.add_argument('-mgpu', '--multi_gpu', action='store_true', help='Use multiple GPUs')
+    args = parser.parse_args()
+
+    sampling_frequency = 60
+
+    if torch.cuda.is_available():
+        device = torch.device("cuda")
+        print('Using CUDA')
+
+        # List available GPUs
+        if args.multi_gpu:
+            n_gpus = torch.cuda.device_count()
+            print(f'Number of available GPUs: {n_gpus}')
+            for i in range(n_gpus):
+                print(f'GPU{i}: {torch.cuda.get_device_name(i)}')
+
+    # elif torch.backends.mps.is_available():
+    #     device = torch.device("mps")
+    #     print('Using MPS')
+    else:
+        device = torch.device("cpu")
+        print('Using CPU')
+
+    if args.allow_tf32:
+        torch.backends.cuda.matmul.allow_tf32 = True
+        print('TF32 enabled')
+
+    with open(join('data', args.person_dir, 'configs', f'{args.config_name}.yaml'), 'r') as file:
+        wandb_config = yaml.safe_load(file)
+        config = Config(wandb_config)
+    data_dirs = [join('data', args.person_dir, 'recordings', recording, 'experiments', '1') for recording in config.recordings]
 
 
-if args.save_model:
-    model = TimeSeriesRegressorWrapper(input_size=len(config.features), hidden_size=config.hidden_size,
-                                      output_size=len(config.targets), n_epochs=config.n_epochs,
-                                      seq_len=config.seq_len,
-                                      learning_rate=config.learning_rate,
-                                      warmup_steps=config.warmup_steps, num_layers=config.n_layers,
-                                      model_type=config.model_type)
-    model.to(device)
-    dataset = TSDataset(combined_sets, config.features, config.targets, sequence_len=125, device=device)
-    dataloader = TSDataLoader(dataset, batch_size=config.batch_size, shuffle=True, drop_last=True)
+    trainsets = []
+    testsets = []
+    combined_sets = []
+    for recording_id, data_dir in enumerate(data_dirs):
+        angles = pd.read_parquet(join(data_dir, 'cropped_smooth_angles.parquet'))
+        angles.index = range(len(angles))
+        emg = np.load(join(data_dir, 'cropped_aligned_emg.npy'))
 
-    print('Training model...')
-    for epoch in tqdm(range(model.n_epochs)):
-        if config.model_type == 'ActivationAndBiophys':
-            for param in model.model.biophys_model.parameters():
-                param.requires_grad = False if epoch < config.biophys_config['n_freeze_epochs'] else True
-        train_loss = model.train_one_epoch(dataloader)
-        # todo val_loss
-        model.scheduler.step(train_loss)  # Update the learning rate after each epoch
+        data = angles.copy()
+        data.loc[:, (args.intact_hand, 'thumbInPlaneAng')] = data.loc[:, (args.intact_hand, 'thumbInPlaneAng')] + math.pi
+        data.loc[:, (args.intact_hand, 'wristRot')] = (data.loc[:, (args.intact_hand, 'wristRot')] + math.pi) / 2
+        data.loc[:, (args.intact_hand, 'wristFlex')] = (data.loc[:, (args.intact_hand, 'wristFlex')] + math.pi / 2)
+
+        data = (2 * data - math.pi) / math.pi
+        data = np.clip(data, -1, 1)
+
+        for feature in config.features:
+            data[feature] = emg[:, feature[1]]
+
+        if args.visualize:
+            data[config.features].plot(subplots=True, title=f'Features {config.recordings[recording_id]}', legend=False)
+            plt.show()
+
+            jointNames = [joint[1] for joint in config.targets]
+            data[config.targets].plot(subplots=True, title=f'Targets {config.recordings[recording_id]}\n{[i for i in jointNames[:4]]}\n{[i for i in jointNames[4:]]}', legend=False)
+            plt.show()
+
+        test_set = data.loc[len(data) // 5 * 4:].copy()
+        train = data.loc[: len(data) // 5 * 4].copy()
+        trainsets.append(train)
+        testsets.append(test_set)
+        combined_sets.append(data.copy())
+
+
+    if args.hyperparameter_search:
+        sweep_id = wandb.sweep(wandb_config, project=f'{args.person_dir}_{args.config_name}')
+        wandb.agent(sweep_id, lambda config=None: train_model(trainsets, testsets, config=config))
+
+    # if args.test:
+    #     model = TimeSeriesRegressorWrapper(device=device, input_size=len(config.features), output_size=len(config.targets), **(config.to_dict()))
+    #
+    #     if args.multi_gpu and n_gpus > 1:
+    #         # model = torch.nn.DataParallel(model)
+    #         model = UnevenDistributedDataParallel(model, ) # todo something with me here!
+    #
+    #     model.to(device)
+    #     dataset = TSDataset(trainsets, config.features, config.targets, sequence_len=125, device=device)
+    #     dataloader = TSDataLoader(dataset, batch_size=config.batch_size, shuffle=True, drop_last=True)
+    #
+    #     print('Training model...')
+    #     with tqdm(range(model.n_epochs)) as pbar:
+    #         for epoch in pbar:
+    #             pbar.set_description(f'Epoch {epoch}')
+    #             # for epoch in tqdm(range(model.n_epochs)):
+    #             if config.model_type == 'ActivationAndBiophys':
+    #                 for param in model.model.biophys_model.parameters():
+    #                     param.requires_grad = False if epoch < config.biophys_config['n_freeze_epochs'] else True
+    #             train_loss = model.train_one_epoch(dataloader)
+    #             lr = model.scheduler.get_last_lr()[0]
+    #             # todo val_loss
+    #             model.scheduler.step(train_loss)  # Update the learning rate after each epoch
+    #             pbar.set_postfix({'lr': lr, 'loss': train_loss})
+    #             # print(f'Epoch {epoch}, lr: {lr}, loss: {train_loss}')
+    #
+    #     for set_id, test_set in enumerate(testsets):
+    #         val_pred = model.predict(test_set, config.features).squeeze(0).to('cpu').detach().numpy()
+    #
+    #         val_pred = np.clip(val_pred, -1, 1)
+    #         test_set[config.targets] = val_pred
+    #         test_set = (test_set * math.pi + math.pi) / 2
+    #
+    #         test_set.loc[:, (args.intact_hand, 'thumbInPlaneAng')] = test_set.loc[:, (args.intact_hand, 'thumbInPlaneAng')] - math.pi
+    #         test_set.loc[:, (args.intact_hand, 'wristRot')] = (test_set.loc[:, (args.intact_hand, 'wristRot')] * 2) - math.pi
+    #         test_set.loc[:, (args.intact_hand, 'wristFlex')] = (test_set.loc[:, (args.intact_hand, 'wristFlex')] - math.pi / 2)
+    #         test_set.to_parquet(join(data_dirs[set_id], f'pred_angles-{args.config_name}.parquet'))
+
+
+    if args.test:
+        print('Training model...')
+        if args.multi_gpu and n_gpus > 1:
+            world_size = n_gpus
+            mp.spawn(func_test, args=(world_size, args, config, data_dirs, trainsets, testsets), nprocs=world_size, join=True)
+        else:
+            func_test(0, 1, args, config, data_dirs, trainsets, testsets)
+
+
+    if args.save_model:
+        model = TimeSeriesRegressorWrapper(input_size=len(config.features), hidden_size=config.hidden_size,
+                                          output_size=len(config.targets), n_epochs=config.n_epochs,
+                                          seq_len=config.seq_len,
+                                          learning_rate=config.learning_rate,
+                                          warmup_steps=config.warmup_steps, num_layers=config.n_layers,
+                                          model_type=config.model_type)
+        model.to(device)
+        dataset = TSDataset(combined_sets, config.features, config.targets, sequence_len=125, device=device)
+        dataloader = TSDataLoader(dataset, batch_size=config.batch_size, shuffle=True, drop_last=True)
+
+        print('Training model...')
+        for epoch in tqdm(range(model.n_epochs)):
+            if config.model_type == 'ActivationAndBiophys':
+                for param in model.model.biophys_model.parameters():
+                    param.requires_grad = False if epoch < config.biophys_config['n_freeze_epochs'] else True
+            train_loss = model.train_one_epoch(dataloader)
+            # todo val_loss
+            model.scheduler.step(train_loss)  # Update the learning rate after each epoch
 
 
 
-    model.to(torch.device('cpu'))
-    os.makedirs(join('data', args.person_dir, 'models'), exist_ok=True)
-    model.save(join('data', args.person_dir, 'models', f'{args.config_name}.pt'))
+        model.to(torch.device('cpu'))
+        os.makedirs(join('data', args.person_dir, 'models'), exist_ok=True)
+        model.save(join('data', args.person_dir, 'models', f'{args.config_name}.pt'))

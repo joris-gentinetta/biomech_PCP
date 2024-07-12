@@ -23,7 +23,6 @@ B = math.log(.3)
 K = math.log(5)
 
 
-
 class Muscles(nn.Module):
     def __init__(self, device, n_joints):
         super().__init__()
@@ -115,16 +114,15 @@ class Joints(nn.Module):
 
         K = K_musc * self.M.unsqueeze(0) * self.M.unsqueeze(0)  # [batch_size, n_joints, muscle_num]
         K = K.sum(dim=2)  # sum over muscles - > [batch_size, n_joints]
-        # A10 = -(K + self.K.unsqueeze(0))/self.I.unsqueeze(0) # [batch_size, n_joints]
-        A10 = -K / self.I.unsqueeze(0)  # [batch_size, n_joints]
+        A10 = -(K + self.K.unsqueeze(0))/self.I.unsqueeze(0) # [batch_size, n_joints]
+        # A10 = -K / self.I.unsqueeze(0)  # [batch_size, n_joints]
 
         #############################
         #   DAMPING                 #
         #############################
-        # D = torch.sqrt(torch.abs(K * self.I.unsqueeze(0))) * 2  # todo abs
         D = torch.sqrt(K * self.I.unsqueeze(0)) * 2
-        # A11 = -(D + self.B.unsqueeze(0)) / self.I.unsqueeze(0)  # with joint damping
-        A11 = -D / self.I.unsqueeze(0)  # with joint damping
+        A11 = -(D + self.B.unsqueeze(0)) / self.I.unsqueeze(0)  # with joint damping
+        # A11 = -D / self.I.unsqueeze(0)  # with joint damping
 
         A = torch.stack([torch.stack([A00, A01], dim=2), torch.stack([A10, A11], dim=2)],
                         dim=2)  # [batch_size, n_joints, 2, 2]
@@ -132,7 +130,6 @@ class Joints(nn.Module):
         #########################
         #   MATRIX B            #
         #########################
-        # B0 = torch.zeros(batch_size, self.n_joints, 2, dtype=torch.float, device=self.device)
         B0 = torch.zeros(batch_size, self.n_joints, 1, dtype=torch.float, device=self.device)
 
         B_F = F
@@ -152,7 +149,6 @@ class Joints(nn.Module):
             eye = torch.eye(2, dtype=torch.float, device=self.device).unsqueeze(0).unsqueeze(0).repeat(batch_size, self.n_joints, 1, 1)
 
             SSout = torch.matmul(expAt, SS.unsqueeze(3)) + torch.matmul(torch.linalg.solve(A, expAt - eye), B)
-            # SSout = torch.matmul(expAt, SS.unsqueeze(3)) + torch.matmul(torch.matmul(eye - expAt, torch.linalg.solve(A, B)), F.unsqueeze(3))
             SSout = SSout.squeeze(3)
 
         else:
@@ -161,11 +157,8 @@ class Joints(nn.Module):
             #############################
             # The simplified simulation addition instead of integration
             # xdot = A x + B u
-            # SSout = (torch.matmul(A*self.dt, SS.unsqueeze(3)) + torch.matmul(B*self.dt, U0.unsqueeze(3)) + SS.unsqueeze(3)).squeeze(3)
             SSout = ((torch.matmul(A, SS.unsqueeze(3)) + B) * self.dt + SS.unsqueeze(3)).squeeze(3)
 
         muscle_SSs = SSout.unsqueeze(3) * self.M.unsqueeze(0).unsqueeze(2) # [batch_size, n_joints, state_num (2), muscle_num (2)]
 
         return SSout[:, :, 0], muscle_SSs, SSout
-
-

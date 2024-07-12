@@ -65,7 +65,7 @@ if __name__ == "__main__":
         target_angles.index = range(len(target_angles))
 
     physicsClient = p.connect(p.GUI)
-    p.setGravity(0, 0, -10)
+    p.setGravity(0, 0, -9.81)
 
     handStartPos = [0, 0, 0]
     handStartOrientation = p.getQuaternionFromEuler([0, 0, 0])
@@ -95,6 +95,7 @@ if __name__ == "__main__":
     joint_ids = {'index': (1, 2, 3), 'middle': (4, 5, 6), 'ring': (7, 8, 9), 'pinky': (10, 11, 12),
                  'thumb': (13, 14, 15)}
 
+    time.sleep(1) # want to wait for the GUI to load
     for i in range(target_angles.shape[0]):
         move_finger(target_hand, 'index', target_angles.loc[i, (args.intact_hand, 'indexAng')])
         move_finger(target_hand, 'middle', target_angles.loc[i, (args.intact_hand, 'midAng')])

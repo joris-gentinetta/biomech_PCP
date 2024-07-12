@@ -50,7 +50,7 @@ parameters:
   warmup_steps:
     value: 10
   batch_size:
-    value: 5
+    value: 10
 
   activation_config:
     value: {model_type: DenseNet,

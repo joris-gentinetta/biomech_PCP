@@ -121,6 +121,41 @@ class DenseNet(TimeSeriesRegressor):
         return out, states
 
 
+class BlockDenseNet(TimeSeriesRegressor):
+    def __init__(self, input_size, output_size, device, **kwargs):
+        super().__init__(input_size, output_size, device)
+        self.n_networks = kwargs.get('n_networks')
+        hidden_size = kwargs.get('hidden_size')
+        self.output_size = output_size
+        n_layers = kwargs.get('n_layers')
+
+        self.model = nn.ModuleList([DenseNet(input_size, output_size, device, hidden_size=hidden_size, n_layers=n_layers) for _ in range(self.n_networks)])
+
+    def get_starting_states(self, batch_size, x=None):
+        return None
+
+    def forward(self, x, states=None):
+        # x.shape = [batch_size, seq_len, n_networks, input_size]
+        # so our output shape should be [batch_size, seq_len, n_networks*output_size]
+        # out = torch.zeros((x.shape[0], x.shape[1], self.n_networks*self.output_size), dtype=torch.float, device=self.device)
+        # for i in range(x.shape[1]):
+        #     out[:, i:i + 1, :] = torch.cat([subnet(x[:, i:i + 1, sub_idx, :])[0] for sub_idx, subnet in enumerate(self.model)], dim=2)
+        # return out, states
+
+        batch_size, sequence_length, num_networks, input_size = x.shape
+
+        # Reshape to (num_networks, batch_size * sequence_length, input_size) for parallel processing
+        x = x.permute(2, 0, 1, 3).reshape(num_networks, -1, input_size)
+
+        # Apply each sub-network in parallel using list comprehension and stacking results
+        outputs = torch.stack([self.model[i](x[i])[0] for i in range(num_networks)], dim=2)
+
+        # Reshape back to the original batch and sequence dimensions
+        out = outputs.reshape(batch_size, sequence_length, num_networks * self.output_size)
+
+        return out, states
+
+
 class PhysMuscleModel(TimeSeriesRegressor):
     def __init__(self, input_size, output_size, device, **kwargs):
         super().__init__(input_size, output_size, device)
@@ -157,6 +192,7 @@ class PhysJointModel(TimeSeriesRegressor):
         self.model = Joints(device=device, n_joints=output_size, dt=1 / SR, speed_mode=False)
 
     def get_starting_states(self, batch_size, x=None):
+        """ these are the muscle states! """
         theta = x[:, 0, :]
         d_theta = (x[:, 1, :] - x[:, 0, :]) * SR
         states = torch.stack([theta, d_theta], dim=2)
@@ -214,9 +250,69 @@ class ModularModel(TimeSeriesRegressor):
         return out, states
 
 
+class CompensationModel(TimeSeriesRegressor):
+    def __init__(self, input_size, output_size, device, **kwargs):
+        super().__init__(input_size, output_size, device)
+        activation_model = kwargs.get('activation_model')
+        compensation_model = kwargs.get('compensation_model')
+        muscle_model = kwargs.get('muscle_model')
+        joint_model = kwargs.get('joint_model')
 
-class TimeSeriesRegressorWrapper:
+        self.device = device
+
+        self.activation_model = self.get_model(input_size, output_size * 2, activation_model)
+        self.sigmoid = nn.Sigmoid()
+        self.muscle_model = self.get_model(output_size * 2, output_size * 4, muscle_model)
+        self.joint_model = self.get_model(output_size * 4, output_size, joint_model)
+        self.compensation_model = self.get_model(3, 2, compensation_model) # want 3 inputs per muscle and 2 output per muscle (a force scaler and a stiffness scaler)
+        self.tanh = nn.Tanh()
+
+    def get_model(self, input_size, output_size, config):
+        if config['model_type'] == 'DenseNet':
+            modelclass = DenseNet
+        elif config['model_type'] == 'CNN':
+            modelclass = CNN
+        elif config['model_type'] in ['RNN', 'LSTM', 'GRU']:
+            modelclass = RNN
+        elif config['model_type'] == 'PhysMuscleModel':
+            modelclass = PhysMuscleModel
+        elif config['model_type'] == 'PhysJointModel':
+            modelclass = PhysJointModel
+        elif config['model_type'] == 'BlockDenseNet':
+            modelclass = BlockDenseNet
+        else:
+            raise ValueError(f'Unknown model type {config["model_type"]}')
+        return modelclass(input_size, output_size, self.device, **config)
+
+
+    def get_starting_states(self, batch_size, x=None):
+        return [self.activation_model.get_starting_states(batch_size, x),  [self.muscle_model.get_starting_states(batch_size, x), self.joint_model.get_starting_states(batch_size, x)[0]], self.compensation_model.get_starting_states(batch_size, x), self.joint_model.get_starting_states(batch_size, x)[1]]
+
+    def forward(self, x, states):
+        out = torch.zeros((x.shape[0], x.shape[1], self.output_size), dtype=torch.float, device=self.device)
+        for i in range(x.shape[1]):
+            activation_out, states[0] = self.activation_model(x[:, i:i + 1, :], states[0])
+            activation_out = self.sigmoid(activation_out)
+            muscle_out, states[1][0] = self.muscle_model(activation_out, states[1])
+            # need to do some ~rearranging~ on the muscle states here to get them as desired - states[1][1] is the muscle state
+            # with dimension [batch_size, n_joints, state_num (2), muscle_num (2)]
+            # we can pull out the individual muscle states, then stack along the last dimension as [act, len, vel]
+            # unsqueeze along the sequence length dimension, and pass in the input as desired
+            # hill_muscle_states.shape = [batch_size, seq_len, n_networks, input_size]
+            hill_muscle_states = torch.concatenate([activation_out.unsqueeze(3)] + [torch.flatten(states[1][1][:, :, st, :], start_dim=1, end_dim=2).unsqueeze(2).unsqueeze(1) for st in range(2)], dim=3)
+            compensation_out, states[2] = self.compensation_model(hill_muscle_states) # [batch_size, seq_len, n_networks, output_size]
+            compensation_out = self.tanh(compensation_out)
+            muscle_out = muscle_out * (1 + compensation_out)
+
+            out[:, i:i+1, :], states[1][1], states[3] = self.joint_model(muscle_out, states[3])
+
+        return out, states
+
+
+# class TimeSeriesRegressorWrapper(nn.Module):
+class TimeSeriesRegressorWrapper():
     def __init__(self, input_size, output_size, device, n_epochs, seq_len, learning_rate, warmup_steps, model_type, **kwargs):
+        # super().__init__()
 
         if model_type == 'DenseNet':
             self.model = DenseNet(input_size, output_size, device, **kwargs)
@@ -226,6 +322,8 @@ class TimeSeriesRegressorWrapper:
             self.model = RNN(input_size, output_size, device, **kwargs)
         elif model_type == 'ModularModel':
             self.model = ModularModel(input_size, output_size, device, **kwargs)
+        elif model_type == 'CompensationModel':
+            self.model = CompensationModel(input_size, output_size, device, **kwargs)
         else:
             raise ValueError(f'Unknown model type {model_type}')
 
@@ -242,7 +340,7 @@ class TimeSeriesRegressorWrapper:
         torch.save(self.model.state_dict(), path)
 
     def load(self, path):
-        self.model.load_state_dict(torch.load(path))
+        self.model.load_state_dict(torch.load(path, map_location=torch.device('cpu'))) # note that we load to cpu
         return self
 
     def train_one_epoch(self, dataloader):
@@ -254,14 +352,13 @@ class TimeSeriesRegressorWrapper:
 
             loss = self.criterion(outputs[:, self.warmup_steps:], y[:, self.warmup_steps:])
 
-            self.optimizer.zero_grad()
+            self.optimizer.zero_grad(set_to_none=True)
             loss.backward()
-            torch.nn.utils.clip_grad_norm_(self.model.parameters(), 1)
+            torch.nn.utils.clip_grad_norm_(self.model.parameters(), 4)
             self.optimizer.step()
-            # print(loss.item())
-            epoch_loss += loss.item()
+            epoch_loss += loss
 
-        return epoch_loss / len(dataloader)
+        return epoch_loss.item() / len(dataloader)
 
     def predict(self, test_set, features):
         self.model.eval()
@@ -276,7 +373,25 @@ class TimeSeriesRegressorWrapper:
         self.model.to(device)
         return self
 
+    def eval(self):
+        self.model.eval()
+        return self
 
+    # extra wrappers to expose arguments as needed
+    def named_buffers(self, *args, **kwargs):
+        return self.model.named_buffers(*args, **kwargs)
+
+    def named_parameters(self, *args, **kwargs):
+        return self.model.named_parameters(*args, **kwargs)
+
+    def named_modules(self, *args, **kwargs):
+        return self.model.named_modules(*args, **kwargs)
+
+    def parameters(self, *args, **kwargs):
+        return self.model.parameters(*args, **kwargs)
+
+    def modules(self, *args, **kwargs):
+        return self.model.modules(*args, **kwargs)
 
 # if __name__ == '__main__':
 #     model = ModularModel(device=torch.device('cpu'), input_size=8, output_size=4, muscleType='bilinear', nn_ratio=0.2)
