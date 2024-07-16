@@ -2,59 +2,134 @@ import wandb
 import torch
 from torch.utils.data import Dataset, DataLoader
 import random
-from helpers.models import TimeSeriesRegressor
+from helpers.models import TimeSeriesRegressorWrapper
+from tqdm import tqdm
+from os.path import join
+import numpy as np
+import pandas as pd
+import matplotlib.pyplot as plt
+import math
 
-def train_model(trainsets, testsets, device,  mode='online', config=None):
-    with wandb.init(mode=mode):
-        if mode != 'disabled':
-            config = wandb.config
-        model = TimeSeriesRegressor(input_size=len(config.features), hidden_size=config.hidden_size,
-                                          output_size=len(config.targets), n_epochs=config.n_epochs, seq_len=config.seq_len,
-                                          learning_rate=config.learning_rate,
-                                          warmup_steps=config.warmup_steps, num_layers=config.n_layers,
-                                          model_type=config.model_type)
+
+def get_data(config, data_dirs, intact_hand, visualize=False):
+
+    trainsets = []
+    testsets = []
+    combined_sets = []
+    for recording_id, data_dir in enumerate(data_dirs):
+        angles = pd.read_parquet(join(data_dir, 'cropped_smooth_angles.parquet'))
+        angles.index = range(len(angles))
+        emg = np.load(join(data_dir, 'cropped_aligned_emg.npy'))
+
+        data = angles.copy()
+        data.loc[:, (intact_hand, 'thumbInPlaneAng')] = data.loc[:,
+                                                             (intact_hand, 'thumbInPlaneAng')] + math.pi
+        data.loc[:, (intact_hand, 'wristRot')] = (data.loc[:, (intact_hand, 'wristRot')] + math.pi) / 2
+        data.loc[:, (intact_hand, 'wristFlex')] = (data.loc[:, (intact_hand, 'wristFlex')] + math.pi / 2)
+
+        data = (2 * data - math.pi) / math.pi
+        data = np.clip(data, -1, 1)
+
+        for feature in config.features:
+            data[feature] = emg[:, int(feature[1])]
+
+        if visualize:
+            data[config.features].plot(subplots=True)
+            plt.title(f'Features {config.recordings[recording_id]}')
+            plt.show()
+
+            data[config.targets].plot(subplots=True)
+            plt.title('Targets')
+            plt.show()
+
+        test_set = data.loc[len(data) // 5 * 4:].copy()
+        train = data.loc[: len(data) // 5 * 4].copy()
+        trainsets.append(train)
+        testsets.append(test_set)
+        combined_sets.append(data.copy())
+
+    return trainsets, testsets, combined_sets
+
+
+def train_model(trainsets, testsets, device,  mode='online', project=None, config=None):
+    with wandb.init(mode=mode, project=project, config=config):
+        # if mode != 'disabled':
+        config = wandb.config
+
+        model = TimeSeriesRegressorWrapper(device=device, input_size=len(config.features), output_size=len(config.targets), **config)
         model.to(device)
 
-        dataset = TSDataset(trainsets, config.features, config.targets, sequence_len=125)
-        dataloader = TSDataLoader(dataset, batch_size=2, shuffle=True, drop_last=True)
+        dataset = TSDataset(trainsets, config.features, config.targets, sequence_len=125, device=device)
+        dataloader = TSDataLoader(dataset, batch_size=config.batch_size, shuffle=True, drop_last=True)
 
         best_val_loss = float('inf')
         best_epoch = 0
-        epochs_no_improve = 0
-        patience = 7
-        used_epochs = 0
-        for epoch in range(model.n_epochs):
-            used_epochs = epoch
-            model.train_one_epoch(dataloader)
 
-            if epoch % 1 == 0:
-                losses = []
-                for set_id, test_set in enumerate(testsets):
-                    val_pred = model.predict(test_set, config.features).squeeze(0)
-                    loss = model.eval_criterion(val_pred[config.warmup_steps:],
-                                                torch.tensor(test_set[config.targets].values, dtype=torch.float32)[
-                                                config.warmup_steps:].to(device))
-                    loss = float(loss.to('cpu').detach())
-                    losses.append(loss)
-                total_loss = sum(losses) / len(losses)
-                print('Total val loss:', total_loss)
-                log = {f'val_loss_{set_id}': loss for set_id, loss in enumerate(losses)}
-                log['total_val_loss'] = total_loss
+        early_stopper = EarlyStopper(patience=config.early_stopping_patience, min_delta=config.early_stopping_delta)
+        print('Training model...')
+        with tqdm(range(model.n_epochs)) as pbar:
+            for epoch in pbar:
+                pbar.set_description(f'Epoch {epoch}')
+
+                if config.model_type == 'ActivationAndBiophys': # todo
+                    for param in model.model.biophys_model.parameters():
+                        param.requires_grad = False if epoch < config.biophys_config['n_freeze_epochs'] else True
+
+                train_loss = model.train_one_epoch(dataloader)
+
+                val_loss, val_losses = evaluate_model(model, testsets, device, config)
+                if val_loss < best_val_loss:
+                    best_val_loss = val_loss
+                    wandb.run.summary['best_epoch'] = best_epoch
+                    wandb.run.summary['best_val_loss'] = best_val_loss
+                wandb.run.summary['used_epochs'] = epoch
+
+
+                lr = model.scheduler.get_last_lr()[0]
+                model.scheduler.step(val_loss)  # Update the learning rate after each epoch
+                pbar.set_postfix({'lr': lr, 'train_loss': train_loss, 'val_loss': val_loss})
+
+                # print('Total val loss:', val_loss)
+                log = {f'val_loss/{config.recordings[set_id]}': loss for set_id, loss in enumerate(val_losses)}
+                log['total_val_loss'] = val_loss
                 wandb.log(log, step=epoch)
 
-                if total_loss < best_val_loss:
-                    best_val_loss = total_loss
-                    best_epoch = epoch
-                    epochs_no_improve = 0
-                else:
-                    epochs_no_improve += 1
-                if epochs_no_improve > patience:
-                    print('Early stopping, epoch:', epoch)
+                if early_stopper.early_stop(val_loss):
                     break
 
-        wandb.run.summary['used_epochs'] = used_epochs
-        wandb.run.summary['best_epoch'] = best_epoch
-        wandb.run.summary['best_val_loss'] = best_val_loss
+        return model
+
+
+def evaluate_model(model, testsets, device, config):
+    losses = []
+    for set_id, test_set in enumerate(testsets):
+        val_pred = model.predict(test_set, config.features).squeeze(0)
+        loss = model.criterion(val_pred[config.warmup_steps:],
+                                    torch.tensor(test_set[config.targets].values, dtype=torch.float32)[
+                                    config.warmup_steps:].to(device))
+        loss = float(loss.to('cpu').detach())
+        losses.append(loss)
+    total_loss = sum(losses) / len(losses)
+
+    return total_loss, losses
+
+
+class EarlyStopper:
+    def __init__(self, patience=1, min_delta=0):
+        self.patience = patience
+        self.min_delta = min_delta
+        self.counter = 0
+        self.min_validation_loss = float('inf')
+
+    def early_stop(self, validation_loss):
+        if validation_loss < self.min_validation_loss:
+            self.min_validation_loss = validation_loss
+            self.counter = 0
+        elif validation_loss > (self.min_validation_loss + self.min_delta):
+            self.counter += 1
+            if self.counter >= self.patience:
+                return True
+        return False
 
 
 class Config:

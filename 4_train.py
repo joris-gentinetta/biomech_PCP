@@ -11,7 +11,7 @@ from os.path import join
 import pandas as pd
 import wandb
 from tqdm import tqdm
-from helpers.predict_utils import Config, train_model, TSDataset, TSDataLoader
+from helpers.predict_utils import Config, get_data, train_model, TSDataset, TSDataLoader
 
 
 parser = argparse.ArgumentParser(description='Timeseries data analysis')
@@ -40,70 +40,19 @@ else:
 with open(join('data', args.person_dir, 'configs', f'{args.config_name}.yaml'), 'r') as file:
     wandb_config = yaml.safe_load(file)
     config = Config(wandb_config)
-data_dirs = [join('data', args.person_dir, 'recordings', recording, 'experiments', '1') for recording in config.recordings]
 
+data_dirs = [join('data', args.person_dir, 'recordings', recording, 'experiments', '1') for recording in
+             config.recordings]
 
-trainsets = []
-testsets = []
-combined_sets = []
-for recording_id, data_dir in enumerate(data_dirs):
-    angles = pd.read_parquet(join(data_dir, 'cropped_smooth_angles.parquet'))
-    angles.index = range(len(angles))
-    emg = np.load(join(data_dir, 'cropped_aligned_emg.npy'))
+trainsets, testsets, combined_sets = get_data(config, data_dirs, args.intact_hand, visualize=args.visualize)
 
-    data = angles.copy()
-    data.loc[:, (args.intact_hand, 'thumbInPlaneAng')] = data.loc[:, (args.intact_hand, 'thumbInPlaneAng')] + math.pi
-    data.loc[:, (args.intact_hand, 'wristRot')] = (data.loc[:, (args.intact_hand, 'wristRot')] + math.pi) / 2
-    data.loc[:, (args.intact_hand, 'wristFlex')] = (data.loc[:, (args.intact_hand, 'wristFlex')] + math.pi / 2)
-
-    data = (2 * data - math.pi) / math.pi
-    data = np.clip(data, -1, 1)
-
-    for feature in config.features:
-        data[feature] = emg[:, feature[1]]
-
-    if args.visualize:
-        data[config.features].plot(subplots=True)
-        plt.title(f'Features {config.recordings[recording_id]}')
-        plt.show()
-
-        data[config.targets].plot(subplots=True)
-        plt.title('Targets')
-        plt.show()
-
-    test_set = data.loc[len(data) // 5 * 4:].copy()
-    train = data.loc[: len(data) // 5 * 4].copy()
-    trainsets.append(train)
-    testsets.append(test_set)
-    combined_sets.append(data.copy())
-
-
-if args.hyperparameter_search:
+if args.hyperparameter_search:  # training on training set, evaluation on test set
     sweep_id = wandb.sweep(wandb_config, project=f'{args.person_dir}_{args.config_name}')
-    wandb.agent(sweep_id, lambda config=None: train_model(trainsets, testsets, config=config))
+    wandb.agent(sweep_id, lambda cnfg=None: train_model(trainsets, testsets, device, config=cnfg))
 
 
-if args.test:
-    model = TimeSeriesRegressorWrapper(device=device, input_size=len(config.features), output_size=len(config.targets), **(config.to_dict()))
-
-    model.to(device)
-    dataset = TSDataset(trainsets, config.features, config.targets, sequence_len=125, device=device)
-    dataloader = TSDataLoader(dataset, batch_size=config.batch_size, shuffle=True, drop_last=True)
-
-    print('Training model...')
-    with tqdm(range(model.n_epochs)) as pbar:
-        for epoch in pbar:
-            pbar.set_description(f'Epoch {epoch}')
-            # for epoch in tqdm(range(model.n_epochs)):
-            if config.model_type == 'ActivationAndBiophys':
-                for param in model.model.biophys_model.parameters():
-                    param.requires_grad = False if epoch < config.biophys_config['n_freeze_epochs'] else True
-            train_loss = model.train_one_epoch(dataloader)
-            lr = model.scheduler.get_last_lr()[0]
-            # todo val_loss
-            model.scheduler.step(train_loss)  # Update the learning rate after each epoch
-            pbar.set_postfix({'lr': lr, 'loss': train_loss})
-            # print(f'Epoch {epoch}, lr: {lr}, loss: {train_loss}')
+if args.test:  # trains on the training set and saves the test set predictions
+    model = train_model(trainsets, testsets, device, mode='online', project='PCP_test', config=config.to_dict())
 
     for set_id, test_set in enumerate(testsets):
         val_pred = model.predict(test_set, config.features).squeeze(0).to('cpu').detach().numpy()
@@ -118,27 +67,8 @@ if args.test:
         test_set.to_parquet(join(data_dirs[set_id], f'pred_angles-{args.config_name}.parquet'))
 
 
-if args.save_model:
-    model = TimeSeriesRegressorWrapper(input_size=len(config.features), hidden_size=config.hidden_size,
-                                      output_size=len(config.targets), n_epochs=config.n_epochs,
-                                      seq_len=config.seq_len,
-                                      learning_rate=config.learning_rate,
-                                      warmup_steps=config.warmup_steps, num_layers=config.n_layers,
-                                      model_type=config.model_type)
-    model.to(device)
-    dataset = TSDataset(combined_sets, config.features, config.targets, sequence_len=125, device=device)
-    dataloader = TSDataLoader(dataset, batch_size=config.batch_size, shuffle=True, drop_last=True)
-
-    print('Training model...')
-    for epoch in tqdm(range(model.n_epochs)):
-        if config.model_type == 'ActivationAndBiophys':
-            for param in model.model.biophys_model.parameters():
-                param.requires_grad = False if epoch < config.biophys_config['n_freeze_epochs'] else True
-        train_loss = model.train_one_epoch(dataloader)
-        # todo val_loss
-        model.scheduler.step(train_loss)  # Update the learning rate after each epoch
-
-
+if args.save_model:  # trains on the whole dataset and saves the model
+    model = train_model(combined_sets, testsets, device, mode='online', project='PCP_save', config=config.to_dict())
 
     model.to(torch.device('cpu'))
     os.makedirs(join('data', args.person_dir, 'models'), exist_ok=True)
