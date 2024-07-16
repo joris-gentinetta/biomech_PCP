@@ -121,6 +121,11 @@ class DenseNet(TimeSeriesRegressor):
         return out, states
 
 
+class StatefulDenseNet(TimeSeriesRegressor):
+    pass
+    # todo
+
+
 class PhysMuscleModel(TimeSeriesRegressor):
     def __init__(self, input_size, output_size, device, **kwargs):
         super().__init__(input_size, output_size, device)
