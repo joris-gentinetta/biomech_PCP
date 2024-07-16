@@ -55,7 +55,7 @@ if args.test:  # trains on the training set and saves the test set predictions
     model = train_model(trainsets, testsets, device, mode='online', project='PCP_test', config=config.to_dict())
 
     for set_id, test_set in enumerate(testsets):
-        val_pred = model.predict(test_set, config.features).squeeze(0).to('cpu').detach().numpy()
+        val_pred = model.predict(test_set, config.features, config.targets).squeeze(0).to('cpu').detach().numpy()
 
         val_pred = np.clip(val_pred, -1, 1)
         test_set[config.targets] = val_pred
