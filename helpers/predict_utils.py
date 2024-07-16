@@ -104,7 +104,7 @@ def train_model(trainsets, testsets, device,  mode='online', project=None, confi
 def evaluate_model(model, testsets, device, config):
     losses = []
     for set_id, test_set in enumerate(testsets):
-        val_pred = model.predict(test_set, config.features).squeeze(0)
+        val_pred = model.predict(test_set, config.features, config.targets).squeeze(0)
         loss = model.criterion(val_pred[config.warmup_steps:],
                                     torch.tensor(test_set[config.targets].values, dtype=torch.float32)[
                                     config.warmup_steps:].to(device))

@@ -20,7 +20,7 @@ class TimeSeriesRegressor(nn.Module, ABC):
         self.device = device
 
     @abstractmethod
-    def get_starting_states(self, batch_size, x=None):
+    def get_starting_states(self, batch_size, y=None):
         pass
 
     @abstractmethod
@@ -45,7 +45,7 @@ class RNN(TimeSeriesRegressor):
             raise ValueError(f'Unknown RNN type {self.model_type}')
         self.fc = nn.Linear(self.hidden_size, self.output_size)
 
-    def get_starting_states(self, batch_size, x=None):
+    def get_starting_states(self, batch_size, y=None):
         if self.model_type == 'LSTM':
             states = (torch.zeros(self.n_layers, batch_size, self.hidden_size, dtype=torch.float, device=self.device),
                   torch.zeros(self.n_layers, batch_size, self.hidden_size, dtype=torch.float, device=self.device))
@@ -71,7 +71,7 @@ class CNN(TimeSeriesRegressor):
         else:
             self.fc = nn.Linear(self.hidden_size*10, self.output_size)
 
-    def get_starting_states(self, batch_size, x=None):
+    def get_starting_states(self, batch_size, y=None):
         return None
 
     def forward(self, x, states=None):
@@ -113,7 +113,7 @@ class DenseNet(TimeSeriesRegressor):
 
         self.model = nn.Sequential(*layers)
 
-    def get_starting_states(self, batch_size, x=None):
+    def get_starting_states(self, batch_size, y=None):
         return None
 
     def forward(self, x, states=None):
@@ -137,7 +137,7 @@ class PhysMuscleModel(TimeSeriesRegressor):
 
         self.model = Muscles(device=device, n_joints=output_size // 4)
 
-    def get_starting_states(self, batch_size, x=None):
+    def get_starting_states(self, batch_size, y=None):
         return None
 
     def forward(self, x, states):
@@ -161,9 +161,9 @@ class PhysJointModel(TimeSeriesRegressor):
 
         self.model = Joints(device=device, n_joints=output_size, dt=1 / SR, speed_mode=False)
 
-    def get_starting_states(self, batch_size, x=None):
-        theta = x[:, 0, :]
-        d_theta = (x[:, 1, :] - x[:, 0, :]) * SR
+    def get_starting_states(self, batch_size, y=None):
+        theta = y[:, 0, :]
+        d_theta = (y[:, 1, :] - y[:, 0, :]) * SR
         states = torch.stack([theta, d_theta], dim=2)
         return [states.unsqueeze(3) * self.model.M.unsqueeze(0).unsqueeze(2), states] # todo dimensions
 
@@ -205,8 +205,8 @@ class ModularModel(TimeSeriesRegressor):
         return modelclass(input_size, output_size, self.device, **config)
 
 
-    def get_starting_states(self, batch_size, x=None):
-        return [self.activation_model.get_starting_states(batch_size, x),  [self.muscle_model.get_starting_states(batch_size, x), self.joint_model.get_starting_states(batch_size, x)[0]], self.joint_model.get_starting_states(batch_size, x)[1]]
+    def get_starting_states(self, batch_size, y=None):
+        return [self.activation_model.get_starting_states(batch_size, y),  [self.muscle_model.get_starting_states(batch_size, y), self.joint_model.get_starting_states(batch_size, y)[0]], self.joint_model.get_starting_states(batch_size, y)[1]]
 
     def forward(self, x, states):
         out = torch.zeros((x.shape[0], x.shape[1], self.output_size), dtype=torch.float, device=self.device)
@@ -254,7 +254,7 @@ class TimeSeriesRegressorWrapper:
         self.model.train()
         epoch_loss = 0
         for x, y in dataloader:
-            states = self.model.get_starting_states(dataloader.batch_size, x)
+            states = self.model.get_starting_states(dataloader.batch_size, y)
             outputs, states = self.model(x, states)
 
             loss = self.criterion(outputs[:, self.warmup_steps:], y[:, self.warmup_steps:])
@@ -268,11 +268,12 @@ class TimeSeriesRegressorWrapper:
 
         return epoch_loss / len(dataloader)
 
-    def predict(self, test_set, features):
+    def predict(self, test_set, features, targets):
         self.model.eval()
         x = torch.tensor(test_set.loc[:, features].values, dtype=torch.float32).unsqueeze(0).to(self.device)
+        y = torch.tensor(test_set.loc[:, targets].values, dtype=torch.float32).unsqueeze(0).to(self.device)
         with torch.no_grad():
-            states = self.model.get_starting_states(1, x)
+            states = self.model.get_starting_states(1, y)
             y_pred, _ = self.model(x, states=states)
         return y_pred
 
