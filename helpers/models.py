@@ -122,9 +122,39 @@ class DenseNet(TimeSeriesRegressor):
 
 
 class StatefulDenseNet(TimeSeriesRegressor):
-    pass
-    # todo
+    def __init__(self, input_size, output_size, device, **kwargs):
+        super().__init__(input_size, output_size, device)
+        hidden_size = kwargs.get('hidden_size')
+        n_layers = kwargs.get('n_layers')
 
+        layers = []
+        layers.append(nn.Linear(self.input_size, hidden_size))
+        layers.append(nn.LeakyReLU())
+        layers.append(nn.Dropout(p=0.4))
+
+        for _ in range(n_layers - 1):
+            layers.append(nn.Linear(hidden_size, hidden_size))
+            layers.append(nn.LeakyReLU())
+            layers.append(nn.Dropout(p=0.4))
+
+        layers.append(nn.Linear(hidden_size, self.output_size))
+
+        self.model = nn.Sequential(*layers)
+
+    def get_starting_states(self, batch_size, y=None):
+        return y[:, 0:1, :]
+
+    def forward(self, x, states=None):
+        # out = self.model(x)
+        # states = states + out
+        # return states, states
+
+        out = torch.zeros((x.shape[0], x.shape[1], self.output_size), dtype=torch.float, device=self.device)
+        for i in range(x.shape[1]):
+            update = self.model(x[:, i:i+1, :])
+            states = states + update
+            out[:, i:i+1, :] = states
+        return out, states
 
 class PhysMuscleModel(TimeSeriesRegressor):
     def __init__(self, input_size, output_size, device, **kwargs):
@@ -192,6 +222,8 @@ class ModularModel(TimeSeriesRegressor):
     def get_model(self, input_size, output_size, config):
         if config['model_type'] == 'DenseNet':
             modelclass = DenseNet
+        elif config['model_type'] == 'StatefulDenseNet':
+            modelclass = StatefulDenseNet
         elif config['model_type'] == 'CNN':
             modelclass = CNN
         elif config['model_type'] in ['RNN', 'LSTM', 'GRU']:
@@ -225,6 +257,8 @@ class TimeSeriesRegressorWrapper:
 
         if model_type == 'DenseNet':
             self.model = DenseNet(input_size, output_size, device, **kwargs)
+        elif model_type == 'StatefulDenseNet':
+            self.model = StatefulDenseNet(input_size, output_size, device, **kwargs)
         elif model_type == 'CNN':
             self.model = CNN(input_size, output_size, device, **kwargs)
         elif model_type in ['RNN', 'LSTM', 'GRU']:
