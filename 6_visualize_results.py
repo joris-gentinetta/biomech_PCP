@@ -3,6 +3,7 @@ import pybullet as p
 import cv2
 import argparse
 from os.path import join, exists
+import time
 multiplier = 1.05851325
 offset = 0.72349796
 
@@ -129,8 +130,12 @@ if __name__ == "__main__":
             if i == 0:
                 cv2.waitKey(0)
 
-        for i in range(20):
+        # for i in range(20):
+        #     p.stepSimulation()
+        t = time.time()
+        while time.time() - t < 1/60:
             p.stepSimulation()
+
     if args.video:
         cap.release()
         cv2.destroyAllWindows()
