@@ -47,27 +47,27 @@ The `4_train.py` script is used for training a time-series model on EMG data, pr
    To visualize the data for exploration, use the `--visualize` argument. This will plot the features and targets for the specified person.
 
    ```bash
-   python 4_train.py --person_dir A_1 --intact_hand Left --config_name simple_GRU --visualize
+   python 4_train.py --person_dir A_1 --intact_hand Left --config_name statefulDenseNet --visualize
    ```
 
 2. **Hyperparameter Search**
 
    To perform a hyperparameter search, use the `--hyperparameter_search` argument. This will run a sweep using the configuration specified in the YAML file.
    ```bash
-   python 4_train.py --person_dir A_1 --intact_hand Left --config_name simple_GRU --hyperparameter_search
+   python 4_train.py --person_dir A_1 --intact_hand Left --config_name statefulDenseNet --hyperparameter_search
    ```
 
 3. **Testing the Model**
 
    To test the model, use the --test argument. This will train the model on the training set and evaluate it on the test set.   
    ```bash
-   python 4_train.py --person_dir A_1 --intact_hand Left --config_name simple_GRU --test
+   python 4_train.py --person_dir A_1 --intact_hand Left --config_name statefulDenseNet --test
    ```
    
 4. **Saving the Model**
    To save the trained model, use the --save_model argument. This will save the model to the specified directory.
    ```bash
-   python 4_train.py --person_dir A_1 --intact_hand Left --config_name simple_GRU --save_model
+   python 4_train.py --person_dir A_1 --intact_hand Left --config_name statefulDenseNet --save_model
    ```
 
 ### 6. Visualize the model output on the test data with `6_visualize_results.py`
@@ -82,6 +82,6 @@ These are the command line arguments that you can use to customize the behavior 
 
 Example:
 ```bash
-python 6_visualize_results.py --data_dir data/A_1/recordings/minJerk/pinchCloseOpen --experiment_name 1 --intact_hand Left --config_name simple_GRU
+python 6_visualize_results.py --data_dir data/A_1/recordings/minJerk/pinchCloseOpen --experiment_name 1 --intact_hand Left --config_name statefulDenseNet
 ```
 
