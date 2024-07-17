@@ -36,9 +36,9 @@ parameters:
   model_type:
     value: StatefulDenseNet
   n_epochs:
-    value: 20
+    value: 30
   n_layers:
-    value: 1
+    value: 4
   seq_len:
     value: 125
   targets:
@@ -54,7 +54,7 @@ parameters:
   warmup_steps:
     value: 10
   batch_size:
-    value: 2
+    value: 8
 
   activation_model:
     value: {model_type: DenseNet,

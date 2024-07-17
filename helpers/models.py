@@ -145,13 +145,41 @@ class StatefulDenseNet(TimeSeriesRegressor):
         return y[:, 0:1, :]
 
     def forward(self, x, states=None):
-        # out = self.model(x)
-        # states = states + out
-        # return states, states
-
         out = torch.zeros((x.shape[0], x.shape[1], self.output_size), dtype=torch.float, device=self.device)
         for i in range(x.shape[1]):
             update = self.model(x[:, i:i+1, :])
+            states = states + update
+            out[:, i:i+1, :] = states
+        return out, states
+
+
+class StateAwareDenseNet(TimeSeriesRegressor):
+    def __init__(self, input_size, output_size, device, **kwargs):
+        super().__init__(input_size, output_size, device)
+        hidden_size = kwargs.get('hidden_size')
+        n_layers = kwargs.get('n_layers')
+
+        layers = []
+        layers.append(nn.Linear(self.input_size + self.output_size, hidden_size))
+        layers.append(nn.LeakyReLU())
+        layers.append(nn.Dropout(p=0.4))
+
+        for _ in range(n_layers - 1):
+            layers.append(nn.Linear(hidden_size, hidden_size))
+            layers.append(nn.LeakyReLU())
+            layers.append(nn.Dropout(p=0.4))
+
+        layers.append(nn.Linear(hidden_size, self.output_size))
+
+        self.model = nn.Sequential(*layers)
+
+    def get_starting_states(self, batch_size, y=None):
+        return y[:, 0:1, :]
+
+    def forward(self, x, states=None):
+        out = torch.zeros((x.shape[0], x.shape[1], self.output_size), dtype=torch.float, device=self.device)
+        for i in range(x.shape[1]):
+            update = self.model(torch.cat((x[:, i:i+1, :], states), dim=2))
             states = states + update
             out[:, i:i+1, :] = states
         return out, states
@@ -236,7 +264,6 @@ class ModularModel(TimeSeriesRegressor):
             raise ValueError(f'Unknown model type {config["model_type"]}')
         return modelclass(input_size, output_size, self.device, **config)
 
-
     def get_starting_states(self, batch_size, y=None):
         return [self.activation_model.get_starting_states(batch_size, y),  [self.muscle_model.get_starting_states(batch_size, y), self.joint_model.get_starting_states(batch_size, y)[0]], self.joint_model.get_starting_states(batch_size, y)[1]]
 
@@ -246,7 +273,7 @@ class ModularModel(TimeSeriesRegressor):
             activation_out, states[0] = self.activation_model(x[:, i:i+1, :], states[0])
             activation_out = self.sigmoid(activation_out)
             muscle_out, states[1][0] = self.muscle_model(activation_out, states[1])
-            out[:, i:i+1, :], states[1][1], states[2] = self.joint_model(muscle_out, states[2])
+            out[:, i:i+1, :], states[1][1],  states[2] = self.joint_model(muscle_out, states[2])
 
         return out, states
 
@@ -259,6 +286,8 @@ class TimeSeriesRegressorWrapper:
             self.model = DenseNet(input_size, output_size, device, **kwargs)
         elif model_type == 'StatefulDenseNet':
             self.model = StatefulDenseNet(input_size, output_size, device, **kwargs)
+        elif model_type == 'StateAwareDenseNet':
+            self.model = StateAwareDenseNet(input_size, output_size, device, **kwargs)
         elif model_type == 'CNN':
             self.model = CNN(input_size, output_size, device, **kwargs)
         elif model_type in ['RNN', 'LSTM', 'GRU']:
