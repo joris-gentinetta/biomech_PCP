@@ -52,7 +52,7 @@ if args.hyperparameter_search:  # training on training set, evaluation on test s
 
 
 if args.test:  # trains on the training set and saves the test set predictions
-    model = train_model(trainsets, testsets, device, mode='online', project='PCP_test', config=config.to_dict())
+    model = train_model(trainsets, testsets, device, mode='online', project='PCP_test_2', config=config.to_dict())
 
     for set_id, test_set in enumerate(testsets):
         val_pred = model.predict(test_set, config.features, config.targets).squeeze(0).to('cpu').detach().numpy()

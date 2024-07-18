@@ -34,6 +34,7 @@ class RNN(TimeSeriesRegressor):
         self.model_type = kwargs.get('model_type')
         self.hidden_size = kwargs.get('hidden_size')
         self.n_layers = kwargs.get('n_layers')
+        self.predict_update = kwargs.get('predict_update')
 
         if self.model_type == 'RNN':
             self.rnn = nn.RNN(self.input_size, self.hidden_size, self.n_layers, batch_first=True)
@@ -51,12 +52,25 @@ class RNN(TimeSeriesRegressor):
                   torch.zeros(self.n_layers, batch_size, self.hidden_size, dtype=torch.float, device=self.device))
         else:
             states = torch.zeros(self.n_layers, batch_size, self.hidden_size, dtype=torch.float, device=self.device)
-        return states
+        if self.predict_update:
+            return [states, y[:, 0:1, :]]
+        else:
+            return states
 
     def forward(self, x, states):
-        out, states = self.rnn(x, states)
-        out = self.fc(out)
+        if self.predict_update:
+            out = torch.zeros((x.shape[0], x.shape[1], self.output_size), dtype=torch.float, device=self.device)
+            for i in range(x.shape[1]):
+                update, states[0] = self.rnn(x[:, i:i + 1, :], states[0])
+                update = self.fc(update)
+
+                states[1] = states[1] + update
+                out[:, i:i + 1, :] = states[1]
+        else:
+            out, states = self.rnn(x, states)
+            out = self.fc(out)
         return out, states
+
 
 
 class CNN(TimeSeriesRegressor):
@@ -120,6 +134,11 @@ class DenseNet(TimeSeriesRegressor):
         out = self.model(x)
         return out, states
 
+    # def forward(self, x, states=None):
+    #     out = torch.zeros((x.shape[0], x.shape[1], self.output_size), dtype=torch.float, device=self.device)
+    #     for i in range(x.shape[1]):
+    #         out[:, i:i+1, :] = self.model(x[:, i:i+1, :])
+    #     return out, states
 
 class StatefulDenseNet(TimeSeriesRegressor):
     def __init__(self, input_size, output_size, device, **kwargs):
@@ -179,10 +198,22 @@ class StateAwareDenseNet(TimeSeriesRegressor):
     def forward(self, x, states=None):
         out = torch.zeros((x.shape[0], x.shape[1], self.output_size), dtype=torch.float, device=self.device)
         for i in range(x.shape[1]):
-            update = self.model(torch.cat((x[:, i:i+1, :], states), dim=2))
-            states = states + update
+            states = self.model(torch.cat((x[:, i:i+1, :], states), dim=2))
             out[:, i:i+1, :] = states
         return out, states
+
+
+class IdealModel(TimeSeriesRegressor):
+    def __init__(self, input_size, output_size, device, **kwargs):
+        super().__init__(input_size, output_size, device)
+        self.placeholder = nn.Parameter(torch.ones(1, device=device))
+
+    def get_starting_states(self, batch_size, y=None):
+        return y
+
+    def forward(self, x, states=None):
+        return states * self.placeholder, states
+
 
 class PhysMuscleModel(TimeSeriesRegressor):
     def __init__(self, input_size, output_size, device, **kwargs):
@@ -282,6 +313,8 @@ class ModularModel(TimeSeriesRegressor):
 class TimeSeriesRegressorWrapper:
     def __init__(self, input_size, output_size, device, n_epochs, seq_len, learning_rate, warmup_steps, model_type, **kwargs):
 
+        kwargs.update({'model_type': model_type})
+
         if model_type == 'DenseNet':
             self.model = DenseNet(input_size, output_size, device, **kwargs)
         elif model_type == 'StatefulDenseNet':
@@ -294,6 +327,8 @@ class TimeSeriesRegressorWrapper:
             self.model = RNN(input_size, output_size, device, **kwargs)
         elif model_type == 'ModularModel':
             self.model = ModularModel(input_size, output_size, device, **kwargs)
+        elif model_type == 'IdealModel':
+            self.model = IdealModel(input_size, output_size, device, **kwargs)
         else:
             raise ValueError(f'Unknown model type {model_type}')
 

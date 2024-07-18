@@ -63,8 +63,6 @@ def train_model(trainsets, testsets, device,  mode='online', project=None, confi
         dataloader = TSDataLoader(dataset, batch_size=config.batch_size, shuffle=True, drop_last=True)
 
         best_val_loss = float('inf')
-        best_epoch = 0
-
         early_stopper = EarlyStopper(patience=config.early_stopping_patience, min_delta=config.early_stopping_delta)
         print('Training model...')
         with tqdm(range(model.n_epochs)) as pbar:
@@ -80,7 +78,7 @@ def train_model(trainsets, testsets, device,  mode='online', project=None, confi
                 val_loss, val_losses = evaluate_model(model, testsets, device, config)
                 if val_loss < best_val_loss:
                     best_val_loss = val_loss
-                    wandb.run.summary['best_epoch'] = best_epoch
+                    wandb.run.summary['best_epoch'] = epoch
                     wandb.run.summary['best_val_loss'] = best_val_loss
                 wandb.run.summary['used_epochs'] = epoch
 
