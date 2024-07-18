@@ -24,6 +24,12 @@ conda activate PCP
 pip install -r requirements.txt
 ```
 
+5. Install the local 'dynamics' package:
+
+```bash
+pip install -e dynamics
+```
+
 ## Scripts
 
 ### 0.1. EMG Board Setup
