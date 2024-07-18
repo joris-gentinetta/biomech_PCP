@@ -34,7 +34,10 @@ class RNN(TimeSeriesRegressor):
         self.model_type = kwargs.get('model_type')
         self.hidden_size = kwargs.get('hidden_size')
         self.n_layers = kwargs.get('n_layers')
-        self.predict_update = kwargs.get('predict_update')
+        self.mode = kwargs.get('mode', None)
+
+        if self.mode == 'stateAware':
+            self.input_size += output_size
 
         if self.model_type == 'RNN':
             self.rnn = nn.RNN(self.input_size, self.hidden_size, self.n_layers, batch_first=True)
@@ -52,23 +55,31 @@ class RNN(TimeSeriesRegressor):
                   torch.zeros(self.n_layers, batch_size, self.hidden_size, dtype=torch.float, device=self.device))
         else:
             states = torch.zeros(self.n_layers, batch_size, self.hidden_size, dtype=torch.float, device=self.device)
-        if self.predict_update:
+
+        if self.mode == 'stateful' or self.mode == 'stateAware':
             return [states, y[:, 0:1, :]]
         else:
             return states
 
     def forward(self, x, states):
-        if self.predict_update:
+        if self.mode == 'stateful':
             out = torch.zeros((x.shape[0], x.shape[1], self.output_size), dtype=torch.float, device=self.device)
             for i in range(x.shape[1]):
                 update, states[0] = self.rnn(x[:, i:i + 1, :], states[0])
                 update = self.fc(update)
-
                 states[1] = states[1] + update
                 out[:, i:i + 1, :] = states[1]
+
+        elif self.mode == 'stateAware':
+            out = torch.zeros((x.shape[0], x.shape[1], self.output_size), dtype=torch.float, device=self.device)
+            for i in range(x.shape[1]):
+                pred, states[0] = self.rnn(torch.cat((x[:, i:i + 1, :], states[1]), dim=2), states[0])
+                out[:, i:i + 1, :] = self.fc(pred)
+
         else:
             out, states = self.rnn(x, states)
             out = self.fc(out)
+
         return out, states
 
 
@@ -113,6 +124,10 @@ class DenseNet(TimeSeriesRegressor):
         hidden_size = kwargs.get('hidden_size')
         n_layers = kwargs.get('n_layers')
 
+        self.mode = kwargs.get('mode', None)
+        if self.mode == 'stateAware':
+            self.input_size += output_size
+
         layers = []
         layers.append(nn.Linear(self.input_size, hidden_size))
         layers.append(nn.LeakyReLU())
@@ -128,78 +143,26 @@ class DenseNet(TimeSeriesRegressor):
         self.model = nn.Sequential(*layers)
 
     def get_starting_states(self, batch_size, y=None):
-        return None
+        if self.mode == 'stateful' or self.mode == 'stateAware':
+            return y[:, 0:1, :]
+        else:
+            return None
 
     def forward(self, x, states=None):
+        if self.mode == 'stateful':
+            out = torch.zeros((x.shape[0], x.shape[1], self.output_size), dtype=torch.float, device=self.device)
+            for i in range(x.shape[1]):
+                update = self.model(x[:, i:i+1, :])
+                states = states + update
+                out[:, i:i+1, :] = states
+
+        elif self.mode == 'stateAware':
+            out = torch.zeros((x.shape[0], x.shape[1], self.output_size), dtype=torch.float, device=self.device)
+            for i in range(x.shape[1]):
+                states = self.model(torch.cat((x[:, i:i+1, :], states), dim=2))
+                out[:, i:i+1, :] = states
+
         out = self.model(x)
-        return out, states
-
-    # def forward(self, x, states=None):
-    #     out = torch.zeros((x.shape[0], x.shape[1], self.output_size), dtype=torch.float, device=self.device)
-    #     for i in range(x.shape[1]):
-    #         out[:, i:i+1, :] = self.model(x[:, i:i+1, :])
-    #     return out, states
-
-class StatefulDenseNet(TimeSeriesRegressor):
-    def __init__(self, input_size, output_size, device, **kwargs):
-        super().__init__(input_size, output_size, device)
-        hidden_size = kwargs.get('hidden_size')
-        n_layers = kwargs.get('n_layers')
-
-        layers = []
-        layers.append(nn.Linear(self.input_size, hidden_size))
-        layers.append(nn.LeakyReLU())
-        layers.append(nn.Dropout(p=0.4))
-
-        for _ in range(n_layers - 1):
-            layers.append(nn.Linear(hidden_size, hidden_size))
-            layers.append(nn.LeakyReLU())
-            layers.append(nn.Dropout(p=0.4))
-
-        layers.append(nn.Linear(hidden_size, self.output_size))
-
-        self.model = nn.Sequential(*layers)
-
-    def get_starting_states(self, batch_size, y=None):
-        return y[:, 0:1, :]
-
-    def forward(self, x, states=None):
-        out = torch.zeros((x.shape[0], x.shape[1], self.output_size), dtype=torch.float, device=self.device)
-        for i in range(x.shape[1]):
-            update = self.model(x[:, i:i+1, :])
-            states = states + update
-            out[:, i:i+1, :] = states
-        return out, states
-
-
-class StateAwareDenseNet(TimeSeriesRegressor):
-    def __init__(self, input_size, output_size, device, **kwargs):
-        super().__init__(input_size, output_size, device)
-        hidden_size = kwargs.get('hidden_size')
-        n_layers = kwargs.get('n_layers')
-
-        layers = []
-        layers.append(nn.Linear(self.input_size + self.output_size, hidden_size))
-        layers.append(nn.LeakyReLU())
-        layers.append(nn.Dropout(p=0.4))
-
-        for _ in range(n_layers - 1):
-            layers.append(nn.Linear(hidden_size, hidden_size))
-            layers.append(nn.LeakyReLU())
-            layers.append(nn.Dropout(p=0.4))
-
-        layers.append(nn.Linear(hidden_size, self.output_size))
-
-        self.model = nn.Sequential(*layers)
-
-    def get_starting_states(self, batch_size, y=None):
-        return y[:, 0:1, :]
-
-    def forward(self, x, states=None):
-        out = torch.zeros((x.shape[0], x.shape[1], self.output_size), dtype=torch.float, device=self.device)
-        for i in range(x.shape[1]):
-            states = self.model(torch.cat((x[:, i:i+1, :], states), dim=2))
-            out[:, i:i+1, :] = states
         return out, states
 
 

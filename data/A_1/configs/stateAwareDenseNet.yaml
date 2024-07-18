@@ -34,7 +34,9 @@ parameters:
   learning_rate:
     value: 0.01
   model_type:
-    value: StateAwareDenseNet
+    value: DenseNet
+  mode:
+    value: stateAware
   n_epochs:
     value: 150
   n_layers:
