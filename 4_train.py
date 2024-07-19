@@ -4,14 +4,10 @@ import os
 import yaml
 os.environ['PYTORCH_ENABLE_MPS_FALLBACK'] = '1'
 import torch
-from helpers.models import TimeSeriesRegressorWrapper
-import matplotlib.pyplot as plt
 import numpy as np
 from os.path import join
-import pandas as pd
 import wandb
-from tqdm import tqdm
-from helpers.predict_utils import Config, get_data, train_model, TSDataset, TSDataLoader
+from helpers.predict_utils import Config, get_data, train_model
 
 
 parser = argparse.ArgumentParser(description='Timeseries data analysis')
@@ -22,6 +18,7 @@ parser.add_argument('-v', '--visualize', action='store_true', help='Plot data ex
 parser.add_argument('-hs', '--hyperparameter_search', action='store_true', help='Perform hyperparameter search')
 parser.add_argument('-t', '--test', action='store_true', help='Test the model')
 parser.add_argument('-s', '--save_model', action='store_true', help='Save a model')
+parser.add_argument('--wandb_project', type=str, default='PCP', help='Wandb project name')
 args = parser.parse_args()
 
 sampling_frequency = 60
@@ -52,7 +49,7 @@ if args.hyperparameter_search:  # training on training set, evaluation on test s
 
 
 if args.test:  # trains on the training set and saves the test set predictions
-    model = train_model(trainsets, testsets, device, mode='online', project='PCP_test_2', config=config.to_dict())
+    model = train_model(trainsets, testsets, device, mode=config.wandb_mode, project=args.wandb_project, config=config.to_dict())
 
     for set_id, test_set in enumerate(testsets):
         val_pred = model.predict(test_set, config.features, config.targets).squeeze(0).to('cpu').detach().numpy()
@@ -68,8 +65,8 @@ if args.test:  # trains on the training set and saves the test set predictions
 
 
 if args.save_model:  # trains on the whole dataset and saves the model
-    model = train_model(combined_sets, testsets, device, mode='online', project='PCP_save', config=config.to_dict())
+    model = train_model(combined_sets, testsets, device, mode=config.wandb_mode, project='PCP_save', config=config.to_dict())
 
     model.to(torch.device('cpu'))
     os.makedirs(join('data', args.person_dir, 'models'), exist_ok=True)
-    model.save(join('data', args.person_dir, 'models', f'{args.config_name}.pt'))
+    model.save(join('data', args.person_dir, 'models', f'{config.model_name}.pt'))

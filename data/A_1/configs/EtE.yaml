@@ -1,7 +1,9 @@
 method: grid
+
 metric:
   goal: minimize
   name: mean_best_val_loss
+
 parameters:
   recordings:
     value:
@@ -15,6 +17,7 @@ parameters:
     - minJerk/indexFlexDigtisEx
     - minJerk/wristFlexHandClose
     - minJerk/digitsFlEx
+
   features:
     value:
     - [emg, '0']
@@ -25,24 +28,25 @@ parameters:
     - [emg, '8']
     - [emg, '10']
     - [emg, '11']
+
   early_stopping_patience:
-    value: 1000
+    value: 15
+
   early_stopping_delta:
     value: 0.0
-  hidden_size:
-    value: 20
+
   learning_rate:
     value: 0.01
-  model_type:
-    value: DenseNet
-  mode:
-    value: stateful
+
   n_epochs:
-    value: 150
-  n_layers:
-    value: 4
+    value: 100
+
   seq_len:
-    value: 125
+    values:
+    - 20
+    - 60
+    - 120
+
   targets:
     value:
     - [Left, indexAng]
@@ -53,21 +57,24 @@ parameters:
     - [Left, thumbOutPlaneAng]
     - [Left, wristRot]
     - [Left, wristFlex]
+
   warmup_steps:
     value: 10
+
   batch_size:
     value: 8
 
-  activation_model:
-    value: {model_type: DenseNet,
-            hidden_size: 100,
-            n_layers: 4,}
+  wandb_mode:
+    value: online
 
-  muscle_model:
-    value: {model_type: PhysMuscleModel
-#      n_freeze_epochs: 5,
-      }
-  joint_model:
-    value: {model_type: PhysJointModel
-#      n_freeze_epochs: 5,
-      }
+  model_name:
+    None
+
+  model_type:
+    value: GRU
+
+  hidden_size:
+    value: 20
+
+  n_layers:
+    value: 4

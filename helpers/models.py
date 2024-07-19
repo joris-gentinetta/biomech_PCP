@@ -162,7 +162,9 @@ class DenseNet(TimeSeriesRegressor):
                 states = self.model(torch.cat((x[:, i:i+1, :], states), dim=2))
                 out[:, i:i+1, :] = states
 
-        out = self.model(x)
+        else:
+            out = self.model(x)
+
         return out, states
 
 
@@ -244,8 +246,6 @@ class ModularModel(TimeSeriesRegressor):
     def get_model(self, input_size, output_size, config):
         if config['model_type'] == 'DenseNet':
             modelclass = DenseNet
-        elif config['model_type'] == 'StatefulDenseNet':
-            modelclass = StatefulDenseNet
         elif config['model_type'] == 'CNN':
             modelclass = CNN
         elif config['model_type'] in ['RNN', 'LSTM', 'GRU']:
@@ -274,16 +274,12 @@ class ModularModel(TimeSeriesRegressor):
 
 
 class TimeSeriesRegressorWrapper:
-    def __init__(self, input_size, output_size, device, n_epochs, seq_len, learning_rate, warmup_steps, model_type, **kwargs):
+    def __init__(self, input_size, output_size, device, n_epochs, learning_rate, warmup_steps, model_type, **kwargs):
 
         kwargs.update({'model_type': model_type})
 
         if model_type == 'DenseNet':
             self.model = DenseNet(input_size, output_size, device, **kwargs)
-        elif model_type == 'StatefulDenseNet':
-            self.model = StatefulDenseNet(input_size, output_size, device, **kwargs)
-        elif model_type == 'StateAwareDenseNet':
-            self.model = StateAwareDenseNet(input_size, output_size, device, **kwargs)
         elif model_type == 'CNN':
             self.model = CNN(input_size, output_size, device, **kwargs)
         elif model_type in ['RNN', 'LSTM', 'GRU']:
@@ -301,7 +297,7 @@ class TimeSeriesRegressorWrapper:
 
 
         self.n_epochs = n_epochs
-        self.seq_len = seq_len
+        # self.seq_len = seq_len
         self.warmup_steps = warmup_steps
 
     def save(self, path):

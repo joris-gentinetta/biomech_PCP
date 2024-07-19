@@ -52,14 +52,14 @@ def get_data(config, data_dirs, intact_hand, visualize=False):
 
 
 def train_model(trainsets, testsets, device,  mode='online', project=None, config=None):
-    with wandb.init(mode=mode, project=project, config=config):
+    with wandb.init(mode=mode, project=project, config=config, name=config.model_name):
         # if mode != 'disabled':
         config = wandb.config
 
         model = TimeSeriesRegressorWrapper(device=device, input_size=len(config.features), output_size=len(config.targets), **config)
         model.to(device)
 
-        dataset = TSDataset(trainsets, config.features, config.targets, sequence_len=125, device=device)
+        dataset = TSDataset(trainsets, config.features, config.targets, sequence_len=config.seq_len, device=device)
         dataloader = TSDataLoader(dataset, batch_size=config.batch_size, shuffle=True, drop_last=True)
 
         best_val_loss = float('inf')
