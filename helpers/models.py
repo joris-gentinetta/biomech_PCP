@@ -34,9 +34,9 @@ class RNN(TimeSeriesRegressor):
         self.model_type = kwargs.get('model_type')
         self.hidden_size = kwargs.get('hidden_size')
         self.n_layers = kwargs.get('n_layers')
-        self.mode = kwargs.get('mode', None)
+        self.state_mode = kwargs.get('state_mode', None)
 
-        if self.mode == 'stateAware':
+        if self.state_mode == 'stateAware':
             self.input_size += output_size
 
         if self.model_type == 'RNN':
@@ -56,13 +56,13 @@ class RNN(TimeSeriesRegressor):
         else:
             states = torch.zeros(self.n_layers, batch_size, self.hidden_size, dtype=torch.float, device=self.device)
 
-        if self.mode == 'stateful' or self.mode == 'stateAware':
+        if self.state_mode == 'stateful' or self.state_mode == 'stateAware':
             return [states, y[:, 0:1, :]]
         else:
             return states
 
     def forward(self, x, states):
-        if self.mode == 'stateful':
+        if self.state_mode == 'stateful':
             out = torch.zeros((x.shape[0], x.shape[1], self.output_size), dtype=torch.float, device=self.device)
             for i in range(x.shape[1]):
                 update, states[0] = self.rnn(x[:, i:i + 1, :], states[0])
@@ -70,7 +70,7 @@ class RNN(TimeSeriesRegressor):
                 states[1] = states[1] + update
                 out[:, i:i + 1, :] = states[1]
 
-        elif self.mode == 'stateAware':
+        elif self.state_mode == 'stateAware':
             out = torch.zeros((x.shape[0], x.shape[1], self.output_size), dtype=torch.float, device=self.device)
             for i in range(x.shape[1]):
                 pred, states[0] = self.rnn(torch.cat((x[:, i:i + 1, :], states[1]), dim=2), states[0])
@@ -124,8 +124,8 @@ class DenseNet(TimeSeriesRegressor):
         hidden_size = kwargs.get('hidden_size')
         n_layers = kwargs.get('n_layers')
 
-        self.mode = kwargs.get('mode', None)
-        if self.mode == 'stateAware':
+        self.state_mode = kwargs.get('state_mode', None)
+        if self.state_mode == 'stateAware':
             self.input_size += output_size
 
         layers = []
@@ -143,20 +143,20 @@ class DenseNet(TimeSeriesRegressor):
         self.model = nn.Sequential(*layers)
 
     def get_starting_states(self, batch_size, y=None):
-        if self.mode == 'stateful' or self.mode == 'stateAware':
+        if self.state_mode == 'stateful' or self.state_mode == 'stateAware':
             return y[:, 0:1, :]
         else:
             return None
 
     def forward(self, x, states=None):
-        if self.mode == 'stateful':
+        if self.state_mode == 'stateful':
             out = torch.zeros((x.shape[0], x.shape[1], self.output_size), dtype=torch.float, device=self.device)
             for i in range(x.shape[1]):
                 update = self.model(x[:, i:i+1, :])
                 states = states + update
                 out[:, i:i+1, :] = states
 
-        elif self.mode == 'stateAware':
+        elif self.state_mode == 'stateAware':
             out = torch.zeros((x.shape[0], x.shape[1], self.output_size), dtype=torch.float, device=self.device)
             for i in range(x.shape[1]):
                 states = self.model(torch.cat((x[:, i:i+1, :], states), dim=2))

@@ -68,7 +68,7 @@ parameters:
     value: online
 
   model_name:
-    None
+    value: sandbox
 
   model_type:
     value: ModularModel

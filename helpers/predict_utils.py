@@ -51,15 +51,14 @@ def get_data(config, data_dirs, intact_hand, visualize=False):
     return trainsets, testsets, combined_sets
 
 
-def train_model(trainsets, testsets, device,  mode='online', project=None, config=None):
-    with wandb.init(mode=mode, project=project, config=config, name=config.model_name):
-        # if mode != 'disabled':
+def train_model(trainsets, testsets, device, wandb_mode, wandb_project, wandb_name):
+    with wandb.init(mode=wandb_mode, project=wandb_project, name=wandb_name):
         config = wandb.config
 
         model = TimeSeriesRegressorWrapper(device=device, input_size=len(config.features), output_size=len(config.targets), **config)
         model.to(device)
 
-        dataset = TSDataset(trainsets, config.features, config.targets, sequence_len=config.seq_len, device=device)
+        dataset = TSDataset(trainsets, config.features, config.targets, seq_len=config.seq_len, device=device)
         dataloader = TSDataLoader(dataset, batch_size=config.batch_size, shuffle=True, drop_last=True)
 
         best_val_loss = float('inf')
@@ -133,6 +132,7 @@ class EarlyStopper:
 
 class Config:
     def __init__(self, dictionary):
+        setattr(self, 'name', dictionary['name'])
         for key, value in dictionary['parameters'].items():
             for key_2, value_2 in value.items():
                 if isinstance(value_2, list):
@@ -146,25 +146,23 @@ class Config:
 
 
 class TSDataset(Dataset):
-    def __init__(self, data_sources, features, targets, sequence_len, device, index_shift=0, dummy_labels=False):
+    def __init__(self, data_sources, features, targets, seq_len, device, index_shift=0, dummy_labels=False):
         self.data_sources = data_sources
         for i in range(len(self.data_sources)):
             self.data_sources[i] = self.data_sources[i].astype('float32')
             self.data_sources[i] = self.data_sources[i].reset_index(drop=True)
         self.features = features
         self.targets = targets
-        self.sequence_len = sequence_len
+        self.seq_len = seq_len
         self.index_shift = index_shift
-        # self.lengths = [len(data) - 2 * self.sequence_len for data in self.data_sources]
-        self.lengths = [len(data) // self.sequence_len - 1 for data in self.data_sources]
+        # self.lengths = [len(data) - 2 * self.seq_len for data in self.data_sources]
+        self.lengths = [len(data) // self.seq_len - 1 for data in self.data_sources]
         self.starts = [0] + [sum(self.lengths[:i]) for i in range(1, len(self.lengths))]
         self.dummy_labels = dummy_labels
         self.device = device
 
-
     def __len__(self):
         return sum(self.lengths)
-
 
     def __getitem__(self, idx):
         set_idx = -1
@@ -173,8 +171,8 @@ class TSDataset(Dataset):
                 break
             set_idx += 1
         idx = idx - self.starts[set_idx]
-        x = torch.tensor(self.data_sources[set_idx].loc[idx * self.sequence_len + self.index_shift: (idx + 1) * self.sequence_len + self.index_shift - 1, self.features].values, dtype=torch.float32, device=self.device)
-        y = torch.tensor(self.data_sources[set_idx].loc[idx * self.sequence_len + self.index_shift: (idx + 1) * self.sequence_len + self.index_shift - 1, self.targets].values, dtype=torch.float32, device=self.device)
+        x = torch.tensor(self.data_sources[set_idx].loc[idx * self.seq_len + self.index_shift: (idx + 1) * self.seq_len + self.index_shift - 1, self.features].values, dtype=torch.float32, device=self.device)
+        y = torch.tensor(self.data_sources[set_idx].loc[idx * self.seq_len + self.index_shift: (idx + 1) * self.seq_len + self.index_shift - 1, self.targets].values, dtype=torch.float32, device=self.device)
         if self.dummy_labels:
             l = torch.ones_like(y, dtype=torch.float32, device=self.device)
             return x, y, l
@@ -191,5 +189,5 @@ class TSDataLoader(DataLoader):
         super().__init__(*args, **kwargs)
 
     def __iter__(self):
-        self.dataset.set_index_shift(random.randint(0, self.dataset.sequence_len))
+        self.dataset.set_index_shift(random.randint(0, self.dataset.seq_len))
         return super().__iter__()

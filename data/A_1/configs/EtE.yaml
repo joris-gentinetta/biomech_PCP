@@ -1,3 +1,4 @@
+name: SL-2
 method: grid
 
 metric:
@@ -67,11 +68,19 @@ parameters:
   wandb_mode:
     value: online
 
-  model_name:
-    None
+  wandb_project:
+    value: PCP-SL
 
   model_type:
-    value: GRU
+    values:
+    - GRU
+    - DenseNet
+
+  state_mode:
+    values:
+    - stateless
+    - stateful
+    - stateAware
 
   hidden_size:
     value: 20
