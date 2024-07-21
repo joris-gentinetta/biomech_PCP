@@ -22,4 +22,7 @@ pyzmq
 scipy
 pillow
 pyyaml
+
+einops
+simple-parsing
 -e dynamics

@@ -1,3 +1,5 @@
+import os
+
 import wandb
 import torch
 from torch.utils.data import Dataset, DataLoader
@@ -51,14 +53,33 @@ def get_data(config, data_dirs, intact_hand, visualize=False):
     return trainsets, testsets, combined_sets
 
 
-def train_model(trainsets, testsets, device, wandb_mode, wandb_project, wandb_name):
-    with wandb.init(mode=wandb_mode, project=wandb_project, name=wandb_name):
+def get_dataNP(config, data_dirs, intact_hand, visualize=False):
+    data_folder = '/Users/jg/projects/biomech/BCI_ALVI_challenge/dataset_v2_blocks/amputant/left/fedya_tropin_standart_elbow_left/preproc_angles'
+    trainsets = []
+    combined_sets = []
+    for d in os.listdir(join(data_folder, 'train')):
+        trainsets.append(dict(np.load(join(data_folder, 'train', d))))
+        combined_sets.append(dict(np.load(join(data_folder, 'train', d))))
+
+    testsets = []
+    for d in os.listdir(join(data_folder, 'test')):
+        testsets.append(dict(np.load(join(data_folder, 'test', d))))
+        combined_sets.append(dict(np.load(join(data_folder, 'test', d))))
+
+    # train_dataset = TSDatasetNP(train_data, seq_len=125, device='cpu')
+    # train_dataloader = TSDataLoader(train_dataset, batch_size=64, shuffle=True, drop_last=True)
+
+    return trainsets, testsets, combined_sets
+
+
+def train_model(trainsets, testsets, device, wandb_mode, wandb_project, wandb_name, config=None):
+    with wandb.init(mode=wandb_mode, project=wandb_project, name=wandb_name, config=config):
         config = wandb.config
 
         model = TimeSeriesRegressorWrapper(device=device, input_size=len(config.features), output_size=len(config.targets), **config)
         model.to(device)
 
-        dataset = TSDataset(trainsets, config.features, config.targets, seq_len=config.seq_len, device=device)
+        dataset = TSDatasetNP(trainsets, config.features, config.targets, seq_len=config.seq_len, device=device) # todo NP
         dataloader = TSDataLoader(dataset, batch_size=config.batch_size, shuffle=True, drop_last=True)
 
         best_val_loss = float('inf')
@@ -74,7 +95,7 @@ def train_model(trainsets, testsets, device, wandb_mode, wandb_project, wandb_na
 
                 train_loss = model.train_one_epoch(dataloader)
 
-                val_loss, val_losses = evaluate_model(model, testsets, device, config)
+                val_loss, val_losses = evaluate_modelNP(model, testsets, device, config)  # todo NP
                 if val_loss < best_val_loss:
                     best_val_loss = val_loss
                     wandb.run.summary['best_epoch'] = epoch
@@ -87,9 +108,11 @@ def train_model(trainsets, testsets, device, wandb_mode, wandb_project, wandb_na
                 pbar.set_postfix({'lr': lr, 'train_loss': train_loss, 'val_loss': val_loss})
 
                 # print('Total val loss:', val_loss)
-                log = {f'val_loss/{config.recordings[set_id]}': loss for set_id, loss in enumerate(val_losses)}
+                log = {}  # todo NP
+                # log = {f'val_loss/{config.recordings[set_id]}': loss for set_id, loss in enumerate(val_losses)} # todo NP
                 log['total_val_loss'] = val_loss
                 log['train_loss'] = train_loss
+                log['lr'] = lr
                 wandb.log(log, step=epoch)
 
                 if early_stopper.early_stop(val_loss):
@@ -101,6 +124,7 @@ def train_model(trainsets, testsets, device, wandb_mode, wandb_project, wandb_na
 def evaluate_model(model, testsets, device, config):
     losses = []
     for set_id, test_set in enumerate(testsets):
+        test_set = test_set[:len(test_set) // 4 * 4] # todo
         val_pred = model.predict(test_set, config.features, config.targets).squeeze(0)
         loss = model.criterion(val_pred[config.warmup_steps:],
                                     torch.tensor(test_set[config.targets].values, dtype=torch.float32)[
@@ -110,6 +134,23 @@ def evaluate_model(model, testsets, device, config):
     total_loss = sum(losses) / len(losses)
 
     return total_loss, losses
+
+
+def evaluate_modelNP(model, testsets, device, config):
+    losses = []
+    for set_id, test_set in enumerate(testsets):
+        test_set['data_myo'] = test_set['data_myo'][:len(test_set) // 4 * 4]
+        test_set['data_angles'] = test_set['data_angles'][:len(test_set) // 4 * 4]
+        val_pred = model.predictNP(test_set, config.features, config.targets).squeeze(0)
+        loss = model.criterion(val_pred[config.warmup_steps:], torch.tensor(test_set['data_angles'][config.warmup_steps:], dtype=torch.float32).to(device))
+        loss = float(loss.to('cpu').detach())
+        losses.append(loss)
+    total_loss = sum(losses) / len(losses)
+
+    return total_loss, losses
+
+
+
 
 
 class EarlyStopper:
@@ -184,6 +225,36 @@ class TSDataset(Dataset):
         self.index_shift = shift
 
 
+class TSDatasetNP(Dataset):
+    def __init__(self, data_sources, features, targets, seq_len, device, index_shift=0, dummy_labels=False):
+        self.data_sources = data_sources
+        self.seq_len = seq_len
+        self.index_shift = index_shift
+        # self.lengths = [len(data) - 2 * self.seq_len for data in self.data_sources]
+        self.lengths = [len(data['data_myo']) // self.seq_len - 1 for data in self.data_sources]
+        self.starts = [0] + [sum(self.lengths[:i]) for i in range(1, len(self.lengths))]
+        self.device = device
+
+    def __len__(self):
+        return sum(self.lengths)
+
+    def __getitem__(self, idx):
+        set_idx = -1
+        for start in self.starts:
+            if idx < start:
+                break
+            set_idx += 1
+        idx = idx - self.starts[set_idx]
+        x = torch.tensor(self.data_sources[set_idx]['data_myo'][idx * self.seq_len + self.index_shift: (idx + 1) * self.seq_len + self.index_shift - 1, :], dtype=torch.float32, device=self.device)
+        y = torch.tensor(self.data_sources[set_idx]['data_angles'][idx * self.seq_len + self.index_shift: (idx + 1) * self.seq_len + self.index_shift - 1, :], dtype=torch.float32, device=self.device)
+
+        return x, y
+
+
+    def set_index_shift(self, shift):
+        self.index_shift = shift
+
+
 class TSDataLoader(DataLoader):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
@@ -191,3 +262,20 @@ class TSDataLoader(DataLoader):
     def __iter__(self):
         self.dataset.set_index_shift(random.randint(0, self.dataset.seq_len))
         return super().__iter__()
+
+
+if __name__ == '__main__':
+    data_folder = '/Users/jg/projects/biomech/BCI_ALVI_challenge/dataset_v2_blocks/amputant/left/fedya_tropin_standart_elbow_left/preproc_angles'
+    train_data = []
+    for d in os.listdir(join(data_folder, 'train')):
+        train_data.append(dict(np.load(join(data_folder, 'train', d))))
+
+
+    train_dataset = TSDatasetNP(train_data, seq_len=125, device='cpu')
+    train_dataloader = TSDataLoader(train_dataset, batch_size=64, shuffle=True, drop_last=True)
+    for x, y in train_dataloader:
+        print(x.shape, y.shape)
+        break
+    print()
+
+

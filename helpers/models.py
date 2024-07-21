@@ -8,7 +8,8 @@ import torch.optim as optim
 # torch.autograd.set_detect_anomaly(True)
 from abc import ABC, abstractmethod
 from tqdm import tqdm
-from bilinear import Muscles, Joints
+from dynamics.bilinear import Muscles, Joints
+from helpers.hvatnet import HVATNetv3, Config
 
 SR = 60
 
@@ -272,6 +273,21 @@ class ModularModel(TimeSeriesRegressor):
         return out, states
 
 
+class HvatModel(TimeSeriesRegressor):
+    def __init__(self, input_size, output_size, device, **kwargs):
+        super().__init__(input_size, output_size, device)
+        hvatnet_v3_params = dict(n_electrodes=input_size, n_channels_out=output_size,
+                                 n_res_blocks=3, n_blocks_per_layer=3,
+                                 n_filters=128, kernel_size=3,
+                                 strides=(2, 2, 2), dilation=2,
+                                 small_strides=(2, 2))
+        self.model = HVATNetv3(config=Config(**hvatnet_v3_params))
+
+    def get_starting_states(self, batch_size, y=None):
+        return None
+
+    def forward(self, x, states):
+        return self.model(x.permute(0, 2, 1)).permute(0, 2, 1), None
 
 class TimeSeriesRegressorWrapper:
     def __init__(self, input_size, output_size, device, n_epochs, learning_rate, warmup_steps, model_type, **kwargs):
@@ -288,6 +304,8 @@ class TimeSeriesRegressorWrapper:
             self.model = ModularModel(input_size, output_size, device, **kwargs)
         elif model_type == 'IdealModel':
             self.model = IdealModel(input_size, output_size, device, **kwargs)
+        elif model_type == 'HvatModel':
+            self.model = HvatModel(input_size, output_size, device, **kwargs)
         else:
             raise ValueError(f'Unknown model type {model_type}')
 
@@ -331,6 +349,22 @@ class TimeSeriesRegressorWrapper:
         y = torch.tensor(test_set.loc[:, targets].values, dtype=torch.float32).unsqueeze(0).to(self.device)
         with torch.no_grad():
             states = self.model.get_starting_states(1, y)
+            y_pred, _ = self.model(x, states=states)
+        return y_pred
+
+    def predictNP(self, test_set, features, targets):
+        self.model.eval()
+        x = torch.tensor(test_set['data_myo'], dtype=torch.float32).unsqueeze(0).to(self.device)
+        y = torch.tensor(test_set['data_angles'], dtype=torch.float32).unsqueeze(0).to(self.device)
+        with torch.no_grad():
+            states = self.model.get_starting_states(1, y)
+            y_pred, _ = self.model(x, states=states)
+        return y_pred
+
+    def predictNPonly(self, x):
+        self.model.eval()
+        with torch.no_grad():
+            states = self.model.get_starting_states(1) # todo
             y_pred, _ = self.model(x, states=states)
         return y_pred
 
