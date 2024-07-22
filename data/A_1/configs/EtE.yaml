@@ -1,7 +1,10 @@
+name: SL-2
 method: grid
+
 metric:
   goal: minimize
   name: mean_best_val_loss
+
 parameters:
   recordings:
     value:
@@ -15,28 +18,36 @@ parameters:
     - minJerk/indexFlexDigtisEx
     - minJerk/wristFlexHandClose
     - minJerk/digitsFlEx
+
   features:
     value:
-    - [emg, 0]
-    - [emg, 1]
-    - [emg, 2]
-    - [emg, 4]
-    - [emg, 5]
-    - [emg, 8]
-    - [emg, 10]
-    - [emg, 11]
-  hidden_size:
-    values: 10
+    - [emg, '0']
+    - [emg, '1']
+    - [emg, '2']
+    - [emg, '4']
+    - [emg, '5']
+    - [emg, '8']
+    - [emg, '10']
+    - [emg, '11']
+
+  early_stopping_patience:
+    value: 15
+
+  early_stopping_delta:
+    value: 0.0
+
   learning_rate:
     value: 0.01
-  model_type:
-    value: ActivationAndBiophys
+
   n_epochs:
     value: 100
-  n_layers:
-    value: 1
+
   seq_len:
-    value: 125
+    values:
+    - 20
+    - 60
+    - 120
+
   targets:
     value:
     - [Left, indexAng]
@@ -47,16 +58,32 @@ parameters:
     - [Left, thumbOutPlaneAng]
     - [Left, wristRot]
     - [Left, wristFlex]
+
   warmup_steps:
     value: 10
+
   batch_size:
-    value: 5
+    value: 8
 
-  activation_config:
-    value: {model_type: GRU,
-            hidden_size: 100,
-            n_layers: 2,}
+  wandb_mode:
+    value: online
 
-  biophys_config:
-    value: {muscleType: bilinear,
-            n_freeze_epochs: 5,}
+  wandb_project:
+    value: PCP-SL
+
+  model_type:
+    values:
+    - GRU
+    - DenseNet
+
+  state_mode:
+    values:
+    - stateless
+    - stateful
+    - stateAware
+
+  hidden_size:
+    value: 20
+
+  n_layers:
+    value: 4
