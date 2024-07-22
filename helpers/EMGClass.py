@@ -9,15 +9,16 @@ import numpy as np
 import pandas as pd
 from helpers.BesselFilter import BesselFilterArr
 import threading
+import platform
 
 class EMG():
-    def __init__(self, socketAddr='tcp://127.0.0.1:1235', numElectrodes=16, tauA=0.05, tauD=0.1, usedChannels=None, usingSynergies=False, samplingFreq=None, offlineData=None):
+    def __init__(self, socketAddr='tcp://127.0.0.1:1235', numElectrodes=16, tauA=0.05, tauD=0.1, usedChannels=None, usingSynergies=False, samplingFreq=None, offlineData=None, noiseLevel=None, maxVals=None):
         self.numElectrodes = numElectrodes
         self.tauA = tauA
         self.tauD = tauD
         self.usingSynergies = usingSynergies
         self.exitEvent = threading.Event()
-        self.offlineData = self.offline_data_gen(offlineData) if offlineData is not None else None
+        self.offlineData = self.offline_data_gen(offlineData) if offlineData else None
         self.emgHistory = np.empty((self.numElectrodes, 1))
         self.int_emgHistory = np.empty((self.numElectrodes, 1))
 
@@ -26,10 +27,16 @@ class EMG():
         else:
             self.usedChannels = usedChannels
 
-        self.boundsPath = '/home/haptix/haptix/haptix_controller/handsim/include/scaleFactors.txt'
-        self.deltasPath = '/home/haptix/haptix/haptix_controller/handsim/include/deltas.txt'
-        self.synergyPath = '/home/haptix/haptix/haptix_controller/handsim/include/synergyMat.csv'
-        # self.synergyPath = '/home/haptix/haptix/haptix_controller/handsim/include/JM_0929_synergyMat.csv'
+        system_name = platform.system()
+        if system_name == 'Linux':
+            self.boundsPath = '/home/haptix/haptix/haptix_controller/handsim/include/scaleFactors.txt'
+            self.deltasPath = '/home/haptix/haptix/haptix_controller/handsim/include/deltas.txt'
+            self.synergyPath = '/home/haptix/haptix/haptix_controller/handsim/include/synergyMat.csv'
+            # self.synergyPath = '/home/haptix/haptix/haptix_controller/handsim/include/JM_0929_synergyMat.csv'
+        else:
+            self.boundsPath = '/Users/jg/projects/biomech/UEA-AMI-Controller/handsim/include/scaleFactors.txt'
+            self.deltasPath = '/Users/jg/projects/biomech/UEA-AMI-Controller/handsim/include/deltas.txt'
+            self.synergyPath = '/Users/jg/projects/biomech/UEA-AMI-Controller/handsim/include/synergyMat.csv'
 
         self.socketAddr = socketAddr
         self.ctx = zmq.Context()
@@ -44,9 +51,13 @@ class EMG():
         self.switch1 = None
         self.switch2 = None
         self.end = None
-        self.samplingFreq = samplingFreq # this SHOULD be 1 kHz - but don't assume that
+        self.samplingFreq = None # this SHOULD be 1 kHz - but don't assume that
 
-        self.getBounds() # first 16: maximum values, second 16: minimum values
+        if not self.offlineData:
+            self.getBounds()  # first 16: maximum values, second 16: minimum values
+        else:
+            self.maxVals = maxVals
+            self.noiseLevel = noiseLevel
 
         self.getDeltas() # first 8: maximum deltas, second 8: minimum deltas
         if self.usingSynergies:
@@ -55,8 +66,11 @@ class EMG():
 
         self.resetEMG()
         
-        # initialize the EMG with the first signal (need the sampling frequency)
-        self.readEMG()
+        if not self.offlineData:
+            # initialize the EMG with the first signal (need the sampling frequency)
+            self.readEMG()
+        else:
+            self.samplingFreq = samplingFreq
         self.initFilters()
 
         # parameters for calculating iEMG
@@ -98,13 +112,11 @@ class EMG():
 
     def initFilters(self):
         self.powerLineFilterArray = BesselFilterArr(numChannels=self.numElectrodes, order=8, critFreqs=[58, 62], fs=self.samplingFreq, filtType='bandstop') # remove power line noise and multiples up to 600 Hz
-        self.highPassFilters = BesselFilterArr(numChannels=self.numElectrodes, order=4, critFreqs=10, fs=self.samplingFreq, filtType='highpass') # high pass removes motion artifacts and drift
-        self.lowPassFilters = BesselFilterArr(numChannels=self.numElectrodes, order=4, critFreqs=490, fs=self.samplingFreq, filtType='lowpass') # low pass to remove noise
-        self.envelopeFilters = BesselFilterArr(numChannels=self.numElectrodes, order=4, critFreqs=4, fs=self.samplingFreq, filtType='lowpass') # smooth the envelope, when not using 'actually' integrated EMG
+        self.highPassFilters = BesselFilterArr(numChannels=self.numElectrodes, order=4, critFreqs=20, fs=self.samplingFreq, filtType='highpass') # high pass removes motion artifacts and drift
+        self.lowPassFilters = BesselFilterArr(numChannels=self.numElectrodes, order=4, critFreqs=3, fs=self.samplingFreq, filtType='lowpass') # smooth the envelope, when not using 'actually' integrated EMG
 
     def startCommunication(self):
         # set the emg thread up here
-        # self.pipelineEMG()
         self.emgThread = threading.Thread(target=self.pipelineEMG, name='pipelineEMG')
         self.emgThread.daemon = False
         self.emgThread.start()
@@ -206,19 +218,17 @@ class EMG():
         return self.synergies[synergy]
 
     def getBounds(self):
-        if self.offlineData is None:
-            try:
-                with open(self.boundsPath, 'rb') as fifo:
-                    normsPack = fifo.read()
+        try:
+            with open(self.boundsPath, 'rb') as fifo:
+                normsPack = fifo.read()
 
-                norms = struct.unpack('ffffffffffffffffffffffffffffffff', normsPack)
-                self.bounds = list(norms)
-                self.maxVals = np.asarray(self.bounds[:self.numElectrodes])
-                self.noiseLevel = np.asarray(self.bounds[self.numElectrodes:])
+            norms = struct.unpack('ffffffffffffffffffffffffffffffff', normsPack)
+            self.bounds = list(norms)
+            self.maxVals = np.asarray(self.bounds[:self.numElectrodes])
+            self.noiseLevel = np.asarray(self.bounds[self.numElectrodes:])
 
-            except OSError as e:
-                print(f'getBounds(): Could not read bounds - {e}')
-
+        except OSError as e:
+            print(f'getBounds(): Could not read bounds - {e}')
 
     def getDeltas(self):
         try:
@@ -243,26 +253,22 @@ class EMG():
     ##########################################################################
     # actual calculations
     def readEMG(self):
-        if self.offlineData is None:
-            try:
-                emgPack = self.sock.recv()
+        try:
+            emgPack = self.sock.recv()
 
-                emg = struct.unpack('ffffffffffffffffffIIIIf', emgPack)
+            emg = struct.unpack('ffffffffffffffffffIIIIf', emgPack)
 
-                self.OS_time = emg[0]
-                self.OS_tick = emg[1]
-                self.rawEMG = emg[2:18]
-                self.trigger = emg[18]
-                self.switch1 = emg[19]
-                self.switch2 = emg[20]
-                self.end = emg[21]
-                self.samplingFreq = emg[22]
+            self.OS_time = emg[0]
+            self.OS_tick = emg[1]
+            self.rawEMG = emg[2:18]
+            self.trigger = emg[18]
+            self.switch1 = emg[19]
+            self.switch2 = emg[20]
+            self.end = emg[21]
+            self.samplingFreq = emg[22]
 
-            except OSError as e:
-                print(f'readEMG(): Could not read EMG - {e}')
-
-        else:
-            pass
+        except OSError as e:
+            print(f'readEMG(): Could not read EMG - {e}')
 
     # read multiple EMG packets to save time and processing
     def readEMGPacket(self):
@@ -292,28 +298,24 @@ class EMG():
 
         emg = self.powerLineFilterArray.filter(emg)
         emg = self.highPassFilters.filter(emg)
-
-        emg = self.lowPassFilters.filter(emg)
         
         self.filtEMG = np.copy(np.asarray(emg)[:, -1]) # motion artificats and drift removed
 
         emg = np.abs(emg)
+        emg = np.clip(emg - self.noiseLevel[:, None], 0, None)
 
-        emg = self.envelopeFilters.filter(emg)
+        iEMG = np.clip(self.lowPassFilters.filter(emg), 0, None)
 
+
+        # downsample only when real time
         if self.offlineData is None:
-            self.iEMG = np.asarray(emg)[:, -1]
-            # self.iEMG = np.mean(np.asarray(emg), axis=1)
+            self.iEMG = np.asarray(iEMG)[:, -1]
         else:
             self.iEMG = emg
-            # self.iEMG = np.asarray(emg)[:, -1]
 
     # normalize the EMG
     def normEMG(self):
-        emg = self.iEMG
-        emg = np.clip(emg - self.noiseLevel, 0, None)
-
-        normed = emg/self.maxVals
+        normed = self.iEMG/self.maxVals
 
         # correct the bounds
         normed[normed < 0] = 0
@@ -352,17 +354,15 @@ class EMG():
         while not self.exitEvent.is_set():
             self.readEMGPacket()
             self.intEMGPacket()
-
-            if self.offlineData is None:
-                print(self.normedEMG.shape, self.normedEMG.shape)
-                if self.usingSynergies: self.synergyProd()
-                # self.muscleDynamics()
-                self.emgHistory = np.concatenate((self.emgHistory, self.normedEMG[:, None]), axis=1)
-            else:
+            self.normEMG()
+            # if self.usingSynergies: self.synergyProd()
+            # self.muscleDynamics()
+            if self.offlineData:
                 # self.emgHistory = np.concatenate((self.emgHistory, self.iEMG[:, None]), axis=1)
                 self.emgHistory = np.concatenate((self.emgHistory, self.iEMG), axis=1)
 
-
+            if self.exitEvent.is_set():
+                break
 
 def plot_emg(emg, min_vals, max_vals, title='EMG'):
 
