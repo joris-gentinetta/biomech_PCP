@@ -18,9 +18,8 @@ class EMG():
         self.tauD = tauD
         self.usingSynergies = usingSynergies
         self.exitEvent = threading.Event()
-        self.offlineData = self.offline_data_gen(offlineData) if offlineData else None
+        self.offlineData = self.offline_data_gen(offlineData) if offlineData is not None else None
         self.emgHistory = np.empty((self.numElectrodes, 1))
-        self.int_emgHistory = np.empty((self.numElectrodes, 1))
 
         if usedChannels is None:
             self.usedChannels = []
@@ -53,10 +52,10 @@ class EMG():
         self.end = None
         self.samplingFreq = None # this SHOULD be 1 kHz - but don't assume that
 
-        if not self.offlineData:
+        if self.offlineData is None:
             self.getBounds()  # first 16: maximum values, second 16: minimum values
         else:
-            self.maxVals = maxVals
+            self.maxVals = np.expand_dims(maxVals, axis=1)
             self.noiseLevel = noiseLevel
 
         self.getDeltas() # first 8: maximum deltas, second 8: minimum deltas
@@ -66,7 +65,7 @@ class EMG():
 
         self.resetEMG()
         
-        if not self.offlineData:
+        if self.offlineData is None:
             # initialize the EMG with the first signal (need the sampling frequency)
             self.readEMG()
         else:
@@ -311,11 +310,11 @@ class EMG():
         if self.offlineData is None:
             self.iEMG = np.asarray(iEMG)[:, -1]
         else:
-            self.iEMG = emg
+            self.iEMG = iEMG
 
     # normalize the EMG
     def normEMG(self):
-        normed = self.iEMG/self.maxVals
+        normed = self.iEMG / self.maxVals
 
         # correct the bounds
         normed[normed < 0] = 0
@@ -357,12 +356,10 @@ class EMG():
             self.normEMG()
             # if self.usingSynergies: self.synergyProd()
             # self.muscleDynamics()
-            if self.offlineData:
+            if self.offlineData is not None:
                 # self.emgHistory = np.concatenate((self.emgHistory, self.iEMG[:, None]), axis=1)
-                self.emgHistory = np.concatenate((self.emgHistory, self.iEMG), axis=1)
+                self.emgHistory = np.concatenate((self.emgHistory, self.normedEMG), axis=1)
 
-            if self.exitEvent.is_set():
-                break
 
 def plot_emg(emg, min_vals, max_vals, title='EMG'):
 

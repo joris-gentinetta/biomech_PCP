@@ -71,12 +71,12 @@ def trigger_crop_video(data_dir):
 
                 plt.imshow(frame)
                 if record_frame:
-                    title = f'End_trigger_frame-{frame_count}'
+                    title = f'end_trigger_frame-{frame_count}'
                 else:
-                    title = f'Start_trigger_frame-{frame_count}'
+                    title = f'start_trigger_frame-{frame_count}'
                 plt.title(title)
                 # plt.show()
-                plt.savefig(join(data_dir, f'trigger_frame_{frame_count}.png'))
+                plt.savefig(join(data_dir, f'{title}.png'))
                 if record_frame:
                     break
 
@@ -97,6 +97,7 @@ def trigger_crop_video(data_dir):
 
 def trigger_crop_emg(cap, data_dir, trigger_channel, trigger_value):
     emg = np.load(join(data_dir, 'emg.npy'))
+
     emg_timestamps = np.load(join(data_dir, 'emg_timestamps.npy'))
     video_timestamps = np.zeros((int(cap.get(cv2.CAP_PROP_FRAME_COUNT))))
 
@@ -110,14 +111,14 @@ def trigger_crop_emg(cap, data_dir, trigger_channel, trigger_value):
             found_trigger = True
             if record_frame:
                 end_frame = i
-                print(f'end_frame: {i}')
+                print(f'EMG end_frame: {i}')
                 break
 
         if found_trigger and abs(signal) < trigger_value:
             found_trigger = False
             record_frame = True
             start_frame = i
-            print(f'start_frame: {i}')
+            print(f'EMG start_frame: {i}')
 
     assert start_frame != -1 and end_frame != -1, 'Could not find trigger in EMG data.'
 
