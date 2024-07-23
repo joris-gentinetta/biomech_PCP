@@ -63,7 +63,7 @@ if __name__ == '__main__':
 
 
     if args.test:  # trains on the training set and saves the test set predictions
-        model = train_model(trainsets, testsets, device, config.wandb_mode, config.wandb_project, config.name)
+        model = train_model(trainsets, testsets, device, config.wandb_mode, config.wandb_project, config.name, config)
 
         for set_id, test_set in enumerate(testsets):
             val_pred = model.predict(test_set, config.features, config.targets).squeeze(0).to('cpu').detach().numpy()
@@ -75,7 +75,7 @@ if __name__ == '__main__':
             test_set.loc[:, (args.intact_hand, 'thumbInPlaneAng')] = test_set.loc[:, (args.intact_hand, 'thumbInPlaneAng')] - math.pi
             test_set.loc[:, (args.intact_hand, 'wristRot')] = (test_set.loc[:, (args.intact_hand, 'wristRot')] * 2) - math.pi
             test_set.loc[:, (args.intact_hand, 'wristFlex')] = (test_set.loc[:, (args.intact_hand, 'wristFlex')] - math.pi / 2)
-            test_set.to_parquet(join(data_dirs[set_id], f'pred_angles-{args.config_name}.parquet'))
+            test_set.to_parquet(join(data_dirs[set_id], f'pred_angles-{config.name}.parquet'))
 
 
     if args.save_model:  # trains on the whole dataset and saves the model

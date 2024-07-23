@@ -69,7 +69,7 @@ if __name__ == "__main__":
 
     handStartPos = [0, 0, 0]
     handStartOrientation = p.getQuaternionFromEuler([0, 0, 0])
-    urdf_path = "URDF/ability_hand_left_large.urdf" if args.intact_hand == 'Left' else "URDF/ability_hand_right_large.urdf"
+    urdf_path = "URDF/ability_hand_left_large.urdf"  # if args.intact_hand == 'Left' else "URDF/ability_hand_right_large.urdf"
     target_hand = p.loadURDF(urdf_path, handStartPos, handStartOrientation,
                         flags=p.URDF_USE_SELF_COLLISION, useFixedBase=True)
     for i in range(p.getNumJoints(target_hand)):

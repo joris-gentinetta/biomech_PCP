@@ -56,7 +56,7 @@ def run_mediapipe(cap, frames, video_timestamps, sides, scales, hand_roi_size, p
             break
         rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
         mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=rgb_frame)
-        body_results = body_model.detect_for_video(mp_image, int(1000 * video_timestamps[frame_id])).pose_landmarks
+        body_results = body_model.detect_for_video(mp_image, int(video_timestamps[frame_id] / 1000)).pose_landmarks # todo check
         if len(body_results) == 0:
             frame_id += 1
             continue
@@ -94,7 +94,7 @@ def run_mediapipe(cap, frames, video_timestamps, sides, scales, hand_roi_size, p
                 y_start = 0
                 y_end = scales[1]
 
-            hands_results = hand_models[side].detect_for_video(mp_image, int(1000 * video_timestamps[frame_id])).hand_landmarks
+            hands_results = hand_models[side].detect_for_video(mp_image, int(video_timestamps[frame_id] / 1000)).hand_landmarks # todo check
             if len(hands_results) == 0:
                 continue
             elif len(hands_results) == 1:
@@ -212,12 +212,16 @@ if __name__ == "__main__":
     joints_df = update_left_right(joints_df)
     joints_df.to_parquet(join(experiment_dir, "corrected.parquet"))
 
+
     if args.visualize:
         df3d = pd.read_parquet(join(experiment_dir, "corrected.parquet"))
+        end = args.video_end
+        if end == -1:
+            end = len(df3d)
         if args.intact_hand is not None:
             df3d = AnglesHelper().mirror_pose(df3d, args.intact_hand)
 
-        vis = Visualization(experiment_dir, df3d, start_frame=args.video_start, end_frame=args.video_end, name_addition="_corrected")
+        vis = Visualization(experiment_dir, df3d, start_frame=args.video_start, end_frame=end, name_addition="_corrected")
 
     corrected = pd.read_parquet(join(experiment_dir, "corrected.parquet"))
     anglesHelper = AnglesHelper()

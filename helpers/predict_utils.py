@@ -51,8 +51,8 @@ def get_data(config, data_dirs, intact_hand, visualize=False):
     return trainsets, testsets, combined_sets
 
 
-def train_model(trainsets, testsets, device, wandb_mode, wandb_project, wandb_name):
-    with wandb.init(mode=wandb_mode, project=wandb_project, name=wandb_name):
+def train_model(trainsets, testsets, device, wandb_mode, wandb_project, wandb_name, config=None):
+    with wandb.init(mode=wandb_mode, project=wandb_project, name=wandb_name, config=config):
         config = wandb.config
 
         model = TimeSeriesRegressorWrapper(device=device, input_size=len(config.features), output_size=len(config.targets), **config)

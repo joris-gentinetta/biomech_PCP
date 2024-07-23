@@ -2,7 +2,7 @@ method: grid
 
 metric:
   goal: minimize
-  name: mean_best_val_loss
+  name: best_val_loss
 
 parameters:
   recordings:
