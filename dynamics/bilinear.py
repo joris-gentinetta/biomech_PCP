@@ -15,6 +15,8 @@ K0 = math.log(100)
 K1 = math.log(2000)
 L0 = math.log(0.06)
 L1 = math.log(0.006)
+B0 = 2
+B1 = 2
 
 ## Joint parameters
 M = 0.05
@@ -33,10 +35,12 @@ class Muscles(nn.Module):
         self.K1 = nn.Parameter(data=torch.ones((n_joints, 2), dtype=torch.float, device=self.device) * K1)
         self.L0 = nn.Parameter(data=torch.ones((n_joints, 2), dtype=torch.float, device=self.device) * L0)
         self.L1 = nn.Parameter(data=torch.ones((n_joints, 2), dtype=torch.float, device=self.device) * L1)
+        self.B0 = nn.Parameter(data=torch.ones((n_joints, 2), dtype=torch.float, device=self.device) * B0)
+        self.B1 = nn.Parameter(data=torch.ones((n_joints, 2), dtype=torch.float, device=self.device) * B1)
 
 
         parameterization = Exponential()
-        for parameter in ['K0', 'K1', 'L0', 'L1']:
+        for parameter in ['K0', 'K1', 'L0', 'L1', 'B0', 'B1']:
             register_parametrization(self, parameter, parameterization)
 
     def forward(self, alphas, muscle_SS):
