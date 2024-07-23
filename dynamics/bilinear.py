@@ -161,4 +161,4 @@ class Joints(nn.Module):
 
         muscle_SSs = SSout.unsqueeze(3) * self.M.unsqueeze(0).unsqueeze(2) # [batch_size, n_joints, state_num (2), muscle_num (2)]
 
-        return SSout[:, :, 0], muscle_SSs, SSout
+        return SSout[:, :, 0], muscle_SSs, SSout # position, muscle state, [position, velocity]

@@ -25,6 +25,8 @@ if __name__ == '__main__':
     parser.add_argument('--person_dir', type=str, required=True, help='Person directory')
     parser.add_argument('--intact_hand', type=str, required=True, help='Intact hand (Right/Left)')
     parser.add_argument('--config_name', type=str, required=True, help='Training configuration')
+    parser.add_argument('--multi_gpu', action='store_true', help='Use multiple GPUs')
+    parser.add_argument('--allow_tf32', action='store_true', help='Allow TF32')
     parser.add_argument('-v', '--visualize', action='store_true', help='Plot data exploration results')
     parser.add_argument('-hs', '--hyperparameter_search', action='store_true', help='Perform hyperparameter search')
     parser.add_argument('-t', '--test', action='store_true', help='Test the model')
