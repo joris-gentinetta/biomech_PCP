@@ -83,6 +83,7 @@ class RNN(TimeSeriesRegressor):
         return out, states
 
 
+
 class CNN(TimeSeriesRegressor):
     def __init__(self, input_size, output_size, device, **kwargs):
         super().__init__(input_size, output_size, device)
@@ -250,6 +251,7 @@ class PhysJointModel(TimeSeriesRegressor):
         self.model = Joints(device=device, n_joints=output_size, dt=1 / SR, speed_mode=False)
 
     def get_starting_states(self, batch_size, y=None):
+        """ these are the muscle states! """
         theta = y[:, 0, :]
         d_theta = (y[:, 1, :] - y[:, 0, :]) * SR
         states = torch.stack([theta, d_theta], dim=2)
@@ -301,7 +303,7 @@ class ModularModel(TimeSeriesRegressor):
             activation_out, states[0] = self.activation_model(x[:, i:i+1, :], states[0])
             activation_out = self.sigmoid(activation_out)
             muscle_out, states[1][0] = self.muscle_model(activation_out, states[1])
-            out[:, i:i+1, :], states[1][1],  states[2] = self.joint_model(muscle_out, states[2])
+            out[:, i:i+1, :], states[1][1], states[2] = self.joint_model(muscle_out, states[2])
 
         return out, states
 

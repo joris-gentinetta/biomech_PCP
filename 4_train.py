@@ -36,6 +36,14 @@ if __name__ == '__main__':
     if torch.cuda.is_available():
         device = torch.device("cuda")
         print('Using CUDA')
+
+        # List available GPUs
+        if args.multi_gpu:
+            n_gpus = torch.cuda.device_count()
+            print(f'Number of available GPUs: {n_gpus}')
+            for i in range(n_gpus):
+                print(f'GPU{i}: {torch.cuda.get_device_name(i)}')
+
     # elif torch.backends.mps.is_available():
     #     device = torch.device("mps")
     #     print('Using MPS')
@@ -43,6 +51,9 @@ if __name__ == '__main__':
         device = torch.device("cpu")
         print('Using CPU')
 
+    if args.allow_tf32:
+        torch.backends.cuda.matmul.allow_tf32 = True
+        print('TF32 enabled')
 
     with open(join('data', args.person_dir, 'configs', f'{args.config_name}.yaml'), 'r') as file:
         wandb_config = yaml.safe_load(file)
@@ -59,7 +70,6 @@ if __name__ == '__main__':
 
         pool = multiprocessing.Pool(processes=4)
         pool.map(wandb_process, [{'id': i, 'config': config, 'sweep_id': sweep_id, 'trainsets': trainsets, 'testsets': testsets, 'device': device} for i in range(4)])
-
 
 
     if args.test:  # trains on the training set and saves the test set predictions
