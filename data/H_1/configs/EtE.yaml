@@ -1,0 +1,77 @@
+name: DenseNet-stateful
+method: grid
+
+metric:
+  goal: minimize
+  name: best_val_loss
+
+parameters:
+  recordings:
+    value:
+    - trigger_1
+    - trigger_2
+    - trigger_3
+
+  features:
+    value:
+    - [emg, '0']
+    - [emg, '1']
+    - [emg, '2']
+    - [emg, '4']
+    - [emg, '8']
+    - [emg, '10']
+    - [emg, '11']
+    - [emg, '12']
+    - [emg, '13']
+    - [emg, '14']
+    - [emg, '15']
+
+  early_stopping_patience:
+    value: 15
+
+  early_stopping_delta:
+    value: 0.0
+
+  learning_rate:
+    value: 0.01
+
+  n_epochs:
+    value: 30
+
+  seq_len:
+    value: 120
+
+  targets:
+    value:
+    - [Right, indexAng]
+    - [Right, midAng]
+    - [Right, ringAng]
+    - [Right, pinkyAng]
+    - [Right, thumbInPlaneAng]
+    - [Right, thumbOutPlaneAng]
+    - [Right, wristRot]
+    - [Right, wristFlex]
+
+  warmup_steps:
+    value: 10
+
+  batch_size:
+    value: 8
+
+  wandb_mode:
+    value: online
+
+  wandb_project:
+    value: H_1
+
+  model_type:
+    value: DenseNet
+
+  state_mode:
+    values: stateful
+
+  hidden_size:
+    value: 20
+
+  n_layers:
+    value: 4

@@ -1,3 +1,4 @@
+name: modular_testing-LR_0_001-CLIP_4
 method: grid
 
 metric:
@@ -36,16 +37,13 @@ parameters:
     value: 0.0
 
   learning_rate:
-    value: 0.01
+    value: 0.001
 
   n_epochs:
     value: 100
 
   seq_len:
-    values:
-    - 20
-    - 60
-    - 120
+    value: 125
 
   targets:
     value:
@@ -67,8 +65,8 @@ parameters:
   wandb_mode:
     value: online
 
-  model_name:
-    value: sandbox
+  wandb_project:
+    value: PCP-modular-clip
 
   model_type:
     value: ModularModel

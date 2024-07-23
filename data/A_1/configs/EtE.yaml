@@ -37,16 +37,13 @@ parameters:
     value: 0.0
 
   learning_rate:
-    value: 0.01
+    value: 0.1
 
   n_epochs:
     value: 100
 
   seq_len:
-    values:
-    - 20
-    - 60
-    - 120
+    value: 125
 
   targets:
     value:
@@ -72,15 +69,10 @@ parameters:
     value: PCP-SL
 
   model_type:
-    values:
-    - GRU
-    - DenseNet
+    value: GRU
 
   state_mode:
-    values:
-    - stateless
-    - stateful
-    - stateAware
+    values: stateless
 
   hidden_size:
     value: 20

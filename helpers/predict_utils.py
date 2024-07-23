@@ -90,6 +90,7 @@ def train_model(trainsets, testsets, device, wandb_mode, wandb_project, wandb_na
                 log = {f'val_loss/{config.recordings[set_id]}': loss for set_id, loss in enumerate(val_losses)}
                 log['total_val_loss'] = val_loss
                 log['train_loss'] = train_loss
+                log['lr'] = lr
                 wandb.log(log, step=epoch)
 
                 if early_stopper.early_stop(val_loss):
