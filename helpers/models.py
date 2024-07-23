@@ -365,11 +365,6 @@ class CompensationModel(TimeSeriesRegressor):
         return out, states
 
 
-# class TimeSeriesRegressorWrapper(nn.Module):
-class TimeSeriesRegressorWrapper():
-    def __init__(self, input_size, output_size, device, n_epochs, seq_len, learning_rate, warmup_steps, model_type, **kwargs):
-        # super().__init__()
-
 class TimeSeriesRegressorWrapper:
     def __init__(self, input_size, output_size, device, n_epochs, learning_rate, warmup_steps, model_type, **kwargs):
 
