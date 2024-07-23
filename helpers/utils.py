@@ -6,11 +6,12 @@ import pybullet as p
 from tqdm import tqdm
 import pandas as pd
 pd.options.mode.copy_on_write = True
-import numpy as np
 from scipy.ndimage import gaussian_filter1d
 from scipy.signal import gaussian
 import matplotlib.pyplot as plt
-
+import pickle
+from pathlib import Path
+from sklearn.preprocessing import minmax_scale
 
 class Comms:
     def __init__(self, sendSocketAddr):
@@ -259,12 +260,118 @@ class AnglesHelper:
         plt.title(f'Gaussian Kernel with sigma={sigma} and radius={radius}')
         plt.show()
 
+class PklConverter:
+    def __init__(self, dataFolder, outputFolder, jointNames, emgChannels, side='Left'):
+        self.dataFolder = dataFolder
+        self.outputFolder = outputFolder
 
+        self.jointNames = jointNames
+        self.side = side
+
+        self.emgChannels = emgChannels
+
+        # generate the DataFrame for the angles, with the columns named appropriately
+        self.columns = pd.MultiIndex.from_product([['Left', 'Right'], ['indexAng', 'midAng', 'ringAng', 'pinkyAng', 'thumbInPlaneAng', 'thumbOutPlaneAng', 'elbowAngle', 'wristRot', 'wristFlex']])
+
+    def convertEMG(self, emg, saveFol):
+        saveName = os.path.join(saveFol, 'cropped_aligned_emg.npy')
+
+        emg = np.stack(emg, axis=0)
+
+        samples, channels = emg.shape
+        assert channels == len(self.emgChannels), f'Expected {len(self.emgChannels)} channels, got {channels}'
+
+        emgOut = np.zeros((samples, 16))
+        for i, channel in enumerate(self.emgChannels):
+            emgOut[:, channel] = emg[:, i]
+
+        return (saveName, emgOut)
+
+    def convertAngles(self, angles, saveFol):
+        saveName = os.path.join(saveFol, 'cropped_smooth_angles.parquet')
+
+        angles = np.stack(angles, axis=0)
+
+        samples, joints = angles.shape
+        assert joints == len(self.jointNames), f'Expected {len(self.jointNames)} joints, got {joints}'
+
+        # need to undo the scaling and changes applied to these angles when loaded in 4_train.py
+        # the changes are as follows:
+        #         data.loc[:, (args.intact_hand, 'thumbInPlaneAng')] = data.loc[:, (args.intact_hand, 'thumbInPlaneAng')] + math.pi
+        #         data.loc[:, (args.intact_hand, 'wristRot')] = (data.loc[:, (args.intact_hand, 'wristRot')] + math.pi) / 2
+        #         data.loc[:, (args.intact_hand, 'wristFlex')] = (data.loc[:, (args.intact_hand, 'wristFlex')] + math.pi / 2)
+        #
+        #         data = (2 * data - math.pi) / math.pi
+        #         data = np.clip(data, -1, 1)
+        #
+        # Therefore, we will preempt each change in the reverse order
+        #
+        # We note as well that the angles from the model are _not_ in the range [-1, 1]
+        # so we must make that conversion first - use a simple minmax scaler!
+        angles = minmax_scale(angles, feature_range=(-1, 1))
+
+        angles = (angles + 1) * math.pi / 2
+
+        in_angles_df = pd.DataFrame(angles, columns=pd.MultiIndex.from_product([[self.side], self.jointNames]))
+        out_angles_df = pd.DataFrame(math.pi/2, index=range(samples), columns=self.columns)
+
+        # copy over to the main DataFrame - if a joint is all zeros, we don't want to explicitly copy as that interferes with the initializiation
+        for joint in self.jointNames:
+            if not np.all(np.isclose(in_angles_df.loc[:, (self.side, joint)], in_angles_df.loc[:, (self.side, joint)].iloc[0])):
+                out_angles_df.loc[:, (self.side, joint)] = in_angles_df.loc[:, (self.side, joint)]
+
+        out_angles_df.loc[:, (self.side, 'wristFlex')] = out_angles_df.loc[:, (self.side, 'wristFlex')] - math.pi/2
+        out_angles_df.loc[:, (self.side, 'wristRot')] = out_angles_df.loc[:, (self.side, 'wristRot')] * 2 - math.pi
+        out_angles_df.loc[:, (self.side, 'thumbInPlaneAng')] = out_angles_df.loc[:, (self.side, 'thumbInPlaneAng')] - math.pi
+
+        return (saveName, out_angles_df)
+
+    def genFileStructure(self, fileName):
+        baseSaveFol = f'{self.outputFolder}/{fileName[:-4]}/experiments/1'
+        Path(baseSaveFol).mkdir(parents=True, exist_ok=True)
+
+        return baseSaveFol
+
+    def save(self, saveEMG, saveAngles):
+        assert saveEMG[0].endswith('.npy'), 'EMG save file must be a .npy file'
+        assert saveAngles[0].endswith('.parquet'), 'Angles save file must be a .parquet file'
+        assert isinstance(saveEMG[1], np.ndarray), 'EMG data must be a numpy array'
+        assert isinstance(saveAngles[1], pd.DataFrame), 'Angles data must be a pandas DataFrame'
+        assert saveEMG[1].shape[0] == saveAngles[1].shape[0], 'EMG and angles have different lengths'
+
+        np.save(saveEMG[0], saveEMG[1])
+        saveAngles[1].to_parquet(saveAngles[0])
+
+    def convertPkl(self, fileName):
+        saveFol = self.genFileStructure(fileName)
+
+        with open(os.path.join(self.dataFolder, fileName), 'rb') as f:
+            data = pickle.load(f)
+
+        emg = data[0][0] if len(data[0]) == 1 else data[0]
+        angles = data[1]
+
+        assert len(emg) == len(angles), 'EMG and angles have different lengths'
+
+        saveEMG = self.convertEMG(emg, saveFol)
+        saveAngles = self.convertAngles(angles, saveFol)
+
+        self.save(saveEMG, saveAngles)
+
+    def pipelinePkl(self):
+
+        for file in tqdm(os.listdir(self.dataFolder)):
+            if file.endswith('.pkl'):
+                self.convertPkl(file)
 
 if __name__ == '__main__':
-    A = AnglesHelper()
-    A.print_gaussian_kernel(1.5, 2)
+    # A = AnglesHelper()
+    # A.print_gaussian_kernel(1.5, 2)
 
+    pklFol = '/home/haptix/UE AMI Clinical Work/Patient Data/C1/C1_0603_2024/training/pkl/'
+    outputFol = '/home/haptix/UE AMI Clinical Work/Patient Data/C1/C1_0603_2024/training/recordings/'
+    emgChannels = [0, 1, 2, 4, 5, 8, 10, 11]
+    jointNames = ['thumbOutPlaneAng', 'indexAng', 'midAng', 'wristFlex']
 
-
-
+    converter = PklConverter(pklFol, outputFol, jointNames, emgChannels)
+    converter.pipelinePkl()
