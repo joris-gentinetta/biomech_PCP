@@ -1,4 +1,4 @@
-name: modular_testing-LR_0_001-CLIP_4
+name: modular
 method: grid
 
 metric:
@@ -53,8 +53,8 @@ parameters:
     - [Left, pinkyAng]
     - [Left, thumbInPlaneAng]
     - [Left, thumbOutPlaneAng]
-    - [Left, wristRot]
-    - [Left, wristFlex]
+#    - [Left, wristRot]
+#    - [Left, wristFlex]
 
   warmup_steps:
     value: 10
@@ -66,7 +66,7 @@ parameters:
     value: online
 
   wandb_project:
-    value: PCP-modular-clip
+    value: PCP-no_wrist
 
   model_type:
     value: ModularModel

@@ -34,12 +34,16 @@ def get_data(config, data_dirs, intact_hand, visualize=False):
             data[feature] = emg[:, int(feature[1])]
 
         if visualize:
-            data[config.features].plot(subplots=True)
+            axs = data[config.features].plot(subplots=True)
+            for ax in axs:
+                ax.set_ylim(-1, 1)
             plt.title(f'Features {config.recordings[recording_id]}')
             plt.show()
 
-            data[config.targets].plot(subplots=True)
-            plt.title('Targets')
+            axs = data[config.targets].plot(subplots=True)
+            for ax in axs:
+                ax.set_ylim(-1, 1)
+            plt.title(f'Targets {config.recordings[recording_id]}')
             plt.show()
 
         test_set = data.loc[len(data) // 5 * 4:].copy()

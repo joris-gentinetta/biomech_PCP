@@ -1,4 +1,4 @@
-name: SL-2
+name: GRU-including_wrist_rec_and_targets
 method: grid
 
 metric:
@@ -37,7 +37,7 @@ parameters:
     value: 0.0
 
   learning_rate:
-    value: 0.1
+    value: 0.01
 
   n_epochs:
     value: 100
@@ -66,7 +66,7 @@ parameters:
     value: online
 
   wandb_project:
-    value: PCP-SL
+    value: PCP-no_wrist
 
   model_type:
     value: GRU

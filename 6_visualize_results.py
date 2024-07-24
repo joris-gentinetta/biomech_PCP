@@ -69,7 +69,7 @@ if __name__ == "__main__":
 
     handStartPos = [0, 0, 0]
     handStartOrientation = p.getQuaternionFromEuler([0, 0, 0])
-    urdf_path = "URDF/ability_hand_left_large.urdf"  # if args.intact_hand == 'Left' else "URDF/ability_hand_right_large.urdf"
+    urdf_path = "URDF/ability_hand_left_large-wrist.urdf"  # if args.intact_hand == 'Left' else "URDF/ability_hand_right_large.urdf"
     target_hand = p.loadURDF(urdf_path, handStartPos, handStartOrientation,
                         flags=p.URDF_USE_SELF_COLLISION, useFixedBase=True)
     for i in range(p.getNumJoints(target_hand)):
@@ -92,8 +92,18 @@ if __name__ == "__main__":
     camera_target_position = [0.59, -0.65, -0.38]  # Focus on the center of your model or a specific part
     p.resetDebugVisualizerCamera(camera_distance, camera_yaw, camera_pitch, camera_target_position)
 
-    joint_ids = {'index': (1, 2, 3), 'middle': (4, 5, 6), 'ring': (7, 8, 9), 'pinky': (10, 11, 12),
-                 'thumb': (13, 14, 15)}
+    # joint_ids = {'index': (1, 2, 3), 'middle': (4, 5, 6), 'ring': (7, 8, 9), 'pinky': (10, 11, 12),
+    #              'thumb': (13, 14, 15)}
+
+    joint_ids = {
+        'wrist_rotation': 1,
+        'wrist_flexion': 2,
+        'index': (3, 4, 5),
+        'middle': (6, 7, 8),
+        'ring': (9, 10, 11),
+        'pinky': (12, 13, 14),
+        'thumb': (15, 16, 17)
+    }
 
     time.sleep(1) # want to wait for the GUI to load
     for i in range(target_angles.shape[0]):
@@ -113,6 +123,13 @@ if __name__ == "__main__":
         angle = target_angles.loc[i, (args.intact_hand, 'thumbOutPlaneAng')]
         p.setJointMotorControl2(target_hand, joint_ids['thumb'][1], p.POSITION_CONTROL, targetPosition=angle)
 
+        #wrist:
+        angle = target_angles.loc[i, (args.intact_hand, 'wristRot')]
+        p.setJointMotorControl2(target_hand, joint_ids['wrist_rotation'], p.POSITION_CONTROL, targetPosition=angle)
+        angle = target_angles.loc[i, (args.intact_hand, 'wristFlex')]
+        p.setJointMotorControl2(target_hand, joint_ids['wrist_flexion'], p.POSITION_CONTROL, targetPosition=angle)
+
+
         if args.config_name:
             move_finger(pred_hand, 'index', pred_angles.loc[i, (args.intact_hand, 'indexAng')])
             move_finger(pred_hand, 'middle', pred_angles.loc[i, (args.intact_hand, 'midAng')])
@@ -124,6 +141,13 @@ if __name__ == "__main__":
             p.setJointMotorControl2(pred_hand, joint_ids['thumb'][0], p.POSITION_CONTROL, targetPosition=angle)
             angle = pred_angles.loc[i, (args.intact_hand, 'thumbOutPlaneAng')]
             p.setJointMotorControl2(pred_hand, joint_ids['thumb'][1], p.POSITION_CONTROL, targetPosition=angle)
+
+            # wrist:
+            angle = pred_angles.loc[i, (args.intact_hand, 'wristRot')]
+            p.setJointMotorControl2(pred_hand, joint_ids['wrist_rotation'], p.POSITION_CONTROL, targetPosition=angle)
+            angle = pred_angles.loc[i, (args.intact_hand, 'wristFlex')]
+            p.setJointMotorControl2(pred_hand, joint_ids['wrist_flexion'], p.POSITION_CONTROL, targetPosition=angle)
+
         if args.video:
 
             ret, frame = cap.read()

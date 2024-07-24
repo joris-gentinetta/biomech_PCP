@@ -389,7 +389,7 @@ class TimeSeriesRegressorWrapper:
 
         self.criterion = nn.MSELoss(reduction='mean')
         self.optimizer = optim.Adam(self.model.parameters(), lr=learning_rate)
-        self.scheduler = optim.lr_scheduler.ReduceLROnPlateau(self.optimizer, mode='min', factor=0.5, patience=3)
+        self.scheduler = optim.lr_scheduler.ReduceLROnPlateau(self.optimizer, mode='min', factor=0.5, patience=3, threshold_mode='rel', threshold=0.01)
 
 
         self.n_epochs = n_epochs
@@ -399,7 +399,7 @@ class TimeSeriesRegressorWrapper:
         torch.save(self.model.state_dict(), path)
 
     def load(self, path):
-        self.model.load_state_dict(torch.load(path, map_location=torch.device('cpu'))) # note that we load to cpu
+        self.model.load_state_dict(torch.load(path, map_location=torch.device('cpu')))  # note that we load to cpu
         return self
 
     def train_one_epoch(self, dataloader):

@@ -212,17 +212,6 @@ if __name__ == "__main__":
     joints_df = update_left_right(joints_df)
     joints_df.to_parquet(join(experiment_dir, "corrected.parquet"))
 
-
-    if args.visualize:
-        df3d = pd.read_parquet(join(experiment_dir, "corrected.parquet"))
-        end = args.video_end
-        if end == -1:
-            end = len(df3d)
-        if args.intact_hand is not None:
-            df3d = AnglesHelper().mirror_pose(df3d, args.intact_hand)
-
-        vis = Visualization(experiment_dir, df3d, start_frame=args.video_start, end_frame=end, name_addition="_corrected")
-
     corrected = pd.read_parquet(join(experiment_dir, "corrected.parquet"))
     anglesHelper = AnglesHelper()
 
@@ -244,3 +233,13 @@ if __name__ == "__main__":
     smooth_angles_df.to_parquet(join(experiment_dir, "cropped_smooth_angles.parquet"))
     emg = np.load(join(experiment_dir, "aligned_emg.npy"))
     np.save(join(experiment_dir, "cropped_aligned_emg.npy"), emg[start:end])
+
+    if args.visualize:
+        df3d = pd.read_parquet(join(experiment_dir, "corrected.parquet"))
+        end = args.video_end
+        if end == -1:
+            end = len(df3d)
+        if args.intact_hand is not None:
+            df3d = AnglesHelper().mirror_pose(df3d, args.intact_hand)
+
+        vis = Visualization(experiment_dir, df3d, start_frame=args.video_start, end_frame=end, name_addition="_corrected")
