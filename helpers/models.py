@@ -417,6 +417,9 @@ class TimeSeriesRegressorWrapper:
             self.optimizer.step()
             epoch_loss += loss
 
+            if torch.any(torch.isnan(loss)):
+                print('NAN Loss!')
+
         return epoch_loss.item() / len(dataloader)
 
     def predict(self, test_set, features, targets):

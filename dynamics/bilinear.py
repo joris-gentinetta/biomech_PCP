@@ -15,6 +15,8 @@ K0 = math.log(100)
 K1 = math.log(2000)
 L0 = math.log(0.06)
 L1 = math.log(0.006)
+B0 = math.log(math.e)
+B1 = math.log(math.e)
 
 ## Joint parameters
 M = 0.05
@@ -33,21 +35,31 @@ class Muscles(nn.Module):
         self.K1 = nn.Parameter(data=torch.ones((n_joints, 2), dtype=torch.float, device=self.device) * K1)
         self.L0 = nn.Parameter(data=torch.ones((n_joints, 2), dtype=torch.float, device=self.device) * L0)
         self.L1 = nn.Parameter(data=torch.ones((n_joints, 2), dtype=torch.float, device=self.device) * L1)
+        self.B0 = nn.Parameter(data=torch.ones((n_joints, 2), dtype=torch.float, device=self.device) * B0)
+        self.B1 = nn.Parameter(data=torch.ones((n_joints, 2), dtype=torch.float, device=self.device) * B1)
 
 
         parameterization = Exponential()
-        for parameter in ['K0', 'K1', 'L0', 'L1']:
+        for parameter in ['K0', 'K1', 'L0', 'L1', 'B0', 'B1']:
             register_parametrization(self, parameter, parameterization)
 
     def forward(self, alphas, muscle_SS):
         alphas = torch.clamp(alphas, 0, 1)
 
         F = ((self.K0.unsqueeze(0) + self.K1.unsqueeze(0) * alphas)
-               * (self.L0.unsqueeze(0) + self.L1.unsqueeze(0) * alphas - muscle_SS[:, :, 0, :]))
+               * (self.L0.unsqueeze(0) + self.L1.unsqueeze(0) * alphas - muscle_SS[:, :, 0, :])
+             + self.B0.unsqueeze(0) * torch.abs(muscle_SS[:, :, 1, :]) ** self.B1.unsqueeze(0) * torch.sign(muscle_SS[:, :, 1, :]))
 
         F = nn.functional.relu(F) # wash out negative force!
 
         K = self.K0.unsqueeze(0) + self.K1.unsqueeze(0) * alphas
+
+        if torch.any(torch.isnan(F)):
+            print('nan in F')
+            print(F)
+            print('nan in K')
+            print(K)
+
         return F, K
 
 
@@ -96,7 +108,7 @@ class Joints(nn.Module):
         #   x(dt) = exp(A*dt) x0 + (I - exp(A*dt)) A^-1 B u
 
         In this case,
-        A = [[0, 1], [-(K0+B1)/I, -b/I]]
+        A = [[0, 1], [-(K0+K1)/I, -b/I]]
         B = [[0, 0], [      M0/I, M1/I]] # note that the indices represent the values from different muscles, as appropriate
         X = [Position, Speed]
         U = [F0, F1]
@@ -113,15 +125,15 @@ class Joints(nn.Module):
         A01 = torch.ones((batch_size, self.n_joints), dtype=torch.float, device=self.device)
 
         K = K_musc * self.M.unsqueeze(0) * self.M.unsqueeze(0)  # [batch_size, n_joints, muscle_num]
-        K = K.sum(dim=2)  # sum over muscles - > [batch_size, n_joints]
-        A10 = -(K + self.K.unsqueeze(0))/self.I.unsqueeze(0) # [batch_size, n_joints]
+        K = K.sum(dim=2) + self.K.unsqueeze(0)  # sum over muscles - > [batch_size, n_joints]
+        A10 = -K/self.I.unsqueeze(0) # [batch_size, n_joints]
         # A10 = -K / self.I.unsqueeze(0)  # [batch_size, n_joints]
 
         #############################
         #   DAMPING                 #
         #############################
         D = torch.sqrt(K * self.I.unsqueeze(0)) * 2
-        A11 = -(D + self.B.unsqueeze(0)) / self.I.unsqueeze(0)  # with joint damping
+        A11 = -D * self.B.unsqueeze(0) / self.I.unsqueeze(0)  # with joint damping
         # A11 = -D / self.I.unsqueeze(0)  # with joint damping
 
         A = torch.stack([torch.stack([A00, A01], dim=2), torch.stack([A10, A11], dim=2)],
@@ -160,5 +172,11 @@ class Joints(nn.Module):
             SSout = ((torch.matmul(A, SS.unsqueeze(3)) + B) * self.dt + SS.unsqueeze(3)).squeeze(3)
 
         muscle_SSs = SSout.unsqueeze(3) * self.M.unsqueeze(0).unsqueeze(2) # [batch_size, n_joints, state_num (2), muscle_num (2)]
+
+        if torch.any(torch.isnan(SSout)):
+            print('nan in SSout')
+            print(SSout)
+            print('nan in muscle_SSs')
+            print(muscle_SSs)
 
         return SSout[:, :, 0], muscle_SSs, SSout # position, muscle state, [position, velocity]
