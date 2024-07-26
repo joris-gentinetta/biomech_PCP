@@ -30,7 +30,7 @@ if __name__ == "__main__":
     parser.add_argument('--data_dir', type=str, required=True, help='Output directory')
     parser.add_argument('--experiment_name', type=str, required=True, help='Experiment name')
     parser.add_argument('--intact_hand', type=str, default=None, help='Intact hand')
-    parser.add_argument('--config_name', type=str, default=None, help='Model config name')
+    parser.add_argument('--model_name', type=str, default=None, help='Name specified in the config file used to train the model')
     parser.add_argument('--video', action='store_true', help='Display the video')
     args = parser.parse_args()
 
@@ -38,7 +38,7 @@ if __name__ == "__main__":
         cap = cv2.VideoCapture(join(args.data_dir, 'experiments', args.experiment_name, 'visualization_corrected.mp4'))
     target_angles = pd.read_parquet(join(args.data_dir, 'experiments', args.experiment_name, 'cropped_smooth_angles.parquet'))
 
-    if args.config_name:
+    if args.model_name:
         if not exists(join(args.data_dir, 'experiments', args.experiment_name, 'visualization_test.mp4')) and args.video:
 
             fourcc = cv2.VideoWriter_fourcc(*'mp4v')  # or use 'XVID'
@@ -59,7 +59,7 @@ if __name__ == "__main__":
             out.release()
         cap = cv2.VideoCapture(join(args.data_dir, 'experiments', args.experiment_name, 'visualization_test.mp4'))
 
-        pred_angles = pd.read_parquet(join(args.data_dir, 'experiments', args.experiment_name, f'pred_angles-{args.config_name}.parquet'))
+        pred_angles = pd.read_parquet(join(args.data_dir, 'experiments', args.experiment_name, f'pred_angles-{args.model_name}.parquet'))
         pred_angles.index = range(len(pred_angles))
         target_angles.index = range(len(target_angles))
         target_angles = target_angles.loc[len(target_angles)//5 * 4:].copy()
@@ -82,7 +82,7 @@ if __name__ == "__main__":
 
     for i in range(1, p.getNumJoints(target_hand)):
         p.changeVisualShape(target_hand, i, rgbaColor=[0, 1, 0, 0.7])
-    if args.config_name:
+    if args.model_name:
         pred_hand = p.loadURDF(urdf_path, handStartPos, handStartOrientation,
                             flags=p.URDF_USE_SELF_COLLISION, useFixedBase=True)
         for i in range(1, p.getNumJoints(pred_hand)):
@@ -139,7 +139,7 @@ if __name__ == "__main__":
         p.setJointMotorControl2(target_hand, joint_ids['wrist_flexion'], p.POSITION_CONTROL, targetPosition=angle)
 
 
-        if args.config_name:
+        if args.model_name:
             move_finger(pred_hand, 'index', pred_angles.loc[i, (args.intact_hand, 'indexAng')])
             move_finger(pred_hand, 'middle', pred_angles.loc[i, (args.intact_hand, 'midAng')])
             move_finger(pred_hand, 'ring', pred_angles.loc[i, (args.intact_hand, 'ringAng')])

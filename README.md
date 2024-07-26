@@ -212,12 +212,12 @@ These are the command line arguments that you can use to customize the behavior 
 - `--data_dir`: This argument is required. It specifies the directory where the video data is stored.
 - `--experiment_name`: This argument is required. It specifies the name of the experiment to be used for saving the processed data.
 - `--intact_hand`: This argument is optional, either Right or Left. It specifies the hand that is intact (Left/Right).
-- `--config_name`: This argument is optional. It specifies the model name to be used for inference.
+- `--model_name`: This argument is optional. It specifies the model name to be used for inference.
 - `--video`: This argument is optional. If used, the script will display the video.
 
 Example:
 ```bash
-python 6_visualize_results.py --data_dir data/A_1/recordings/minJerk/pinchCloseOpen --experiment_name 1 --intact_hand Left --config_name simple_GRU
+python 6_visualize_results.py --data_dir data/A_1/recordings/minJerk/pinchCloseOpen --experiment_name 1 --intact_hand Left --model_name simple_GRU
 ```
 
 ## Data Output
