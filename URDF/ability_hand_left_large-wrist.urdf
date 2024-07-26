@@ -5,18 +5,8 @@
 		Angles: rad (only option)
 		Mass: kg
 		Inertia: kg*m^2
-
-	Notes on intertia:
-		-The inertias are calculated for uniform density with weights that may or may not be accurate.
-		At the time of this writing only the thumb flexor weight is correct. The palm is a 'best guess'
-		approximation and the fingers are likely off by an order of magnitude
-
-	Notes on finger q2:
-		-The hand is a 4 bar linkage mechanism forming an 'X'. 4 bar linkages are not supported in the
-		urdf format. The motion of the second finger joint is fully defined by the motion of the first
-		finger joint. The calculation to find the index finger second joint angle given the first is provided
-		in a matlab script elsewhere in this repository.
 -->
+
 <robot name="ability_hand">
 
     <link name="upper_arm">
@@ -28,7 +18,6 @@
         </visual>
     </link>
 
-    <!-- Adding lower arm link as a flat block -->
     <link name="lower_arm">
         <visual>
             <origin xyz="0 0 -0.16" rpy="0 0 0"/>
@@ -46,16 +35,14 @@
         <limit lower="-1.57" upper="1.57"/>
     </joint>
 
-    <!-- Adding wrist rotation joint closer to the lower arm -->
     <joint name="wrist_rotation" type="revolute">
         <parent link="lower_arm"/>
         <child link="wrist_link"/>
         <origin xyz="0 0 0.0" rpy="0 0 0"/>
         <axis xyz="0 0 1"/>
-        <limit lower="-1.57" upper="1.57"/>
+        <limit lower="-3.14" upper="3.14"/>
     </joint>
 
-    <!-- Adding an intermediate wrist link -->
     <link name="wrist_link">
         <visual>
             <origin xyz="0 0 0.01" rpy="0 0 0"/>
@@ -65,7 +52,6 @@
         </visual>
     </link>
 
-    <!-- Adding wrist flexion/extension joint closer to the base -->
     <joint name="wrist_flexion" type="revolute">
         <parent link="wrist_link"/>
         <child link="base"/>
@@ -106,6 +92,7 @@
 			</geometry>
 		</visual>
 	</link>
+
 	<link name="index_L2">
 		<visual name="index_mesh_2">
 			<origin rpy="0 0 0" xyz="0 0 0"/>
@@ -114,6 +101,7 @@
 			</geometry>
 		</visual>
 	</link>
+
 	<joint name="index_q1" type="revolute">
 		<parent link="thumb_base"/>
 		<child link="index_L1"/>
@@ -121,6 +109,7 @@
 		<axis xyz="0 0 1"/>
 		<limit lower="0" upper="2.0943951"/>
 	</joint>
+
 	<joint name="index_q2" type="revolute">
 		<parent link="index_L1"/>
 		<child link="index_L2"/>
@@ -129,6 +118,7 @@
 		<limit lower="0.0" upper="2.6586"/>
 		<mimic joint="index_q1" multiplier="1.05851325" offset="0.72349796"/>
 	</joint>
+
 	<link name="index_anchor"/>
 	<joint name="idx_anchor" type="fixed">
 		<parent link="index_L2"/>
@@ -144,6 +134,7 @@
 			</geometry>
 		</visual>
 	</link>
+
 	<link name="middle_L2">
 		<visual name="middle_mesh_2">
 			<origin rpy="0 0 0" xyz="0 0 0"/>
@@ -152,6 +143,7 @@
 			</geometry>
 		</visual>
 	</link>
+
 	<joint name="middle_q1" type="revolute">
 		<parent link="thumb_base"/>
 		<child link="middle_L1"/>
@@ -159,6 +151,7 @@
 		<limit lower="0" upper="2.0943951"/>
 		<axis xyz="0 0 1"/>
 	</joint>
+
 	<joint name="middle_q2" type="revolute">
 		<parent link="middle_L1"/>
 		<child link="middle_L2"/>
@@ -167,6 +160,7 @@
 		<limit lower="0.0" upper="2.6586"/>
 		<mimic joint="middle_q1" multiplier="1.05851325" offset="0.72349796"/>
 	</joint>
+
 	<link name="middle_anchor"/>
 	<joint name="mid_anchor" type="fixed">
 		<parent link="middle_L2"/>
@@ -182,6 +176,7 @@
 			</geometry>
 		</visual>
 	</link>
+
 	<link name="ring_L2">
 		<visual name="ring_mesh_2">
 			<origin rpy="0 0 0" xyz="0 0 0"/>
@@ -190,6 +185,7 @@
 			</geometry>
 		</visual>
 	</link>
+
 	<joint name="ring_q1" type="revolute">
 		<parent link="thumb_base"/>
 		 <child link="ring_L1"/>
@@ -197,6 +193,7 @@
 		<limit lower="0" upper="2.0943951"/>
 		<axis xyz="0 0 1"/>
 	</joint>
+
 	<joint name="ring_q2" type="revolute">
 		<parent link="ring_L1"/>
 		<child link="ring_L2"/>
@@ -205,6 +202,7 @@
 		<limit lower="0.0" upper="2.6586"/>
 		<mimic joint="ring_q1" multiplier="1.05851325" offset="0.72349796"/>
 	</joint>
+
 	<link name="ring_anchor"/>
 	<joint name="rng_anchor" type="fixed">
 		<parent link="ring_L2"/>
@@ -220,6 +218,7 @@
 			</geometry>
 		</visual>
 	</link>
+
 	<link name="pinky_L2">
 		<visual name="pinky_mesh_2">
 			<origin rpy="0 0 0" xyz="0 0 0"/>
@@ -228,6 +227,7 @@
 			</geometry>
 		</visual>
 	</link>
+
 	<joint name="pinky_q1" type="revolute">
 		<parent link="thumb_base"/>
 		<child link="pinky_L1"/>
@@ -235,6 +235,7 @@
 		<limit lower="0" upper="2.0943951"/>
 		<axis xyz="0 0 1"/>
 	</joint>
+
 	<joint name="pinky_q2" type="revolute">
 		<parent link="pinky_L1"/>
 		<child link="pinky_L2"/>
@@ -243,6 +244,7 @@
 		<limit lower="0.0" upper="2.6586"/>
 		<mimic joint="pinky_q1" multiplier="1.05851325" offset="0.72349796"/>
 	</joint>
+
 	<link name="pinky_anchor"/>
 	<joint name="pnky_anchor" type="fixed">
 		<parent link="pinky_L2"/>
@@ -258,6 +260,7 @@
 			</geometry>
 		</visual>
 	</link>
+
 	<link name="thumb_L2">
 		<visual name="thumb_mesh_2">
 			<origin rpy="0 0 0" xyz="0 0 0"/>
@@ -266,6 +269,7 @@
 			</geometry>
 		</visual>
 	</link>
+
 	<joint name="thumb_q1" type="revolute">
 		<parent link="thumb_base"/>
 		<child link="thumb_L1"/>
@@ -273,6 +277,7 @@
 		<axis xyz="0 0 1"/>
 		<limit lower="-2.0943951" upper="0"/>
 	</joint>
+
 	<joint name="thumb_q2" type="revolute">
 		<parent link="thumb_L1"/>
 		<child link="thumb_L2"/>
@@ -280,6 +285,7 @@
 		<axis xyz="0 0 1"/>
 		<limit lower="0" upper="2.0943951"/>
 	</joint>
+
 	<link name="thumb_anchor"/>
 	<joint name="thmb_anchor" type="fixed">
 		<parent link="thumb_L2"/>

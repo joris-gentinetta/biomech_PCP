@@ -65,41 +65,21 @@ if __name__ == "__main__":
         target_angles = target_angles.loc[len(target_angles)//5 * 4:].copy()
         target_angles.index = range(len(target_angles))
 
+        # # # todo remove:
+        # from helpers.utils import AnglesHelper
+        # angles_helper = AnglesHelper()
+        # target_angles = angles_helper.mirror_angles(target_angles, 'Right')
+        # pred_angles = angles_helper.mirror_angles(pred_angles, 'Right')
+
     physicsClient = p.connect(p.GUI)
     p.setGravity(0, 0, -9.81)
 
     handStartPos = [0, 0, 0]
     handStartOrientation = p.getQuaternionFromEuler([0, 0, 0])
-    urdf_path = "URDF/ability_hand_left_large-wrist.urdf"  # if args.intact_hand == 'Left' else "URDF/ability_hand_right_large.urdf"
+    urdf_path = "URDF/ability_hand_left_large-wrist.urdf"  if args.intact_hand == 'Left' else "URDF/ability_hand_right_large-wrist.urdf"
     target_hand = p.loadURDF(urdf_path, handStartPos, handStartOrientation,
                         flags=p.URDF_USE_SELF_COLLISION, useFixedBase=True)
-    ###########################
-    # Get the number of joints
-    num_joints = p.getNumJoints(target_hand)
 
-    # Iterate over all joints and print their info
-    for i in range(num_joints):
-        joint_info = p.getJointInfo(target_hand, i)
-        joint_index = joint_info[0]
-        joint_name = joint_info[1].decode('utf-8')
-        print(f"Joint Index: {joint_index}, Joint Name: {joint_name}")
-    #
-    # camera_distance = 1.34  # Closer distance makes the "zoom" effect
-    # camera_yaw = 223  # Adjust as needed for best angle
-    # camera_pitch = -25  # Adjust as needed
-    # camera_target_position = [0.59, -0.65, 0.1]  # Focus on the center of your model or a specific part
-    # p.resetDebugVisualizerCamera(camera_distance, camera_yaw, camera_pitch, camera_target_position)
-    # #
-    # wrist_rotation_joint_index = 0  # Replace with the actual joint index if different
-    # p.setJointMotorControl2(target_hand, wrist_rotation_joint_index, p.POSITION_CONTROL, targetPosition=0.0)
-    #
-    # sleep(1)
-    # print('went')
-    # p.setJointMotorControl2(target_hand, wrist_rotation_joint_index, p.POSITION_CONTROL, targetPosition=1.0)
-    #
-    # p.stepSimulation()
-    # sleep(10)
-    ###########################
     for i in range(1, p.getNumJoints(target_hand)):
         p.changeVisualShape(target_hand, i, rgbaColor=[0, 1, 0, 0.7])
     if args.config_name:
