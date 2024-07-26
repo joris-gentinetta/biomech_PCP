@@ -1,4 +1,4 @@
-name: DenseNet-stateful
+name: GRU-benchmark
 method: grid
 
 metric:
@@ -36,7 +36,7 @@ parameters:
     value: 0.01
 
   n_epochs:
-    value: 30
+    value: 100
 
   seq_len:
     value: 120
@@ -68,7 +68,7 @@ parameters:
     value: DenseNet
 
   state_mode:
-    values: stateful
+    values: stateAware
 
   hidden_size:
     value: 20

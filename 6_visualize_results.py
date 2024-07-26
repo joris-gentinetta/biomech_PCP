@@ -3,6 +3,7 @@ import pybullet as p
 import cv2
 import argparse
 from os.path import join, exists
+from time import sleep
 import time
 multiplier = 1.05851325
 offset = 0.72349796
@@ -56,7 +57,7 @@ if __name__ == "__main__":
 
             cap.release()
             out.release()
-            cap = cv2.VideoCapture(join(args.data_dir, 'experiments', args.experiment_name, 'visualization_test.mp4'))
+        cap = cv2.VideoCapture(join(args.data_dir, 'experiments', args.experiment_name, 'visualization_test.mp4'))
 
         pred_angles = pd.read_parquet(join(args.data_dir, 'experiments', args.experiment_name, f'pred_angles-{args.config_name}.parquet'))
         pred_angles.index = range(len(pred_angles))
@@ -72,12 +73,39 @@ if __name__ == "__main__":
     urdf_path = "URDF/ability_hand_left_large-wrist.urdf"  # if args.intact_hand == 'Left' else "URDF/ability_hand_right_large.urdf"
     target_hand = p.loadURDF(urdf_path, handStartPos, handStartOrientation,
                         flags=p.URDF_USE_SELF_COLLISION, useFixedBase=True)
-    for i in range(p.getNumJoints(target_hand)):
+    ###########################
+    # Get the number of joints
+    num_joints = p.getNumJoints(target_hand)
+
+    # Iterate over all joints and print their info
+    for i in range(num_joints):
+        joint_info = p.getJointInfo(target_hand, i)
+        joint_index = joint_info[0]
+        joint_name = joint_info[1].decode('utf-8')
+        print(f"Joint Index: {joint_index}, Joint Name: {joint_name}")
+    #
+    # camera_distance = 1.34  # Closer distance makes the "zoom" effect
+    # camera_yaw = 223  # Adjust as needed for best angle
+    # camera_pitch = -25  # Adjust as needed
+    # camera_target_position = [0.59, -0.65, 0.1]  # Focus on the center of your model or a specific part
+    # p.resetDebugVisualizerCamera(camera_distance, camera_yaw, camera_pitch, camera_target_position)
+    # #
+    # wrist_rotation_joint_index = 0  # Replace with the actual joint index if different
+    # p.setJointMotorControl2(target_hand, wrist_rotation_joint_index, p.POSITION_CONTROL, targetPosition=0.0)
+    #
+    # sleep(1)
+    # print('went')
+    # p.setJointMotorControl2(target_hand, wrist_rotation_joint_index, p.POSITION_CONTROL, targetPosition=1.0)
+    #
+    # p.stepSimulation()
+    # sleep(10)
+    ###########################
+    for i in range(1, p.getNumJoints(target_hand)):
         p.changeVisualShape(target_hand, i, rgbaColor=[0, 1, 0, 0.7])
     if args.config_name:
         pred_hand = p.loadURDF(urdf_path, handStartPos, handStartOrientation,
                             flags=p.URDF_USE_SELF_COLLISION, useFixedBase=True)
-        for i in range(p.getNumJoints(pred_hand)):
+        for i in range(1, p.getNumJoints(pred_hand)):
             p.changeVisualShape(pred_hand, i, rgbaColor=[1, 0, 0, 0.7])
     # visual_shape_id = p.createVisualShape(shapeType=p.GEOM_SPHERE, radius=0.01, rgbaColor=[1, 0, 0, 1])
     # point_id = p.createMultiBody(baseMass=0,
@@ -89,20 +117,21 @@ if __name__ == "__main__":
     camera_distance = 1.34  # Closer distance makes the "zoom" effect
     camera_yaw = 223  # Adjust as needed for best angle
     camera_pitch = -25  # Adjust as needed
-    camera_target_position = [0.59, -0.65, -0.38]  # Focus on the center of your model or a specific part
+    camera_target_position = [0.59, -0.65, -0.3]  # Focus on the center of your model or a specific part
     p.resetDebugVisualizerCamera(camera_distance, camera_yaw, camera_pitch, camera_target_position)
 
     # joint_ids = {'index': (1, 2, 3), 'middle': (4, 5, 6), 'ring': (7, 8, 9), 'pinky': (10, 11, 12),
     #              'thumb': (13, 14, 15)}
 
     joint_ids = {
+        'elbow': 0,
         'wrist_rotation': 1,
         'wrist_flexion': 2,
-        'index': (3, 4, 5),
-        'middle': (6, 7, 8),
-        'ring': (9, 10, 11),
-        'pinky': (12, 13, 14),
-        'thumb': (15, 16, 17)
+        'index': (4, 5, 6),
+        'middle': (7, 8, 9),
+        'ring': (10, 11, 12),
+        'pinky': (13, 14, 15),
+        'thumb': (16, 17, 18)
     }
 
     time.sleep(1) # want to wait for the GUI to load
