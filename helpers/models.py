@@ -8,7 +8,7 @@ import torch.optim as optim
 # torch.autograd.set_detect_anomaly(True)
 from abc import ABC, abstractmethod
 from tqdm import tqdm
-from bilinear import Muscles, Joints
+from bilinear import Muscles, Joints, M as bilinear_M
 
 SR = 60
 
@@ -238,6 +238,36 @@ class PhysMuscleModel(TimeSeriesRegressor):
         return out, None
 
 
+class NNMuscleModel(TimeSeriesRegressor):
+    def __init__(self, input_size, output_size, device, **kwargs):
+        super().__init__(input_size, output_size, device)
+        self.model_type = kwargs.get('model_type')
+        self.model = self.get_model(input_size + output_size, output_size, kwargs)
+
+    def get_starting_states(self, batch_size, y=None):
+        return self.model.get_starting_states(batch_size, y)
+
+    def forward(self, x, states):
+        # return self.model(x, states[0])
+
+        out = torch.zeros((x.shape[0], x.shape[1], self.output_size), dtype=torch.float, device=self.device)  # todo size of states to calc input size
+        for i in range(x.shape[1]):
+            model_input = torch.cat([x[:, i, :], states[1].flatten(start_dim=1)], dim=1)  # todo torch.zeros_like for naive
+            out[:, i, :], states[0] = self.model(model_input, states[0])
+        return out, None
+
+    def get_model(self, input_size, output_size, config):
+        if config['model_type'] == 'DenseNet':
+            modelclass = DenseNet
+        elif config['model_type'] == 'CNN':
+            modelclass = CNN
+        elif config['model_type'] in ['RNN', 'LSTM', 'GRU']:
+            modelclass = RNN
+        else:
+            raise ValueError(f'Unknown model type for NNMuscleModel {config["model_type"]}')
+        return modelclass(input_size, output_size, self.device, **config)
+
+
 class PhysJointModel(TimeSeriesRegressor):
     def __init__(self, input_size, output_size, device, **kwargs):
         super().__init__(input_size, output_size, device)
@@ -255,7 +285,7 @@ class PhysJointModel(TimeSeriesRegressor):
         theta = y[:, 0, :]
         d_theta = (y[:, 1, :] - y[:, 0, :]) * SR
         states = torch.stack([theta, d_theta], dim=2)
-        return [states.unsqueeze(3) * self.model.M.unsqueeze(0).unsqueeze(2), states] # todo dimensions
+        return [states.unsqueeze(3) * self.model.M.unsqueeze(0).unsqueeze(2), states]  # todo dimensions
 
     def forward(self, x, joint_states):
         out = torch.zeros((x.shape[0], x.shape[1], self.output_size), dtype=torch.float, device=self.device)
@@ -264,20 +294,55 @@ class PhysJointModel(TimeSeriesRegressor):
             out[:, i, :], muscle_states, joint_states = self.model(F[:, i, :], K[:, i, :], joint_states)
         return out, muscle_states, joint_states
 
+class NNJointModel(TimeSeriesRegressor):
+    def __init__(self, input_size, output_size, device, **kwargs):
+        super().__init__(input_size, output_size, device)
+        self.model_type = kwargs.get('model_type')
+        self.model = self.get_model(input_size, output_size * 5, kwargs)
+
+    def get_starting_states(self, batch_size, y=None):  # todo make starting state a parameter?
+        theta = y[:, 0, :]
+        d_theta = (y[:, 1, :] - y[:, 0, :]) * SR
+        states = torch.stack([theta, d_theta], dim=2)
+        M = torch.ones((1, self.output_size, 1, 2))
+        M[:, :, :, 0] = -bilinear_M
+        M[:, :, :, 1] = bilinear_M
+
+        return [states.unsqueeze(3) * M,  self.model.get_starting_states(batch_size, y)]
+
+    def forward(self, x, joint_states):
+        out = torch.zeros((x.shape[0], x.shape[1], self.output_size), dtype=torch.float, device=self.device)
+        for i in range(x.shape[1]):
+            model_output, joint_states = self.model(x[:, i, :], joint_states)
+            out[:, i, :], muscle_states = model_output.split(dim=1, split_size=[self.output_size, model_output.shape[1] - self.output_size])
+            muscle_states = muscle_states.reshape(muscle_states.shape[0], self.output_size, 2, 2)
+        return out, muscle_states, joint_states
+
+    def get_model(self, input_size, output_size, config): # todo add to TimeSeriesRegressor ?
+        if config['model_type'] == 'DenseNet':
+            modelclass = DenseNet
+        elif config['model_type'] == 'CNN':
+            modelclass = CNN
+        elif config['model_type'] in ['RNN', 'LSTM', 'GRU']:
+            modelclass = RNN
+        else:
+            raise ValueError(f'Unknown model type for NNJointModel {config["model_type"]}')
+        return modelclass(input_size, output_size, self.device, **config)
+
 
 class ModularModel(TimeSeriesRegressor):
     def __init__(self, input_size, output_size, device, **kwargs):
         super().__init__(input_size, output_size, device)
-        activation_model = kwargs.get('activation_model')
-        muscle_model = kwargs.get('muscle_model')
-        joint_model = kwargs.get('joint_model')
+        self.activation_model_config = kwargs.get('activation_model')
+        self.muscle_model_config = kwargs.get('muscle_model')
+        self.joint_model_config = kwargs.get('joint_model')
 
         self.device = device
 
-        self.activation_model = self.get_model(input_size, output_size * 2, activation_model)
+        self.activation_model = self.get_model(input_size, output_size * 2, self.activation_model_config)
         self.sigmoid = nn.Sigmoid()
-        self.muscle_model = self.get_model(output_size * 2, output_size * 4, muscle_model)
-        self.joint_model = self.get_model(output_size * 4, output_size, joint_model)
+        self.muscle_model = PhysMuscleModel(output_size * 2, output_size * 4, self.device, **self.muscle_model_config) if self.muscle_model_config['model_type'] == 'PhysMuscleModel' else NNMuscleModel(output_size * 2, output_size * 4, self.device, **self.muscle_model_config)
+        self.joint_model = PhysJointModel(output_size * 4, output_size, self.device, **self.joint_model_config) if self.joint_model_config['model_type'] == 'PhysJointModel' else NNJointModel(output_size * 4, output_size, self.device, **self.joint_model_config)
 
     def get_model(self, input_size, output_size, config):
         if config['model_type'] == 'DenseNet':
@@ -302,7 +367,10 @@ class ModularModel(TimeSeriesRegressor):
         for i in range(x.shape[1]):
             activation_out, states[0] = self.activation_model(x[:, i:i+1, :], states[0])
             activation_out = self.sigmoid(activation_out)
+            # if self.muscle_model_config['model_type'] == 'PhysMuscleModel':
             muscle_out, states[1][0] = self.muscle_model(activation_out, states[1])
+            # else:
+            #     muscle_out, states[1][0] = self.muscle_model(activation_out, states[1][0])
             out[:, i:i+1, :], states[1][1], states[2] = self.joint_model(muscle_out, states[2])
 
         return out, states

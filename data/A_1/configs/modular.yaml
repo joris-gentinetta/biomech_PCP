@@ -1,4 +1,4 @@
-name: modular
+name: modular-dense_joint_model-LR_0.001
 method: grid
 
 metric:
@@ -9,15 +9,20 @@ parameters:
   recordings:
     value:
 ##    - minJerk/fingersFlEx
-    - minJerk/wristFlEx
+#    - minJerk/wristFlEx
     - minJerk/wristFlexHandOpen
     - minJerk/thumbFlEx
     - minJerk/handCloseOpen
     - minJerk/pinchCloseOpen
     - minJerk/indexFlEx
-    - minJerk/indexFlexDigtisEx
+#    - minJerk/indexFlexDigtisEx
     - minJerk/wristFlexHandClose
     - minJerk/digitsFlEx
+
+  test_recordings:
+    value:
+      - minJerk/indexFlexDigtisEx
+
 
   features:
     value:
@@ -54,7 +59,7 @@ parameters:
     - [Left, thumbInPlaneAng]
     - [Left, thumbOutPlaneAng]
 #    - [Left, wristRot]
-#    - [Left, wristFlex]
+    - [Left, wristFlex]
 
   warmup_steps:
     value: 10
@@ -66,7 +71,7 @@ parameters:
     value: online
 
   wandb_project:
-    value: PCP-no_wrist
+    value: A_1-experiment
 
   model_type:
     value: ModularModel
@@ -77,10 +82,16 @@ parameters:
             n_layers: 4,}
 
   muscle_model:
-    value: {model_type: PhysMuscleModel
+    value: {model_type: PhysMuscleModel,
+#            hidden_size: 100,
+#            n_layers: 4,
 #      n_freeze_epochs: 5,
       }
   joint_model:
-    value: {model_type: PhysJointModel
+    value: {
+      model_type: DenseNet,
+            hidden_size: 100,
+            n_layers: 4,
+#             model_type: PhysJointModel,
 #      n_freeze_epochs: 5,
       }

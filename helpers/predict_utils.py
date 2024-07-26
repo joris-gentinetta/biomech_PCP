@@ -10,28 +10,33 @@ import pandas as pd
 import matplotlib.pyplot as plt
 import math
 
+def load_data(data_dir, intact_hand, features):
+    angles = pd.read_parquet(join(data_dir, 'cropped_smooth_angles.parquet'))
+    angles.index = range(len(angles))
+    emg = np.load(join(data_dir, 'cropped_aligned_emg.npy'))
 
-def get_data(config, data_dirs, intact_hand, visualize=False):
+    data = angles.copy()
+    data.loc[:, (intact_hand, 'thumbInPlaneAng')] = data.loc[:,
+                                                    (intact_hand, 'thumbInPlaneAng')] + math.pi
+    data.loc[:, (intact_hand, 'wristRot')] = (data.loc[:, (intact_hand, 'wristRot')] + math.pi) / 2
+    data.loc[:, (intact_hand, 'wristFlex')] = (data.loc[:, (intact_hand, 'wristFlex')] + math.pi / 2)
+
+    data = (2 * data - math.pi) / math.pi
+    data = np.clip(data, -1, 1)
+
+    for feature in features:
+        data[feature] = emg[:, int(feature[1])]
+
+    return data
+
+
+def get_data(config, data_dirs, intact_hand, visualize=False, test_dirs=None):
 
     trainsets = []
     testsets = []
     combined_sets = []
     for recording_id, data_dir in enumerate(data_dirs):
-        angles = pd.read_parquet(join(data_dir, 'cropped_smooth_angles.parquet'))
-        angles.index = range(len(angles))
-        emg = np.load(join(data_dir, 'cropped_aligned_emg.npy'))
-
-        data = angles.copy()
-        data.loc[:, (intact_hand, 'thumbInPlaneAng')] = data.loc[:,
-                                                             (intact_hand, 'thumbInPlaneAng')] + math.pi
-        data.loc[:, (intact_hand, 'wristRot')] = (data.loc[:, (intact_hand, 'wristRot')] + math.pi) / 2
-        data.loc[:, (intact_hand, 'wristFlex')] = (data.loc[:, (intact_hand, 'wristFlex')] + math.pi / 2)
-
-        data = (2 * data - math.pi) / math.pi
-        data = np.clip(data, -1, 1)
-
-        for feature in config.features:
-            data[feature] = emg[:, int(feature[1])]
+        data = load_data(data_dir, intact_hand, config.features)
 
         if visualize:
             axs = data[config.features].plot(subplots=True)
@@ -46,11 +51,23 @@ def get_data(config, data_dirs, intact_hand, visualize=False):
             plt.title(f'Targets {config.recordings[recording_id]}')
             plt.show()
 
+        # if test_dirs is None:
         test_set = data.loc[len(data) // 5 * 4:].copy()
-        train = data.loc[: len(data) // 5 * 4].copy()
-        trainsets.append(train)
+        train_set = data.loc[: len(data) // 5 * 4].copy()
+        trainsets.append(train_set)
         testsets.append(test_set)
         combined_sets.append(data.copy())
+        # else:
+        #     train_set = data.copy()
+        #     trainsets.append(train_set)
+        #     combined_sets.append(train_set)
+
+    if test_dirs is not None:
+        for test_dir in test_dirs:
+            data = load_data(test_dir, intact_hand, config.features)
+            testsets.append(data)
+            combined_sets.append(data)
+
 
     return trainsets, testsets, combined_sets
 
@@ -91,7 +108,7 @@ def train_model(trainsets, testsets, device, wandb_mode, wandb_project, wandb_na
                 pbar.set_postfix({'lr': lr, 'train_loss': train_loss, 'val_loss': val_loss})
 
                 # print('Total val loss:', val_loss)
-                log = {f'val_loss/{config.recordings[set_id]}': loss for set_id, loss in enumerate(val_losses)}
+                log = {f'val_loss/{(config.recordings + config.test_recordings)[set_id]}': loss for set_id, loss in enumerate(val_losses)}
                 log['total_val_loss'] = val_loss
                 log['train_loss'] = train_loss
                 log['lr'] = lr

@@ -16,7 +16,7 @@ def wandb_process(arguments):
     config = arguments['config']
     wandb.agent(arguments['sweep_id'],
                 lambda: train_model(arguments['trainsets'], arguments['testsets'], arguments['device'], config.wandb_mode, config.wandb_project, config.name))
-    print(arguments['id'])
+    # print(arguments['id'])
 
 
 if __name__ == '__main__':
@@ -64,7 +64,10 @@ if __name__ == '__main__':
     data_dirs = [join('data', args.person_dir, 'recordings', recording, 'experiments', '1') for recording in
                  config.recordings]
 
-    trainsets, testsets, combined_sets = get_data(config, data_dirs, args.intact_hand, visualize=args.visualize)
+    test_dirs = [join('data', args.person_dir, 'recordings', recording, 'experiments', '1') for recording in
+                 config.test_recordings] if config.test_recordings is not None else None
+
+    trainsets, testsets, combined_sets = get_data(config, data_dirs, args.intact_hand, visualize=args.visualize, test_dirs=test_dirs)
 
     if args.hyperparameter_search:  # training on training set, evaluation on test set
         sweep_id = wandb.sweep(wandb_config, project=config.wandb_project)
@@ -87,7 +90,7 @@ if __name__ == '__main__':
             test_set.loc[:, (args.intact_hand, 'thumbInPlaneAng')] = test_set.loc[:, (args.intact_hand, 'thumbInPlaneAng')] - math.pi
             test_set.loc[:, (args.intact_hand, 'wristRot')] = (test_set.loc[:, (args.intact_hand, 'wristRot')] * 2) - math.pi
             test_set.loc[:, (args.intact_hand, 'wristFlex')] = (test_set.loc[:, (args.intact_hand, 'wristFlex')] - math.pi / 2)
-            test_set.to_parquet(join(data_dirs[set_id], f'pred_angles-{config.name}.parquet'))
+            test_set.to_parquet(join((data_dirs + test_dirs)[set_id], f'pred_angles-{config.name}.parquet'))
 
 
     if args.save_model:  # trains on the whole dataset and saves the model
