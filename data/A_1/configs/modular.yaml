@@ -1,4 +1,4 @@
-name: modular-GRU_GRU_GRU-LR_0.001-test
+name: modular-dense_GRU_GRU-LR_0.01-big
 method: grid
 
 metric:
@@ -41,7 +41,7 @@ parameters:
     value: 0.0
 
   learning_rate:
-    value: 0.001
+    value: 0.01
 
   n_epochs:
     value: 100
@@ -76,16 +76,16 @@ parameters:
     value: ModularModel
 
   activation_model:
-    value: {model_type: GRU,
+    value: {model_type: DenseNet,
             hidden_size: 100,
-            n_layers: 2,}
+            n_layers: 4,}
 
   muscle_model:
     value: {
 #             model_type: PhysMuscleModel,
       model_type: GRU,
             hidden_size: 100,
-            n_layers: 2,
+            n_layers: 4,
 #      n_freeze_epochs: 5,
       }
 
@@ -93,7 +93,7 @@ parameters:
     value: {
       model_type: GRU,
             hidden_size: 100,
-            n_layers: 2,
+            n_layers: 4,
 #             model_type: PhysJointModel,
 #      n_freeze_epochs: 5,
       }

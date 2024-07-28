@@ -39,6 +39,8 @@ class RNN(TimeSeriesRegressor):
         if self.state_mode == 'stateAware':
             self.input_size += output_size
 
+        self.tanh = nn.Tanh() if kwargs.get('tanh', False) else None
+
         if self.model_type == 'RNN':
             self.rnn = nn.RNN(self.input_size, self.hidden_size, self.n_layers, batch_first=True)
         elif self.model_type == 'LSTM':
@@ -79,6 +81,8 @@ class RNN(TimeSeriesRegressor):
         else:
             out, states = self.rnn(x, states)
             out = self.fc(out)
+            if self.tanh is not None:
+                out = self.tanh(out)
 
         return out, states
 
@@ -128,6 +132,8 @@ class DenseNet(TimeSeriesRegressor):
         if self.state_mode == 'stateAware':
             self.input_size += output_size
 
+        self.tanh = nn.Tanh() if kwargs.get('tanh', False) else None
+
         layers = []
         layers.append(nn.Linear(self.input_size, hidden_size))
         layers.append(nn.LeakyReLU())
@@ -154,16 +160,22 @@ class DenseNet(TimeSeriesRegressor):
             for i in range(x.shape[1]):
                 update = self.model(x[:, i:i+1, :])
                 states = states + update
+                if self.tanh is not None:
+                    states = self.tanh(states)
                 out[:, i:i+1, :] = states
 
         elif self.state_mode == 'stateAware':
             out = torch.zeros((x.shape[0], x.shape[1], self.output_size), dtype=torch.float, device=self.device)
             for i in range(x.shape[1]):
                 states = self.model(torch.cat((x[:, i:i+1, :], states), dim=2))
+                if self.tanh is not None:
+                    states = self.tanh(states)
                 out[:, i:i+1, :] = states
 
         else:
             out = self.model(x)
+            if self.tanh is not None:
+                out = self.tanh(out)
 
         return out, states
 

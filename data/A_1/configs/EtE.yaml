@@ -1,4 +1,4 @@
-name: DenseNet
+name: GRU
 method: grid
 
 metric:
@@ -42,7 +42,7 @@ parameters:
     value: 0.0
 
   learning_rate:
-    value: 0.01
+    value: 0.001
 
   n_epochs:
     value: 100
@@ -65,22 +65,25 @@ parameters:
     value: 10
 
   batch_size:
-    value: 8
+    value: 1 # todo: 8
 
   wandb_mode:
     value: online
 
   wandb_project:
-    value: A_1-experiment
+    value: A_1-GRU-HS
 
   model_type:
-    value: DenseNet
+    value: GRU
 
   state_mode:
     value: stateless
 
   hidden_size:
-    value: 20
+    value: 128
 
   n_layers:
-    value: 4
+    values: 2
+
+  tanh:
+    value: False
