@@ -7,7 +7,7 @@ import math
 import torch
 from torch import nn
 from torch.nn.utils.parametrize import register_parametrization
-from utils import Exponential
+from dynamics.utils import Exponential
 
 
 ## Muscle parameters

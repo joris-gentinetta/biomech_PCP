@@ -1,4 +1,4 @@
-name: modular-dense_joint_model-LR_0.001
+name: modular-GRU_GRU_GRU-LR_0.001-test
 method: grid
 
 metric:
@@ -22,7 +22,6 @@ parameters:
   test_recordings:
     value:
       - minJerk/indexFlexDigtisEx
-
 
   features:
     value:
@@ -77,21 +76,24 @@ parameters:
     value: ModularModel
 
   activation_model:
-    value: {model_type: DenseNet,
+    value: {model_type: GRU,
             hidden_size: 100,
-            n_layers: 4,}
+            n_layers: 2,}
 
   muscle_model:
-    value: {model_type: PhysMuscleModel,
-#            hidden_size: 100,
-#            n_layers: 4,
+    value: {
+#             model_type: PhysMuscleModel,
+      model_type: GRU,
+            hidden_size: 100,
+            n_layers: 2,
 #      n_freeze_epochs: 5,
       }
+
   joint_model:
     value: {
-      model_type: DenseNet,
+      model_type: GRU,
             hidden_size: 100,
-            n_layers: 4,
+            n_layers: 2,
 #             model_type: PhysJointModel,
 #      n_freeze_epochs: 5,
       }

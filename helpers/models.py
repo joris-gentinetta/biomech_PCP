@@ -252,8 +252,8 @@ class NNMuscleModel(TimeSeriesRegressor):
 
         out = torch.zeros((x.shape[0], x.shape[1], self.output_size), dtype=torch.float, device=self.device)  # todo size of states to calc input size
         for i in range(x.shape[1]):
-            model_input = torch.cat([x[:, i, :], states[1].flatten(start_dim=1)], dim=1)  # todo torch.zeros_like for naive
-            out[:, i, :], states[0] = self.model(model_input, states[0])
+            model_input = torch.cat([x[:, i, :], states[1].flatten(start_dim=1)], dim=1).unsqueeze(1)  # todo torch.zeros_like for naive
+            out[:, i:i+1, :], states[0] = self.model(model_input, states[0])
         return out, None
 
     def get_model(self, input_size, output_size, config):
@@ -285,40 +285,87 @@ class PhysJointModel(TimeSeriesRegressor):
         theta = y[:, 0, :]
         d_theta = (y[:, 1, :] - y[:, 0, :]) * SR
         states = torch.stack([theta, d_theta], dim=2)
-        return [states.unsqueeze(3) * self.model.M.unsqueeze(0).unsqueeze(2), states]  # todo dimensions
+        return [states.unsqueeze(3) * self.model.M.unsqueeze(0).unsqueeze(2), states, theta]  # todo dimensions
 
     def forward(self, x, joint_states):
         out = torch.zeros((x.shape[0], x.shape[1], self.output_size), dtype=torch.float, device=self.device)
         F, K = x.reshape(x.shape[0], x.shape[1], self.output_size, 4).split(dim=3, split_size=2)
         for i in range(x.shape[1]):
-            out[:, i, :], muscle_states, joint_states = self.model(F[:, i, :], K[:, i, :], joint_states)
-        return out, muscle_states, joint_states
+            out[:, i, :], joint_states[0], joint_states[1] = self.model(F[:, i, :], K[:, i, :], joint_states[1])
+            joint_states[2] = out[:, i, :]
+        return out, joint_states
+#
+# class NNJointModel(TimeSeriesRegressor): # this is the implicit M model
+#     def __init__(self, input_size, output_size, device, **kwargs):
+#         super().__init__(input_size, output_size, device)
+#         self.model_type = kwargs.get('model_type')
+#         self.model = self.get_model(input_size, output_size * 5, kwargs)
+#         self.tanh = nn.Tanh()
+#
+#
+#     def get_starting_states(self, batch_size, y=None):  # todo make starting state a parameter?
+#         theta = y[:, 0, :]
+#         d_theta = (y[:, 1, :] - y[:, 0, :]) * SR
+#         states = torch.stack([theta, d_theta], dim=2)
+#         M = torch.ones((1, self.output_size, 1, 2))
+#         M[:, :, :, 0] = -bilinear_M
+#         M[:, :, :, 1] = bilinear_M
+#
+#         return [states.unsqueeze(3) * M,  self.model.get_starting_states(batch_size, y)]
+#
+#     def forward(self, x, joint_states):
+#         out = torch.zeros((x.shape[0], x.shape[1], self.output_size), dtype=torch.float, device=self.device)
+#         for i in range(x.shape[1]):
+#             model_output, joint_states = self.model(x[:, i, :], joint_states)
+#             out[:, i, :], muscle_states = model_output.split(dim=1, split_size=[self.output_size, model_output.shape[1] - self.output_size])
+#             muscle_states = self.tanh(muscle_states.reshape(muscle_states.shape[0], self.output_size, 2, 2))
+#         return out, muscle_states, joint_states
+#
+#     def get_model(self, input_size, output_size, config): # todo add to TimeSeriesRegressor ?
+#         if config['model_type'] == 'DenseNet':
+#             modelclass = DenseNet
+#         elif config['model_type'] == 'CNN':
+#             modelclass = CNN
+#         elif config['model_type'] in ['RNN', 'LSTM', 'GRU']:
+#             modelclass = RNN
+#         else:
+#             raise ValueError(f'Unknown model type for NNJointModel {config["model_type"]}')
+#         return modelclass(input_size, output_size, self.device, **config)
+
 
 class NNJointModel(TimeSeriesRegressor):
     def __init__(self, input_size, output_size, device, **kwargs):
         super().__init__(input_size, output_size, device)
         self.model_type = kwargs.get('model_type')
-        self.model = self.get_model(input_size, output_size * 5, kwargs)
+        self.model = self.get_model(input_size, output_size, kwargs)
+        self.tanh = nn.Tanh()
+
+        moment_arms = torch.ones((self.output_size, 2), dtype=torch.float, device=self.device) * bilinear_M
+        moment_arms[:, 0] = moment_arms[:, 0] * -1  # note that sign flipped
+        self.M = nn.Parameter(data=moment_arms)
 
     def get_starting_states(self, batch_size, y=None):  # todo make starting state a parameter?
         theta = y[:, 0, :]
         d_theta = (y[:, 1, :] - y[:, 0, :]) * SR
         states = torch.stack([theta, d_theta], dim=2)
-        M = torch.ones((1, self.output_size, 1, 2))
-        M[:, :, :, 0] = -bilinear_M
-        M[:, :, :, 1] = bilinear_M
 
-        return [states.unsqueeze(3) * M,  self.model.get_starting_states(batch_size, y)]
+        return [states.unsqueeze(3) * self.M.unsqueeze(0).unsqueeze(2), self.model.get_starting_states(batch_size, y), theta]
 
     def forward(self, x, joint_states):
         out = torch.zeros((x.shape[0], x.shape[1], self.output_size), dtype=torch.float, device=self.device)
         for i in range(x.shape[1]):
-            model_output, joint_states = self.model(x[:, i, :], joint_states)
-            out[:, i, :], muscle_states = model_output.split(dim=1, split_size=[self.output_size, model_output.shape[1] - self.output_size])
-            muscle_states = muscle_states.reshape(muscle_states.shape[0], self.output_size, 2, 2)
-        return out, muscle_states, joint_states
+            out[:, i:i+1, :], joint_states[1] = self.model(x[:, i:i+1, :], joint_states[1])
+            theta = out[:, i, :]
+            d_theta = (theta - joint_states[2]) * SR
+            all_states = torch.stack([theta, d_theta], dim=2)
+            joint_states[0] = torch.tanh(all_states.unsqueeze(3) * self.M.unsqueeze(0).unsqueeze(2))
 
-    def get_model(self, input_size, output_size, config): # todo add to TimeSeriesRegressor ?
+            joint_states[2] = theta
+
+        return out, joint_states
+
+
+    def get_model(self, input_size, output_size, config):  # todo add to TimeSeriesRegressor ?
         if config['model_type'] == 'DenseNet':
             modelclass = DenseNet
         elif config['model_type'] == 'CNN':
@@ -360,7 +407,7 @@ class ModularModel(TimeSeriesRegressor):
         return modelclass(input_size, output_size, self.device, **config)
 
     def get_starting_states(self, batch_size, y=None):
-        return [self.activation_model.get_starting_states(batch_size, y),  [self.muscle_model.get_starting_states(batch_size, y), self.joint_model.get_starting_states(batch_size, y)[0]], self.joint_model.get_starting_states(batch_size, y)[1]]
+        return [self.activation_model.get_starting_states(batch_size, y),  self.muscle_model.get_starting_states(batch_size, y), self.joint_model.get_starting_states(batch_size, y)]
 
     def forward(self, x, states):
         out = torch.zeros((x.shape[0], x.shape[1], self.output_size), dtype=torch.float, device=self.device)
@@ -368,10 +415,10 @@ class ModularModel(TimeSeriesRegressor):
             activation_out, states[0] = self.activation_model(x[:, i:i+1, :], states[0])
             activation_out = self.sigmoid(activation_out)
             # if self.muscle_model_config['model_type'] == 'PhysMuscleModel':
-            muscle_out, states[1][0] = self.muscle_model(activation_out, states[1])
+            muscle_out, states[1] = self.muscle_model(activation_out, [states[1], states[2][0]])
             # else:
             #     muscle_out, states[1][0] = self.muscle_model(activation_out, states[1][0])
-            out[:, i:i+1, :], states[1][1], states[2] = self.joint_model(muscle_out, states[2])
+            out[:, i:i+1, :], states[2] = self.joint_model(muscle_out, states[2])
 
         return out, states
 
