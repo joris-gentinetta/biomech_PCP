@@ -206,6 +206,29 @@ class TSDataset(Dataset):
         self.index_shift = shift
 
 
+class OLDataset(Dataset):
+    def __init__(self, data_sources, features, targets, device):
+        self.data_sources = data_sources
+        for i in range(len(self.data_sources)):
+            self.data_sources[i] = self.data_sources[i].astype('float32')
+            self.data_sources[i] = self.data_sources[i].reset_index(drop=True)
+        # combine all data sources:
+        self.data = pd.concat(self.data_sources, axis=0)
+        self.data = self.data.reset_index(drop=True)
+        self.features = features
+        self.targets = targets
+        self.device = device
+
+    def __len__(self):
+        return len(self.data) - 1
+
+    def __getitem__(self, idx):
+        x = torch.tensor(self.data.loc[idx, self.features].values, dtype=torch.float32, device=self.device).unsqueeze(0)
+        y = torch.tensor(self.data.loc[idx, self.targets].values, dtype=torch.float32, device=self.device).unsqueeze(0)
+
+        return x, y
+
+
 class TSDataLoader(DataLoader):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)

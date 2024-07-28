@@ -529,6 +529,14 @@ class TimeSeriesRegressorWrapper:
         self.model.load_state_dict(torch.load(path, map_location=torch.device('cpu')))  # note that we load to cpu
         return self
 
+    def train(self):
+        self.model.train()
+        return
+
+    def eval(self):
+        self.model.eval()
+        return
+
     def train_one_epoch(self, dataloader):
         self.model.train()
         epoch_loss = 0

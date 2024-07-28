@@ -1,4 +1,4 @@
-name: GRU
+name: GRU-0_01
 method: grid
 
 metric:
@@ -71,7 +71,7 @@ parameters:
     value: online
 
   wandb_project:
-    value: A_1-GRU-HS
+    value: A_1-online-testing
 
   model_type:
     value: GRU
