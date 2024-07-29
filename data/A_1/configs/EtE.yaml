@@ -42,7 +42,7 @@ parameters:
     value: 0.0
 
   learning_rate:
-    value: 0.001
+    value: 0.01
 
   n_epochs:
     value: 100
@@ -65,7 +65,7 @@ parameters:
     value: 10
 
   batch_size:
-    value: 1 # todo: 8
+    value: 8
 
   wandb_mode:
     value: online

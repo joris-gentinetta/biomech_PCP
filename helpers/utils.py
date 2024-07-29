@@ -133,8 +133,8 @@ class AnglesHelper:
 
         coords, angles, pinky_to_index_sim = self.get_mapping()
 
-        print('\nCalculating angles...')
-        for i in tqdm(angles_df.index):
+        # print('\nCalculating angles...') # todo tqdm
+        for i in angles_df.index:
             for side in sides:
                 body_wrist = output_df.loc[i, (side, 'BODY_WRIST', ['x', 'y', 'z'])].values
                 hand_wrist = output_df.loc[i, (side, 'WRIST', ['x', 'y', 'z'])].values

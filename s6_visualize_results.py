@@ -9,6 +9,7 @@ multiplier = 1.05851325
 offset = 0.72349796
 
 
+
 def get_joints_of_type(body_id, joint_type):
     joint_indices = []
     num_joints = p.getNumJoints(body_id)
@@ -24,6 +25,10 @@ def move_finger(hand, finger, angle):
     id0, id1 = joint_ids[finger][0], joint_ids[finger][1]
     p.setJointMotorControl2(hand, id0, p.POSITION_CONTROL, targetPosition=angle)
     p.setJointMotorControl2(hand, id1, p.POSITION_CONTROL, targetPosition=angle * multiplier + offset)
+
+
+
+
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='Capture a video.')

@@ -53,11 +53,11 @@ rm -r temp
 
 - Connect to the EMG board:
 ```bash
-python 0_emgInterface.py -p /dev/<port>
+python s0_emgInterface.py -p /dev/<port>
 ```
 e.g.:
 ```bash
-python 0_emgInterface.py -p /dev/tty.usbserial-DO02GBUB
+python s0_emgInterface.py -p /dev/tty.usbserial-DO02GBUB
 ```
 
 
