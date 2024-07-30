@@ -32,16 +32,17 @@ if __name__ == '__main__':
     parser.add_argument('--config_name', type=str, required=True, help='Training configuration')
     parser.add_argument('--multi_gpu', action='store_true', help='Use multiple GPUs')
     parser.add_argument('--allow_tf32', action='store_true', help='Allow TF32')
-    parser.add_argument('-v', '--visualize', action='store_true', help='Plot data exploration results')
     parser.add_argument('-hs', '--hyperparameter_search', action='store_true', help='Perform hyperparameter search')
     parser.add_argument('-t', '--test', action='store_true', help='Test the model')
     parser.add_argument('-s', '--save_model', action='store_true', help='Save a model')
     parser.add_argument('--offline', action='store_true', help='Offline training')
+    parser.add_argument('-v', '--visualize', action='store_true', help='Visualize hand movements')
     args = parser.parse_args()
 
     epoch_len = 1000
     sampling_frequency = 60
     calibration_frames = 30  # todo
+
 
     if torch.cuda.is_available():
         device = torch.device("cuda")
@@ -199,15 +200,19 @@ if __name__ == '__main__':
         jointsProcess = JointsProcess(args.intact_hand, queue_size)
         anglesProcess = AnglesProcess(args.intact_hand, queue_size, jointsProcess.outputQ)
         visualizeQueue = MPQueue(queue_size)
-        visualizeProcess = VisualizeProcess(args.intact_hand, visualizeQueue)
+
 
         jointsProcess.start()
         anglesProcess.start()
-        visualizeProcess.start()
+
 
         jointsProcess.initialized.wait()
         anglesProcess.initialized.wait()
-        visualizeProcess.initialized.wait()
+
+        if args.visualize:
+            visualizeProcess = VisualizeProcess(args.intact_hand, visualizeQueue)
+            visualizeProcess.start()
+            visualizeProcess.initialized.wait()
 
         frame_id = 0
 
@@ -265,10 +270,14 @@ if __name__ == '__main__':
                     if torch.any(torch.isnan(loss)):
                         print('NAN Loss!')
                     fps = 1 / (time() - start_time)
+                    print('InputThread fps: ', jointsProcess.input_fps.value)
                     print('JointsProcess fps: ', jointsProcess.fps.value)
                     print('AnglesProcess fps: ', anglesProcess.fps.value)
-                    print('VisualizeProcess fps: ', visualizeProcess.fps.value)
+                    if args.visualize:
+                        print('VisualizeProcess fps: ', visualizeProcess.fps.value)
                     print('FPS: ', fps)
+                    if trunctuator == 0:
+                        print('#################### FPS: ', fps)
 
                 # val_loss, val_losses = evaluate_model(model, testsets, device, config)
                 # if val_loss < best_val_loss:

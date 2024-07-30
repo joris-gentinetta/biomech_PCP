@@ -2,7 +2,6 @@ import os.path
 import numpy as np
 import math
 import zmq
-import pybullet as p
 from tqdm import tqdm
 import pandas as pd
 pd.options.mode.copy_on_write = True
@@ -92,9 +91,10 @@ class AnglesHelper:
             angles = mapping['angles']
             pinky_to_index_sim = mapping['pinky_to_index_sim'][0]
         else:
+            print('Generating mapping...', flush=True)
             coords = []
             angles = []
-
+            import pybullet as p
             physicsClient = p.connect(p.DIRECT)
             p.setGravity(0, 0, -10)
             handStartPos = [0, 0, 0]

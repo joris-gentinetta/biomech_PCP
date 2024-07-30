@@ -59,6 +59,7 @@ class InputThread:
         return self
 
     def update(self):
+
         while True:
             start_time = time()
             # if self.stopped:
@@ -70,6 +71,7 @@ class InputThread:
             self.frame = mp.Image(image_format=mp.ImageFormat.SRGB, data=frame)
             self.write((self.frame, self.emg_timestep))
             self.fps.value = 1 / (time() - start_time)
+
 
     def write(self, data):
         if not self.outputQ.full():
@@ -91,6 +93,7 @@ class JointsProcess(Process):
         self.intact_hand = intact_hand
         self.calibration_frames = 20
         self.fps = Value('f', 0)
+        self.input_fps = Value('f', 0)
 
     def update_left_right(self, joints_df):
         for key, value in {'Left': 'LEFT', 'Right': 'RIGHT'}.items():
@@ -312,6 +315,7 @@ class JointsProcess(Process):
             joints_df = self.update_left_right(joints_df)
             self.write((joints_df, emg_timestep))
             self.fps.value = 1 / (time() - start_time)
+            self.input_fps.value = vc.fps.value
 
     def write(self, data):
         if not self.outputQ.full():
