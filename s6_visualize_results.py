@@ -77,6 +77,10 @@ if __name__ == "__main__":
         # pred_angles = angles_helper.mirror_angles(pred_angles, 'Right')
 
     physicsClient = p.connect(p.GUI)
+    # p.setRealTimeSimulation(0)
+    # p.setTimeStep(1 / 10000)
+
+
     p.setGravity(0, 0, -9.81)
 
     handStartPos = [0, 0, 0]
@@ -120,6 +124,8 @@ if __name__ == "__main__":
     }
 
     time.sleep(1) # want to wait for the GUI to load
+    t = time.time()
+
     for i in range(target_angles.shape[0]):
         move_finger(target_hand, 'index', target_angles.loc[i, (args.intact_hand, 'indexAng')])
         move_finger(target_hand, 'middle', target_angles.loc[i, (args.intact_hand, 'midAng')])
@@ -171,9 +177,13 @@ if __name__ == "__main__":
 
         # for i in range(20):
         #     p.stepSimulation()
+
+
+        # while (1 / (time.time() - t)) > 60:
+        #     print(i, 1 / (time.time() - t))
+        p.stepSimulation()
+        print(1 / (time.time() - t))
         t = time.time()
-        while time.time() - t < 1/60:
-            p.stepSimulation()
 
     if args.video:
         cap.release()

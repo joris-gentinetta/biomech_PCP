@@ -225,6 +225,8 @@ class EMG():
             self.bounds = list(norms)
             self.maxVals = np.asarray(self.bounds[:self.numElectrodes])
             self.noiseLevel = np.asarray(self.bounds[self.numElectrodes:])
+            print(f'Noise Level: {self.noiseLevel}', flush=True)
+            print(f'Max Vals: {self.maxVals}', flush=True)
 
         except OSError as e:
             print(f'getBounds(): Could not read bounds - {e}')

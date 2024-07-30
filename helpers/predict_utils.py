@@ -226,7 +226,7 @@ class OLDataset(Dataset):
         x = torch.tensor(self.data.loc[idx, self.features].values, dtype=torch.float32, device=self.device).unsqueeze(0)
         y = torch.tensor(self.data.loc[idx, self.targets].values, dtype=torch.float32, device=self.device).unsqueeze(0)
 
-        return x, y
+        return x, y, self.data.loc[idx, :].values
 
 
 class TSDataLoader(DataLoader):

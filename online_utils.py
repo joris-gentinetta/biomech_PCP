@@ -1,89 +1,44 @@
-
-import argparse
-from os.path import join
-
-import cv2
-import imageio
-import subprocess
-
-from threading import Thread
-from queue import Queue
 # import pybullet_utils.bullet_client as bc
 # p = bc.BulletClient(connection_mode=pybullet.DIRECT)
-import pandas as pd
-import pybullet as p
-import cv2
-import argparse
-from os.path import join, exists
+import sys
+import time
 from contextlib import contextmanager
 
-from time import sleep
-import time
-import sys
 multiplier = 1.05851325
 offset = 0.72349796
 
-
-
-from multiprocessing import Process, Queue as MPQueue, Event
-
-
-from multiprocessing import Process, Event, Queue as MPQueue
+from multiprocessing import Process, Event, Queue as MPQueue, Value
 import pybullet as p
-import pandas as pd
-import math
 
 import mediapipe as mp
 from mediapipe.python.solutions import pose, hands
-import numpy as np
 import pandas as pd
+
 pd.options.mode.copy_on_write = True
 idx = pd.IndexSlice
 
-from tqdm import tqdm
 from helpers.utils import AnglesHelper
 from helpers.EMGClass import EMG
 
-from helpers.visualization import Visualization
-
-import matplotlib.pyplot as plt
 import warnings
+
 warnings.filterwarnings("ignore")
-import cv2
-import numpy as np
-import matplotlib
-from matplotlib.pyplot import imshow
-from matplotlib import pyplot as plt
-from time import time, sleep
-import wandb
-from tqdm import tqdm
-import argparse
+from time import time
 import math
 import os
-import yaml
+
 os.environ['PYTORCH_ENABLE_MPS_FALLBACK'] = '1'
-import torch
 import numpy as np
-from os.path import join
-import wandb
-import multiprocessing
-import wandb
 import torch
-from torch.utils.data import Dataset, DataLoader
-from helpers.models import TimeSeriesRegressorWrapper
 from tqdm import tqdm
-from os.path import join
+
 torch.autograd.set_detect_anomaly(True)
-from queue import Queue
 
-from helpers.predict_utils import Config, get_data, train_model
-
-
-from helpers.predict_utils import Config, train_model, OLDataset, TSDataLoader, evaluate_model, EarlyStopper
 import cv2
 
 from threading import Thread
 from queue import Queue
+
 
 class InputThread:
     def __init__(self, src=0, queueSize=0):
@@ -94,7 +49,7 @@ class InputThread:
         self.emg = EMG()
         self.emg.startCommunication()
         self.emg_timestep = np.asarray(self.emg.normedEMG)
-
+        self.fps = Value('f', 0)
 
     def start(self):
         t = Thread(target=self.update, args=())
@@ -105,25 +60,27 @@ class InputThread:
 
     def update(self):
         while True:
+            start_time = time()
             # if self.stopped:
             #     return
             (self.grabbed, frame) = self.stream.read()
-            if self.grabbed:
-                self.emg_timestep = np.asarray(self.emg.normedEMG)
-                frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-                self.frame = mp.Image(image_format=mp.ImageFormat.SRGB, data=frame)
-                self.write((self.frame, self.emg_timestep))
+            # if self.grabbed:
+            self.emg_timestep = np.asarray(self.emg.normedEMG)
+            frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+            self.frame = mp.Image(image_format=mp.ImageFormat.SRGB, data=frame)
+            self.write((self.frame, self.emg_timestep))
+            self.fps.value = 1 / (time() - start_time)
 
     def write(self, data):
         if not self.outputQ.full():
             self.outputQ.put(data, block=False)
         else:
-            print("InputThread output Queue is full", flush=True)
+            # print("InputThread output Queue is full", flush=True)
+            pass
 
     def reset(self):
         while not self.outputQ.empty():  # Clear the queue
             self.outputQ.get()
-
 
 
 class JointsProcess(Process):
@@ -133,6 +90,7 @@ class JointsProcess(Process):
         self.initialized = Event()
         self.intact_hand = intact_hand
         self.calibration_frames = 20
+        self.fps = Value('f', 0)
 
     def update_left_right(self, joints_df):
         for key, value in {'Left': 'LEFT', 'Right': 'RIGHT'}.items():
@@ -156,7 +114,6 @@ class JointsProcess(Process):
         vc = InputThread(src=0, queueSize=5)
         vc.start()
         vc.initialized.wait()
-
 
         body_model_path = 'models/mediapipe/pose_landmarker_lite.task'
         hands_model_path = 'models/mediapipe/hand_landmarker.task'
@@ -248,7 +205,7 @@ class JointsProcess(Process):
         average_upper_arm_length = {}
         average_forearm_length = {}
         for side in sides:
-        # get upper arm length and forearm length:
+            # get upper arm length and forearm length:
             upper_arm_lengths = []
             forearm_lengths = []
             for i in range(self.calibration_frames):
@@ -265,7 +222,10 @@ class JointsProcess(Process):
 
         self.initialized.set()
         while True:
+
             mp_image, emg_timestep = vc.outputQ.get()
+            start_time = time()
+
 
             frame_time = int(time() * 1000)
             body_results = body_model.detect_for_video(mp_image, frame_time).pose_landmarks  # todo check
@@ -351,13 +311,14 @@ class JointsProcess(Process):
 
             joints_df = self.update_left_right(joints_df)
             self.write((joints_df, emg_timestep))
+            self.fps.value = 1 / (time() - start_time)
 
     def write(self, data):
         if not self.outputQ.full():
             self.outputQ.put(data, block=False)
         else:
-            print("JointProcess output Queue full", flush=True)
-
+            # print("JointProcess output Queue full", flush=True)
+            pass
     def reset(self):
         while not self.outputQ.empty():
             self.outputQ.get()
@@ -370,6 +331,7 @@ class AnglesProcess(Process):
         self.outputQ = MPQueue(queueSize)
         self.initialized = Event()
         self.intact_hand = intact_hand
+        self.fps = Value('f', 0)
 
     def run(self):
         anglesHelper = AnglesHelper()
@@ -377,6 +339,8 @@ class AnglesProcess(Process):
         self.initialized.set()
         while True:
             joints_df, emg_timestep = self.inputQ.get()
+            start_time = time()
+
             angles_df = anglesHelper.getArmAngles(joints_df, sides)
             # todo filtering
             angles_df.loc[:, (self.intact_hand, 'thumbInPlaneAng')] = angles_df.loc[:,
@@ -389,13 +353,14 @@ class AnglesProcess(Process):
             angles_df = (2 * angles_df - math.pi) / math.pi
             angles_df = np.clip(angles_df, -1, 1)
             self.write((angles_df, emg_timestep))
+            self.fps.value = 1 / (time() - start_time)
 
     def write(self, data):
         if not self.outputQ.full():
             self.outputQ.put(data, block=False)
         else:
-            print("AnglesProcess output queue full", flush=True)
-
+            # print("AnglesProcess output queue full", flush=True)
+            pass
     def reset(self):
         while not self.outputQ.empty():
             self.outputQ.get()
@@ -407,6 +372,7 @@ class VisualizeProcess(Process):
         self.intact_hand = intact_hand
         self.inputQ = inputQ
         self.initialized = Event()
+        self.fps = Value('f', 0)
 
     def run(self):
         intact_hand = self.intact_hand
@@ -441,7 +407,6 @@ class VisualizeProcess(Process):
                     # buffering and flags such as
                     # CLOEXEC may be different
 
-
         def init_physics_client():
             physicsClient = p.connect(p.GUI)
             p.setGravity(0, 0, -9.81)
@@ -458,7 +423,6 @@ class VisualizeProcess(Process):
 
             for i in range(1, p.getNumJoints(target_hand)):
                 p.changeVisualShape(target_hand, i, rgbaColor=[0, 1, 0, 0.7])
-
 
             for i in range(1, p.getNumJoints(pred_hand)):
                 p.changeVisualShape(pred_hand, i, rgbaColor=[1, 0, 0, 0.7])
@@ -490,6 +454,8 @@ class VisualizeProcess(Process):
 
         while True:
             target_angles, pred_angles = self.inputQ.get()
+            time_start = time()
+
             target_angles = rescale(target_angles)
             pred_angles = rescale(pred_angles)
 
@@ -525,4 +491,4 @@ class VisualizeProcess(Process):
             p.setJointMotorControl2(pred_hand, joint_ids['wrist_flexion'], p.POSITION_CONTROL, targetPosition=angle)
             p.stepSimulation()
 
-
+            self.fps.value = (1 / (time() - time_start))

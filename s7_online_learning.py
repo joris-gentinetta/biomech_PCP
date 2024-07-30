@@ -22,7 +22,8 @@ from os.path import join
 torch.autograd.set_detect_anomaly(True)
 from multiprocessing import Queue as MPQueue
 
-from helpers.predict_utils import Config, OLDataset, evaluate_model, EarlyStopper
+from helpers.predict_utils import Config, OLDataset, evaluate_model, EarlyStopper, get_data
+from online_utils import JointsProcess, AnglesProcess, VisualizeProcess
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='Timeseries data analysis')
@@ -70,23 +71,29 @@ if __name__ == '__main__':
 
     emg_channels = [int(feature[1]) for feature in config.features]
 
-    # data_dirs = [join('data', args.person_dir, 'recordings', recording, 'experiments', '1') for recording in
-    #              config.recordings]
-    #
-    # test_dirs = [join('data', args.person_dir, 'recordings', recording, 'experiments', '1') for recording in
-    #              config.test_recordings] if config.test_recordings is not None else None
-    #
-    # trainsets, testsets, combined_sets = get_data(config, data_dirs, args.intact_hand, visualize=args.visualize,
-    #                                               test_dirs=test_dirs)
-    #
-    #
-    #
+
 
     with open(join('data', args.person_dir, 'configs', f'{args.config_name}.yaml'), 'r') as file:
         wandb_config = yaml.safe_load(file)
         config = Config(wandb_config)
 
     if args.offline:
+        data_dirs = [join('data', args.person_dir, 'recordings', recording, 'experiments', '1') for recording in
+                     config.recordings]
+
+        test_dirs = [join('data', args.person_dir, 'recordings', recording, 'experiments', '1') for recording in
+                     config.test_recordings] if config.test_recordings is not None else None
+
+        trainsets, testsets, combined_sets = get_data(config, data_dirs, args.intact_hand, visualize=args.visualize,
+                                                      test_dirs=test_dirs)
+
+        queue_size = 5
+
+        visualizeQueue = MPQueue(queue_size)
+        visualizeProcess = VisualizeProcess(args.intact_hand, visualizeQueue)
+        visualizeProcess.start()
+        visualizeProcess.initialized.wait()
+
         with wandb.init(mode=config.wandb_mode, project=config.wandb_project, name=config.name, config=config):
             config = wandb.config
 
@@ -98,7 +105,7 @@ if __name__ == '__main__':
             # if config.model_type == 'ActivationAndBiophys':  # todo
             #     for param in model.model.biophys_model.parameters():
             #         param.requires_grad = False if epoch < config.biophys_config['n_freeze_epochs'] else True
-
+            angles_df = trainsets[0].loc[0:1, :].copy()
             train_dataset = OLDataset(trainsets, config.features, config.targets, device=device)
             train_dataloader = DataLoader(train_dataset, batch_size=1, shuffle=False, drop_last=False)
             best_val_loss = float('inf')
@@ -111,9 +118,24 @@ if __name__ == '__main__':
                     trunctuator = 0
                     states = model.model.get_starting_states(1, None)  # train_dataset[0][1].unsqueeze(0)
                     seq_loss = 0
-                    for x, y in train_dataloader:
+                    time_1 = time()
+
+                    for x, y, all_y in train_dataloader:
+                        # print(1 / (time() - time_1))
+                        time_1 = time()
+
 
                         outputs, states = model.model(x, states)
+                        angles_df.loc[0, :] = all_y.numpy()
+                        pred_angels_df = angles_df.copy()
+                        pred_angels_df.loc[:, config.targets] = outputs.squeeze().to('cpu').detach().numpy()
+                        if not visualizeQueue.full():
+                            visualizeQueue.put((angles_df, pred_angels_df))
+                        else:
+                            # print('VisualizeProcess input queue full')
+                            print('VisualizeProcess fps: ', visualizeProcess.fps.value)
+                            pass
+
 
                         loss = model.criterion(outputs, y)
                         seq_loss = seq_loss + loss
@@ -172,7 +194,6 @@ if __name__ == '__main__':
         #     for param in model.model.biophys_model.parameters():
         #         param.requires_grad = False if epoch < config.biophys_config['n_freeze_epochs'] else True
 
-        from online_utils import JointsProcess, AnglesProcess, VisualizeProcess
 
         queue_size = 5
         jointsProcess = JointsProcess(args.intact_hand, queue_size)
@@ -192,6 +213,7 @@ if __name__ == '__main__':
 
         print('Training model...')
         best_val_loss = float('inf')
+        fps = 0
         with tqdm(range(config.n_epochs)) as pbar:
             for epoch in pbar:
                 pbar.set_description(f'Epoch {epoch}')
@@ -199,12 +221,12 @@ if __name__ == '__main__':
                 trunctuator = 0
                 states = model.model.get_starting_states(1, None)  # train_dataset[0][1].unsqueeze(0)
                 seq_loss = 0
-                check_time = time()
+
                 for i in range(epoch_len):
-                    print(1 / (time() - check_time))
-                    check_time = time()
 
                     angles_df, emg_timestep = anglesProcess.outputQ.get()
+                    start_time = time()
+
 
                     y = torch.tensor(angles_df.loc[frame_id, config.targets], dtype=torch.float32).unsqueeze(
                         0).unsqueeze(0).to(device)
@@ -224,7 +246,9 @@ if __name__ == '__main__':
                     if not visualizeQueue.full():
                         visualizeQueue.put((angles_df, pred_angels_df))
                     else:
-                        print('VisualizeProcess input queue full')
+                        # print('VisualizeProcess input queue full')
+                        # print('VisualizeProcess fps: ', visualizeProcess.fps.value)
+                        pass
 
                     trunctuator += 1
                     if trunctuator == config.seq_len:
@@ -240,6 +264,11 @@ if __name__ == '__main__':
 
                     if torch.any(torch.isnan(loss)):
                         print('NAN Loss!')
+                    fps = 1 / (time() - start_time)
+                    print('JointsProcess fps: ', jointsProcess.fps.value)
+                    print('AnglesProcess fps: ', anglesProcess.fps.value)
+                    print('VisualizeProcess fps: ', visualizeProcess.fps.value)
+                    print('FPS: ', fps)
 
                 # val_loss, val_losses = evaluate_model(model, testsets, device, config)
                 # if val_loss < best_val_loss:
