@@ -1,4 +1,4 @@
-name: SL-2
+name: stateawareGRU
 method: grid
 
 metric:
@@ -40,7 +40,7 @@ parameters:
     value: 0.1
 
   n_epochs:
-    value: 100
+    value: 200
 
   seq_len:
     value: 125
@@ -63,7 +63,7 @@ parameters:
     value: 8
 
   wandb_mode:
-    value: online
+    value: disabled
 
   wandb_project:
     value: PCP-SL
@@ -72,7 +72,7 @@ parameters:
     value: GRU
 
   state_mode:
-    values: stateless
+    values: stateaware
 
   hidden_size:
     value: 20

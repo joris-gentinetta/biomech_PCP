@@ -43,7 +43,7 @@ parameters:
     value: 100
 
   seq_len:
-    value: 125
+    value: 128
 
   targets:
     value:
@@ -63,7 +63,7 @@ parameters:
     value: 8
 
   wandb_mode:
-    value: online
+    value: disabled
 
   wandb_project:
     value: PCP-modular-clip
@@ -73,7 +73,7 @@ parameters:
 
   activation_model:
     value: {model_type: DenseNet,
-            hidden_size: 100,
+            hidden_size: 96,
             n_layers: 4,}
 
   muscle_model:

@@ -4,11 +4,13 @@ os.environ['PYTORCH_ENABLE_MPS_FALLBACK'] = '1'
 import torch
 import torch.nn as nn
 import torch.optim as optim
+# import numpy as np
 
 # torch.autograd.set_detect_anomaly(True)
 from abc import ABC, abstractmethod
-from tqdm import tqdm
-from bilinear import Muscles, Joints
+# from tqdm import tqdm
+# from bilinear import Muscles, Joints
+from hill import Muscles, Joints
 
 SR = 60
 

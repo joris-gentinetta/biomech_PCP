@@ -64,7 +64,7 @@ class Muscles(nn.Module):
 
 
 class Joints(nn.Module):
-    def __init__(self, device, n_joints, dt, speed_mode=False):
+    def __init__(self, device, n_joints, dt, speed_mode=True):
         super().__init__()
 
         self.device = device
