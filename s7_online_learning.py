@@ -270,14 +270,17 @@ if __name__ == '__main__':
                     if torch.any(torch.isnan(loss)):
                         print('NAN Loss!')
                     fps = 1 / (time() - start_time)
-                    print('InputThread fps: ', jointsProcess.input_fps.value)
-                    print('JointsProcess fps: ', jointsProcess.fps.value)
-                    print('AnglesProcess fps: ', anglesProcess.fps.value)
-                    if args.visualize:
-                        print('VisualizeProcess fps: ', visualizeProcess.fps.value)
-                    print('FPS: ', fps)
-                    if trunctuator == 0:
-                        print('#################### FPS: ', fps)
+
+                    print_fps = True
+                    if print_fps:
+                        print('InputThread fps: ', jointsProcess.input_fps.value)
+                        print('JointsProcess fps: ', jointsProcess.fps.value)
+                        print('AnglesProcess fps: ', anglesProcess.fps.value)
+                        if args.visualize:
+                            print('VisualizeProcess fps: ', visualizeProcess.fps.value)
+                        print('FPS: ', fps)
+                        if trunctuator == 0:
+                            print('#################### FPS: ', fps)
 
                 # val_loss, val_losses = evaluate_model(model, testsets, device, config)
                 # if val_loss < best_val_loss:

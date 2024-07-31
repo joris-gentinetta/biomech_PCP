@@ -170,13 +170,14 @@ class AnglesHelper:
                 # right hand: angle increases when hand turns counterclockwise when viewed from outside
                 # left hand: angle increases when hand turns clockwise when viewed from outside
                 wrist_rot_dir = 1 if np.dot(np.cross(lower_arm, elbowNormal), palmNormal_proj) > 0 else -1
-                if side == 'Left':
-                    wrist_rot_dir *= -1
+                # if side == 'Left':
+                # wrist_rot_dir *= -1
                 angles_df.loc[i, (side, 'wristRot')] = math.radians(wrist_rot_dir * wrist_rot_abs_val)
 
                 # wrist flexion is zero when the palm is parallel to the lower arm
                 # it increases when the wrist is extended and decreases when it is flexed
-                angles_df.loc[i, (side, 'wristFlex')] = math.radians(self.angleBetweenVectors(palmNormal, -lower_arm) - 90)
+                wrist_flex_dir = 1 if side == "Right" else -1
+                angles_df.loc[i, (side, 'wristFlex')] = wrist_flex_dir * math.radians(self.angleBetweenVectors(palmNormal, -lower_arm) - 90)
 
                 ### Elbow ##########
                 # 0 when fully flexed, 180 when fully extended

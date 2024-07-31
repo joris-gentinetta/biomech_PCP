@@ -548,7 +548,7 @@ class TimeSeriesRegressorWrapper:
 
             self.optimizer.zero_grad(set_to_none=True)
             loss.backward()
-            torch.nn.utils.clip_grad_norm_(self.model.parameters(), 4) # todo was 4, test!
+            torch.nn.utils.clip_grad_norm_(self.model.parameters(), 4)
             self.optimizer.step()
             epoch_loss += loss
 

@@ -104,11 +104,12 @@ def train_model(trainsets, testsets, device, wandb_mode, wandb_project, wandb_na
 
 
                 lr = model.scheduler.get_last_lr()[0]
-                model.scheduler.step(val_loss)  # Update the learning rate after each epoch
+                model.scheduler.step(val_loss)  # Update the learning rate after each epoch #todo train or val loss
                 pbar.set_postfix({'lr': lr, 'train_loss': train_loss, 'val_loss': val_loss})
 
                 # print('Total val loss:', val_loss)
-                log = {f'val_loss/{(config.recordings + config.test_recordings)[set_id]}': loss for set_id, loss in enumerate(val_losses)}
+                test_recording_names = config.test_recordings if config.test_recordings is not None else []
+                log = {f'val_loss/{(config.recordings + test_recording_names)[set_id]}': loss for set_id, loss in enumerate(val_losses)}
                 log['total_val_loss'] = val_loss
                 log['train_loss'] = train_loss
                 log['lr'] = lr
