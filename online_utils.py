@@ -440,6 +440,7 @@ class VisualizeProcess(Process):
             return target_hand, pred_hand
 
         def rescale(angles_df):
+            angles_df = angles_df.clip(-1, 1)
             angles_df = (angles_df * math.pi + math.pi) / 2
             angles_df.loc[:, (intact_hand, 'wristFlex')] = angles_df.loc[:, (intact_hand, 'wristFlex')] - math.pi / 2
             angles_df.loc[:, (intact_hand, 'wristRot')] = (angles_df.loc[:, (intact_hand, 'wristRot')] * 2) - math.pi
