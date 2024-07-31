@@ -25,6 +25,7 @@ from multiprocessing import Queue as MPQueue
 from helpers.predict_utils import Config, OLDataset, evaluate_model, EarlyStopper, get_data
 from online_utils import JointsProcess, AnglesProcess, VisualizeProcess
 
+
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='Timeseries data analysis')
     parser.add_argument('--person_dir', type=str, required=True, help='Person directory')
@@ -40,7 +41,7 @@ if __name__ == '__main__':
     args = parser.parse_args()
 
     epoch_len = 1000
-    sampling_frequency = 60
+    # sampling_frequency = 60
     calibration_frames = 30  # todo
 
 
@@ -219,6 +220,8 @@ if __name__ == '__main__':
         print('Training model...')
         best_val_loss = float('inf')
         fps = 0
+        true_start_time = time()
+
         with tqdm(range(config.n_epochs)) as pbar:
             for epoch in pbar:
                 pbar.set_description(f'Epoch {epoch}')
@@ -226,7 +229,6 @@ if __name__ == '__main__':
                 trunctuator = 0
                 states = model.model.get_starting_states(1, None)  # train_dataset[0][1].unsqueeze(0)
                 seq_loss = 0
-
                 for i in range(epoch_len):
 
                     angles_df, emg_timestep = anglesProcess.outputQ.get()
@@ -270,9 +272,13 @@ if __name__ == '__main__':
                     if torch.any(torch.isnan(loss)):
                         print('NAN Loss!')
                     fps = 1 / (time() - start_time)
+                    true_end_time = time()
+                    true_fps = 1 / (true_end_time - true_start_time)
+                    true_start_time = true_end_time
 
                     print_fps = True
                     if print_fps:
+                        print(f'True fps: {true_fps}')
                         print('InputThread fps: ', jointsProcess.input_fps.value)
                         print('JointsProcess fps: ', jointsProcess.fps.value)
                         print('AnglesProcess fps: ', anglesProcess.fps.value)
