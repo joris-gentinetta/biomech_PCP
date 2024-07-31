@@ -15,6 +15,9 @@ fMax = math.log(1000)
 lM_opt = math.log(0.6)
 c = 1
 A = 1
+lT_s = 0.04
+c_PE = 3
+c_SE = 7
 
 ## Joint parameters
 M = 0.05
@@ -22,8 +25,87 @@ I = math.log(0.004)
 B = math.log(.3)
 K = math.log(5)
 
+class Muscle_Hill(nn.Module):
+    """ Hill muscle model with muscle lenth included as a state """
+    def __init__(self, device, n_joints):
+        super().__init__()
 
-class Muscles(nn.Module):
+        self.device = device
+
+        self.fMax = nn.Parameter(data=torch.ones((n_joints, 2), dtype=torch.float, device=self.device) * fMax)
+        self.lM_opt = nn.Parameter(data=torch.ones((n_joints, 2), dtype=torch.float, device=self.device) * lM_opt)
+        self.lT_s = nn.Parameter(data=torch.ones((n_joints, 2), dtype=torch.float, device=self.device) * lT_s)
+        self.c_PE = nn.Parameter(data=torch.ones((n_joints, 2), dtype=torch.float, device=self.device) * c_PE)
+        self.c_SE = nn.Parameter(data=torch.ones((n_joints, 2), dtype=torch.float, device=self.device) * c_SE)
+
+        ## define constants
+        self.epsT_toe = 0.0127 # strain at transition to linear
+        self.ET = 37.5 # young's modulus of tendon
+        self.T_affine = 0.2375 # intercept for tendon quadratic/exponential
+        self.quadT = 1480.3
+
+        parameterization = Exponential()
+        for parameter in ['fMax', 'lM_opt', 'lT_s', 'c_PE', 'c_SE']:
+            register_parametrization(self, parameter, parameterization)
+
+    def forward(self, alphas, states):
+        del_lM = states[0]
+        muscle_SS = states[1]
+
+        alphas = torch.clamp(alphas, 0, 1)
+
+        del_lMT = muscle_SS[:, :, 0, :]
+        vMT = muscle_SS[:, :, 1, :]
+
+        epsMT = del_lMT/self.lM_opt
+        epsM = del_lM/self.lM_opt
+        epsT = (epsMT - epsM)*self.lM_opt/self.LT_s - 1
+
+        f_PE = torch.exp(self.c_PE*(epsM - 0.5))
+        f_L = torch.exp(-self.c_SE*epsM**2)
+        # f_V = nn.functional.relu(-torch.atan(-0.5*self.velM)/math.atan(5) + 1)
+        f_SE = torch.where(epsT > self.epsT_toe, self.ET*epsT - self.T_affine, self.quadT*epsT*nn.functional.relu(epsT))
+
+        K_PE = self.c_PE/self.lM_opt*f_PE
+        K_L = -2*self.c_SE*epsM*f_L # this can be negative so watch me!
+        K_SE = torch.where(epsT > self.epsT_toe, self.ET, 2*self.quadT*nn.functional.relu(epsT))
+
+        return F, K
+
+    def get_starting_states(self, batch_size, y=None, x=None):
+        alphas = x[0]
+        muscle_SS = x[1]
+
+        del_lM_range = torch.linspace(-1, 1, 1000).repeat(batch_size, self.n_joints, 2).to(self.device)
+
+        # calculate force components
+        del_lMT = muscle_SS[:, :, 0, :]
+
+        epsMT = del_lMT/self.lM_opt
+        epsM_range = del_lM_range/self.lM_opt
+        epsT = (epsMT - epsM_range)*self.lM_opt/self.LT_s - 1
+
+        f_PE = torch.exp(self.c_PE*(epsM_range - 0.5))
+        f_L = torch.exp(-self.c_SE*epsM_range**2)
+        f_V = nn.functional.relu(-torch.atan(-0.5*self.velM)/math.atan(5) + 1)
+        f_V = torch.ones_like(f_L)
+        f_SE = torch.where(epsT > self.epsT_toe, self.ET*epsT - self.T_affine, self.quadT*epsT*nn.functional.relu(epsT))
+
+        F = alphas*(f_L*f_V + f_PE) - f_SE
+
+        # then the lowest value of the force is the initial state
+        min_idx = torch.argmin(F, dim=0)
+        initial_del_lM = del_lM_range[torch.arange(batch_size), min_idx]
+
+        return initial_del_lM
+
+    # code:
+    # range over muscle lengths
+    # calculate forces
+    # select value that minimize difference
+    # return this as initial state
+
+class Muscles_SRT(nn.Module):
     """ this is the short rigid tendon hill muscle model without a pennation angle"""
     def __init__(self, device, n_joints):
         super().__init__()
@@ -75,8 +157,10 @@ class Muscles(nn.Module):
             self.epsM = self.epsM + update[..., 0]
             self.velM = self.velM + update[..., 1]
 
-            if torch.norm(update) < 1e-6:
-                break
+            stopCond = torch.linalg.norm(update, dim=-1)
+
+            if torch.all(stopCond < 1e-6):
+                break                                                                                                                                                                                                                                                       ak
 
         fPE = nn.functional.relu(2*self.c*self.A*epsMT*torch.exp(self.c * epsMT**2))
         fL = nn.functional.relu(-4*self.epsM**2 + 1) # defined based on deviation

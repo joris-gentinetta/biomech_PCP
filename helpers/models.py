@@ -228,16 +228,19 @@ class PhysMuscleModel(TimeSeriesRegressor):
 
         self.model = Muscles(device=device, n_joints=output_size // 4)
 
-    def get_starting_states(self, batch_size, y=None):
-        return None
+    def get_starting_states(self, batch_size, y=None, x=None):
+        return self.model.get_starting_states(batch_size, y, x)
 
     def forward(self, x, states):
         out = torch.zeros((x.shape[0], x.shape[1], self.output_size), dtype=torch.float, device=self.device)
         activations = x.reshape(x.shape[0], x.shape[1], self.input_size // 2, 2)
         for i in range(x.shape[1]):
-                F, K = self.model(activations[:, i, :, :], states[1])
+                # F, K = self.model(activations[:, i, :, :], states[1])
+                F, K, v = self.model(activations[:, i, :, :], states) # todo JORIS note some changes here
                 out[:, i, :] = torch.cat([F, K], dim=2).reshape(out.shape[0], out.shape[2])
-        return out, None
+
+                states[0] = states[0] + v/SR
+        return out, states[0]
 
 
 class PhysJointModel(TimeSeriesRegressor):
@@ -296,8 +299,13 @@ class ModularModel(TimeSeriesRegressor):
             raise ValueError(f'Unknown model type {config["model_type"]}')
         return modelclass(input_size, output_size, self.device, **config)
 
-    def get_starting_states(self, batch_size, y=None):
-        return [self.activation_model.get_starting_states(batch_size, y),  [self.muscle_model.get_starting_states(batch_size, y), self.joint_model.get_starting_states(batch_size, y)[0]], self.joint_model.get_starting_states(batch_size, y)[1]]
+    # def get_starting_states(self, batch_size, y=None):
+    def get_starting_states(self, batch_size, y=None, x=None):
+        return [self.activation_model.get_starting_states(batch_size, y),
+                [self.muscle_model.get_starting_states(batch_size, y, [self.activation_model(x, self.activation_model.get_starting_states(batch_size, y)),
+                                                                           self.joint_model.get_starting_states(batch_size, y)[0]]),
+                     self.joint_model.get_starting_states(batch_size, y)[0]],
+                self.joint_model.get_starting_states(batch_size, y)[1]]
 
     def forward(self, x, states):
         out = torch.zeros((x.shape[0], x.shape[1], self.output_size), dtype=torch.float, device=self.device)
