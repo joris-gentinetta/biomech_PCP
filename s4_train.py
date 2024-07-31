@@ -65,7 +65,7 @@ if __name__ == '__main__':
                  config.recordings]
 
     test_dirs = [join('data', args.person_dir, 'recordings', recording, 'experiments', '1') for recording in
-                 config.test_recordings] if config.test_recordings is not None else None
+                 config.test_recordings] if config.test_recordings is not None else []
 
     trainsets, testsets, combined_sets = get_data(config, data_dirs, args.intact_hand, visualize=args.visualize, test_dirs=test_dirs)
 

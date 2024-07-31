@@ -1,4 +1,4 @@
-name: GRU-benchmark
+name: GRU-federico-SA
 method: grid
 
 metric:
@@ -11,6 +11,10 @@ parameters:
     - trigger_1
     - trigger_2
     - trigger_3
+
+  test_recordings:
+    value:
+
 
   features:
     value:
@@ -33,7 +37,7 @@ parameters:
     value: 0.0
 
   learning_rate:
-    value: 0.01
+    value: 0.001
 
   n_epochs:
     value: 100
@@ -62,13 +66,13 @@ parameters:
     value: online
 
   wandb_project:
-    value: H_1
+    value: federico
 
   model_type:
     value: GRU
 
   state_mode:
-    value: stateless
+    value: stateaware
 
   hidden_size:
     value: 128
