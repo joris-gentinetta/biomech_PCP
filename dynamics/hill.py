@@ -18,6 +18,11 @@ A = 1
 lT_s = 0.04
 c_PE = 3
 c_SE = 7
+a_con = 1
+b_con = 1
+a_ecc = 1
+b_ecc = 1
+fEcc = 1.8
 
 ## Joint parameters
 M = 0.05
@@ -37,6 +42,11 @@ class Muscle_Hill(nn.Module):
         self.lT_s = nn.Parameter(data=torch.ones((n_joints, 2), dtype=torch.float, device=self.device) * lT_s)
         self.c_PE = nn.Parameter(data=torch.ones((n_joints, 2), dtype=torch.float, device=self.device) * c_PE)
         self.c_SE = nn.Parameter(data=torch.ones((n_joints, 2), dtype=torch.float, device=self.device) * c_SE)
+        self.a_con = nn.Parameter(data=torch.ones((n_joints, 2), dtype=torch.float, device=self.device) * a_con)
+        self.b_con = nn.Parameter(data=torch.ones((n_joints, 2), dtype=torch.float, device=self.device) * b_con)
+        self.a_ecc = nn.Parameter(data=torch.ones((n_joints, 2), dtype=torch.float, device=self.device) * a_ecc)
+        self.b_ecc = nn.Parameter(data=torch.ones((n_joints, 2), dtype=torch.float, device=self.device) * b_ecc)
+        self.fEcc = nn.Parameter(data=torch.ones((n_joints, 2), dtype=torch.float, device=self.device) * fEcc)
 
         ## define constants
         self.epsT_toe = 0.0127 # strain at transition to linear
@@ -49,7 +59,7 @@ class Muscle_Hill(nn.Module):
             register_parametrization(self, parameter, parameterization)
 
     def forward(self, alphas, states):
-        del_lM = states[0]
+        del_lM = states[0] # note that I'm already defined in terms of strain
         muscle_SS = states[1]
 
         alphas = torch.clamp(alphas, 0, 1)
@@ -65,6 +75,12 @@ class Muscle_Hill(nn.Module):
         f_L = torch.exp(-self.c_SE*epsM**2)
         # f_V = nn.functional.relu(-torch.atan(-0.5*self.velM)/math.atan(5) + 1)
         f_SE = torch.where(epsT > self.epsT_toe, self.ET*epsT - self.T_affine, self.quadT*epsT*nn.functional.relu(epsT))
+
+        # get the velocity scaling factor
+        fV = (f_SE - f_PE*self.fMax)/(alphas*f_L*self.fMax)
+
+        # invert the force velocity relationship to get the velocity
+
 
         K_PE = self.c_PE/self.lM_opt*f_PE
         K_L = -2*self.c_SE*epsM*f_L # this can be negative so watch me!
