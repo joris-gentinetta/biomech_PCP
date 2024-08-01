@@ -46,7 +46,7 @@ class InputThread:
         (self.grabbed, self.frame) = self.stream.read()
         self.outputQ = Queue(maxsize=queueSize)
         self.initialized = Event()
-        self.emg = EMG()
+        self.emg = EMG(pulling=True)
         self.emg.startCommunication()
         self.emg_timestep = np.asarray(self.emg.normedEMG)
         self.fps = Value('f', 0)
@@ -62,10 +62,10 @@ class InputThread:
 
         while True:
             start_time = time()
-            # if self.stopped:
-            #     return
             (self.grabbed, frame) = self.stream.read()
-            # if self.grabbed:
+            emg_values = []
+            while not self.emg.pulled_normed_emg.empty():
+                emg_values.append(self.emg.pulled_normed_emg.get())
             self.emg_timestep = np.asarray(self.emg.normedEMG)
             frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
             self.frame = mp.Image(image_format=mp.ImageFormat.SRGB, data=frame)
@@ -499,18 +499,53 @@ class VisualizeProcess(Process):
 if __name__ == '__main__':
     # vc = InputThread(src=0, queueSize=5)
     # vc.start()
-    stream = cv2.VideoCapture(0)
-    start_time = time()
+    # stream = cv2.VideoCapture(0)
+    # start_time = time()
+    # while True:
+    #
+    #     (grabbed, frame) = stream.read()
+    #     # get timestamp:
+    #
+    #     frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+    #     frame = mp.Image(image_format=mp.ImageFormat.SRGB, data=frame)
+    #     end_time = time()
+    #     fps = 1 / (end_time - start_time)
+    #     start_time = end_time
+    #     print(fps)
+
+    import cv2
+
+    # Create a VideoCapture object
+    cap = cv2.VideoCapture(0)  # 0 for the default camera, or provide a video file path
+    before_time = time()
     while True:
+        # Capture frame-by-frame
+        ret, frame = cap.read()
 
-        (grabbed, frame) = stream.read()
-        frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-        frame = mp.Image(image_format=mp.ImageFormat.SRGB, data=frame)
-        end_time = time()
-        fps = 1 / (end_time - start_time)
-        start_time = end_time
-        print(fps)
+        if not ret:
+            break
 
+        # Get the timestamp of the current frame
+        timestamp = cap.get(cv2.CAP_PROP_POS_MSEC)
+        after_time = time()
+        fps = (1 / (after_time - before_time))
+        before_time = after_time
+        print(f"FPS: {fps}")
+        # Get the current frame position
+        # frame_pos = cap.get(cv2.CAP_PROP_POS_FRAMES)
+        #
+        # # Calculate the timestamp
+        # timestamp = (frame_pos / 30) * 1000  # Convert to milliseconds
+        # print(f"Timestamp: {timestamp} ms")
+        # print(f"Timestamp: {timestamp} ms")
+        #
+        # # Display the resulting frame
+        # cv2.imshow('Frame', frame)
 
-    while True:
-        pass
+        # Break the loop on 'q' key press
+        if cv2.waitKey(1) & 0xFF == ord('q'):
+            break
+
+    # Release the capture object and close all OpenCV windows
+    cap.release()
+    cv2.destroyAllWindows()
