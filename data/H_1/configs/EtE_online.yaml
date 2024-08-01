@@ -1,0 +1,93 @@
+name: GRU
+method: grid
+
+metric:
+  goal: minimize
+  name: best_val_loss
+
+parameters:
+  recordings:
+    value:
+    - trigger_1
+    - trigger_2
+
+  test_recordings:
+    value:
+      - trigger_3
+
+
+  features:
+    value:
+    - [emg, '0'] # 0
+    - [emg, '1'] # 1
+    - [emg, '2'] # 2
+    - [emg, '4'] # 3
+    - [emg, '8'] # 4
+    - [emg, '10'] # 5
+    - [emg, '11'] # 6
+    - [emg, '12'] # 7
+#    - [emg, '13']
+#    - [emg, '14']
+#    - [emg, '15']
+
+  early_stopping_patience:
+    value: 15
+
+  early_stopping_delta:
+    value: 0.0
+
+  learning_rate:
+    value: 0.01
+
+  n_epochs:
+    value: 100
+
+  seq_len:
+    value: 128
+
+  targets:
+    value:
+    - [Right, indexAng]
+    - [Right, midAng]
+    - [Right, ringAng]
+    - [Right, pinkyAng]
+    - [Right, thumbInPlaneAng]
+    - [Right, thumbOutPlaneAng]
+#    - [Right, wristRot]
+#    - [Right, wristFlex]
+
+#    - [Left, indexAng]
+#    - [Left, midAng]
+#    - [Left, ringAng]
+#    - [Left, pinkyAng]
+#    - [Left, thumbInPlaneAng]
+#    - [Left, thumbOutPlaneAng]
+#    - [Left, wristRot]
+#    - [Left, wristFlex]
+
+  warmup_steps:
+    value: 10
+
+  batch_size:
+    value: 1
+
+  wandb_mode:
+    value: online
+
+  wandb_project:
+    value: A_1-online-testing_2
+
+  model_type:
+    value: GRU
+
+  state_mode:
+    value: stateless
+
+  hidden_size:
+    value: 128
+
+  n_layers:
+    values: 2
+
+  tanh:
+    value: False
