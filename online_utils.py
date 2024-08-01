@@ -69,7 +69,7 @@ class InputThread:
             self.emg_timestep = np.asarray(self.emg.normedEMG)
             frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
             self.frame = mp.Image(image_format=mp.ImageFormat.SRGB, data=frame)
-            self.write((self.frame, self.emg_timestep))
+            self.write((self.frame, self.emg_timestep, frame))
             self.fps.value = 1 / (time() - start_time)
 
 
@@ -114,7 +114,7 @@ class JointsProcess(Process):
         height = temp_vc.get(cv2.CAP_PROP_FRAME_HEIGHT)
         temp_vc.release()
 
-        vc = InputThread(src=0, queueSize=5)
+        vc = InputThread(src=2, queueSize=5)
         vc.start()
         vc.initialized.wait()
 
@@ -226,12 +226,15 @@ class JointsProcess(Process):
         self.initialized.set()
         while True:
 
-            mp_image, emg_timestep = vc.outputQ.get()
+            mp_image, emg_timestep, frame = vc.outputQ.get()
             start_time = time()
 
 
             frame_time = int(time() * 1000)
-            body_results = body_model.detect_for_video(mp_image, frame_time).pose_landmarks  # todo check
+            t1 = time()
+            body_results = body_model.detect_for_video(mp_image, frame_time).pose_landmarks
+            t2 = time()
+            print('body: ', t2 - t1)
             if len(body_results) == 0:
                 continue
 
@@ -244,11 +247,24 @@ class JointsProcess(Process):
                     body_results[0][pose.PoseLandmark[landmark_name]].z * scales[2])
 
             for side in sides:
+                if side == 'Right':
+                    x_start = 0
+                    x_end = scales[0] / 2
+                else:
+                    x_start = scales[0] / 2
+                    x_end = scales[0]
 
-                x_end = scales[0]
+                y_start = 0
                 y_end = scales[1]
 
-                hands_results = hand_models[side].detect_for_video(mp_image, frame_time).hand_landmarks  # todo check
+                cropped_frame = frame[:, x_start:x_end]
+                rgb_cropped_frame = cv2.cvtColor(cropped_frame, cv2.COLOR_BGR2RGB)
+                mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=rgb_cropped_frame)
+
+
+                hands_results = hand_models[side].detect_for_video(mp_image, frame_time).hand_landmarks
+                t3 = time()
+                print('hands: ', t3 - t2)
                 if len(hands_results) == 0:
                     continue
                 elif len(hands_results) == 1:
@@ -260,27 +276,31 @@ class JointsProcess(Process):
                     target = np.array([x, y])
 
                     candidates = np.zeros(2)
-                    x = hands_results[0][hands.HandLandmark['WRIST']].x * x_end
-                    y = hands_results[0][hands.HandLandmark['WRIST']].y * y_end
+                    x = x_start + hands_results[0][hands.HandLandmark['WRIST']].x * (x_end - x_start)
+                    y = y_start + hands_results[0][hands.HandLandmark['WRIST']].y * (y_end - y_start)
                     candidates[0] = np.linalg.norm(target - np.array([x, y]))
 
-                    x = hands_results[1][hands.HandLandmark['WRIST']].x * x_end
-                    y = hands_results[1][hands.HandLandmark['WRIST']].y * y_end
+                    x = x_start + hands_results[1][hands.HandLandmark['WRIST']].x * (x_end - x_start)
+                    y = y_start + hands_results[1][hands.HandLandmark['WRIST']].y * (y_end - y_start)
                     candidates[1] = np.linalg.norm(target - np.array([x, y]))
                     hand_id = np.argmin(candidates)
 
+                t4 = time()
+                print('hand_id: ', t4 - t3)
+
                 for landmark_name in hands.HandLandmark._member_names_:
-                    joints_df.loc[frame_id, (side, landmark_name, 'x')] = hands_results[hand_id][
-                        hands.HandLandmark[landmark_name]].x * x_end
-                    joints_df.loc[frame_id, (side, landmark_name, 'y')] = hands_results[hand_id][
-                        hands.HandLandmark[landmark_name]].y * y_end
-                    joints_df.loc[frame_id, (side, landmark_name, 'z')] = hands_results[hand_id][
-                        hands.HandLandmark[landmark_name]].z * x_end
+                    joints_df.loc[frame_id, (side, landmark_name, 'x')] = x_start + hands_results[hand_id][
+                        hands.HandLandmark[landmark_name]].x * (x_end - x_start)
+                    joints_df.loc[frame_id, (side, landmark_name, 'y')] = y_start + hands_results[hand_id][
+                        hands.HandLandmark[landmark_name]].y * (y_end - y_start)
+                    joints_df.loc[frame_id, (side, landmark_name, 'z')] = x_start + hands_results[hand_id][
+                        hands.HandLandmark[landmark_name]].z * (x_end - x_start)
 
                 joints_df = joints_df.fillna(0)
             joints_df = self.update_left_right(joints_df)
 
             for side in sides:
+
                 upper_arm = joints_df.loc[:, idx[side, 'ELBOW', slice(None)]].values - joints_df.loc[:,
                                                                                        idx[
                                                                                            side, 'SHOULDER', slice(
@@ -309,7 +329,8 @@ class JointsProcess(Process):
                                                                                                    'Body', f'{side.upper()}_ELBOW', 'z']].values + forearm[
                                                                                                                                                    :,
                                                                                                                                                    2] * -1
-
+            t5 = time()
+            print('correction: ', t5 - t4)
             joints_df = self.update_left_right(joints_df)
             self.write((joints_df, emg_timestep))
             self.fps.value = 1 / (time() - start_time)
@@ -499,17 +520,17 @@ class VisualizeProcess(Process):
 if __name__ == '__main__':
     # vc = InputThread(src=0, queueSize=5)
     # vc.start()
-    stream = cv2.VideoCapture(0)
+    stream = cv2.VideoCapture(2)
     start_time = time()
     while True:
 
         (grabbed, frame) = stream.read()
-        frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-        frame = mp.Image(image_format=mp.ImageFormat.SRGB, data=frame)
+        # frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+        # frame = mp.Image(image_format=mp.ImageFormat.SRGB, data=frame)
         end_time = time()
         fps = 1 / (end_time - start_time)
         start_time = end_time
-        print(fps)
+        print(grabbed, fps)
 
 
     while True:
