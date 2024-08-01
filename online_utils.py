@@ -167,8 +167,8 @@ class JointsProcess(Process):
                     body_results[0][pose.PoseLandmark[landmark_name]].z * scales[2])
 
             for side in sides:
-                wrist = [joints_df.loc[i, ('Body', f'{side.upper()}_WRIST', 'x')],
-                         joints_df.loc[i, ('Body', f'{side.upper()}_WRIST', 'y')]]
+                # wrist = [joints_df.loc[i, ('Body', f'{side.upper()}_WRIST', 'x')],
+                #          joints_df.loc[i, ('Body', f'{side.upper()}_WRIST', 'y')]]
 
                 x_start = 0
                 x_end = scales[0]
@@ -231,10 +231,7 @@ class JointsProcess(Process):
 
 
             frame_time = int(time() * 1000)
-            t1 = time()
-            body_results = body_model.detect_for_video(mp_image, frame_time).pose_landmarks
-            t2 = time()
-            print('body: ', t2 - t1)
+            body_results = body_model.detect_for_video(mp_image, frame_time).pose_landmarks  # todo check
             if len(body_results) == 0:
                 continue
 
@@ -251,9 +248,7 @@ class JointsProcess(Process):
                 x_end = scales[0]
                 y_end = scales[1]
 
-                hands_results = hand_models[side].detect_for_video(mp_image, frame_time).hand_landmarks
-                t3 = time()
-                print('hands: ', t3 - t2)
+                hands_results = hand_models[side].detect_for_video(mp_image, frame_time).hand_landmarks  # todo check
                 if len(hands_results) == 0:
                     continue
                 elif len(hands_results) == 1:
@@ -274,9 +269,6 @@ class JointsProcess(Process):
                     candidates[1] = np.linalg.norm(target - np.array([x, y]))
                     hand_id = np.argmin(candidates)
 
-                t4 = time()
-                print('hand_id: ', t4 - t3)
-
                 for landmark_name in hands.HandLandmark._member_names_:
                     joints_df.loc[frame_id, (side, landmark_name, 'x')] = hands_results[hand_id][
                         hands.HandLandmark[landmark_name]].x * x_end
@@ -289,7 +281,6 @@ class JointsProcess(Process):
             joints_df = self.update_left_right(joints_df)
 
             for side in sides:
-
                 upper_arm = joints_df.loc[:, idx[side, 'ELBOW', slice(None)]].values - joints_df.loc[:,
                                                                                        idx[
                                                                                            side, 'SHOULDER', slice(
@@ -318,8 +309,7 @@ class JointsProcess(Process):
                                                                                                    'Body', f'{side.upper()}_ELBOW', 'z']].values + forearm[
                                                                                                                                                    :,
                                                                                                                                                    2] * -1
-            t5 = time()
-            print('correction: ', t5 - t4)
+
             joints_df = self.update_left_right(joints_df)
             self.write((joints_df, emg_timestep))
             self.fps.value = 1 / (time() - start_time)
@@ -505,3 +495,22 @@ class VisualizeProcess(Process):
             p.stepSimulation()
 
             self.fps.value = (1 / (time() - time_start))
+
+if __name__ == '__main__':
+    # vc = InputThread(src=0, queueSize=5)
+    # vc.start()
+    stream = cv2.VideoCapture(0)
+    start_time = time()
+    while True:
+
+        (grabbed, frame) = stream.read()
+        frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+        frame = mp.Image(image_format=mp.ImageFormat.SRGB, data=frame)
+        end_time = time()
+        fps = 1 / (end_time - start_time)
+        start_time = end_time
+        print(fps)
+
+
+    while True:
+        pass
