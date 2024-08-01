@@ -87,7 +87,7 @@ class Muscle_Hill(nn.Module):
 
         f_PE = torch.exp(self.c_PE*(epsM_range - 0.5))
         f_L = torch.exp(-self.c_SE*epsM_range**2)
-        f_V = nn.functional.relu(-torch.atan(-0.5*self.velM)/math.atan(5) + 1)
+        # f_V = nn.functional.relu(-torch.atan(-0.5*self.velM)/math.atan(5) + 1)
         f_V = torch.ones_like(f_L)
         f_SE = torch.where(epsT > self.epsT_toe, self.ET*epsT - self.T_affine, self.quadT*epsT*nn.functional.relu(epsT))
 
