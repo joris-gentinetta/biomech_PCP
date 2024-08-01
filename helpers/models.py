@@ -10,7 +10,7 @@ import torch.optim as optim
 from abc import ABC, abstractmethod
 # from tqdm import tqdm
 # from bilinear import Muscles, Joints
-from hill import Muscles, Joints
+from hill import Muscles_Hill, Joints
 
 SR = 60
 
@@ -226,7 +226,7 @@ class PhysMuscleModel(TimeSeriesRegressor):
         if input_size * 2 != output_size:
             raise ValueError(f'PhysMuscleModel: Input size must be 1/2 times the output size, got {input_size} and {output_size}')
 
-        self.model = Muscles(device=device, n_joints=output_size // 4)
+        self.model = Muscles_Hill(device=device, n_joints=output_size // 4)
 
     def get_starting_states(self, batch_size, y=None, x=None):
         return self.model.get_starting_states(batch_size, y, x)
@@ -239,7 +239,8 @@ class PhysMuscleModel(TimeSeriesRegressor):
                 F, K, v = self.model(activations[:, i, :, :], states) # todo JORIS note some changes here
                 out[:, i, :] = torch.cat([F, K], dim=2).reshape(out.shape[0], out.shape[2])
 
-                states[0] = states[0] + v/SR
+                states[0] = states[0] - v/SR
+
         return out, states[0]
 
 
@@ -302,8 +303,7 @@ class ModularModel(TimeSeriesRegressor):
     # def get_starting_states(self, batch_size, y=None):
     def get_starting_states(self, batch_size, y=None, x=None):
         return [self.activation_model.get_starting_states(batch_size, y),
-                [self.muscle_model.get_starting_states(batch_size, y, [self.activation_model(x, self.activation_model.get_starting_states(batch_size, y)),
-                                                                           self.joint_model.get_starting_states(batch_size, y)[0]]),
+                [self.muscle_model.get_starting_states(batch_size, y, [self.activation_model(x, self.activation_model.get_starting_states(batch_size, y))[0], self.joint_model.get_starting_states(batch_size, y)[0]]),
                      self.joint_model.get_starting_states(batch_size, y)[0]],
                 self.joint_model.get_starting_states(batch_size, y)[1]]
 
@@ -416,7 +416,7 @@ class TimeSeriesRegressorWrapper:
         self.model.train()
         epoch_loss = 0
         for x, y in dataloader:
-            states = self.model.get_starting_states(dataloader.batch_size, y)
+            states = self.model.get_starting_states(dataloader.batch_size, y, x)
             outputs, states = self.model(x, states)
 
             loss = self.criterion(outputs[:, self.warmup_steps:], y[:, self.warmup_steps:])
