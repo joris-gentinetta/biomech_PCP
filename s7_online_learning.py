@@ -238,7 +238,8 @@ if __name__ == '__main__':
         with tqdm(range(config.n_epochs)) as pbar:
             for epoch in pbar:
                 pbar.set_description(f'Epoch {epoch}')
-
+                epoch_start_time = time()
+                counter = 0
                 for i in range(epoch_len):
 
                     angles_df, emg_timestep = anglesProcess.outputQ.get()
@@ -262,6 +263,7 @@ if __name__ == '__main__':
                     pred_angels_df.loc[config.targets] = outputs.squeeze().to('cpu').detach().numpy()
                     if args.visualize and not visualizeQueue.full():
                         visualizeQueue.put((angles_df, pred_angels_df))
+                        counter += 1
                     elif args.visualize:
                         print('VisualizeProcess input queue full')
                         print('VisualizeProcess fps: ', visualizeProcess.fps.value)
@@ -286,7 +288,7 @@ if __name__ == '__main__':
                     true_fps = 1 / (true_end_time - true_start_time)
                     true_start_time = true_end_time
 
-                    print_fps = True
+                    print_fps = False
                     if print_fps:
                         print(f'True fps: {true_fps}')
                         print('InputThread fps: ', jointsProcess.input_fps.value)
@@ -297,6 +299,8 @@ if __name__ == '__main__':
                         print('FPS: ', fps)
                         if trunctuator == 0:
                             print('#################### FPS: ', fps)
+                epoch_end_time = time()
+                print('average epoch fps: ', counter / (epoch_end_time - epoch_start_time))
 
                 # val_loss, val_losses = evaluate_model(model, testsets, device, config)
                 # if val_loss < best_val_loss:
