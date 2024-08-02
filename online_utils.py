@@ -40,9 +40,11 @@ import cv2
 
 from threading import Thread
 from queue import Queue
+import platform
 
 FRAME_RATE = 60 # NOT USED EVERYWHERE # todo
 frame_id = 0
+system_name = platform.system()
 
 
 class InputThread:
@@ -212,7 +214,7 @@ class JointsProcess(Process):
         columns = body_columns.append(right_hand_columns).append(left_hand_columns)
 
         scales = (width, height, width)
-        sides = [self.intact_hand]
+        side = self.intact_hand
 
         print('Calibrating...')
         joints_df = pd.DataFrame(columns=columns)
@@ -222,8 +224,8 @@ class JointsProcess(Process):
                 frame = vc.outputQ.get()[0]
                 if frame is None:
                     continue
-
-                frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+                if system_name == 'Darwin':
+                    frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
                 mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=frame)
 
                 frame_time = int(time() * 1000)
@@ -239,124 +241,23 @@ class JointsProcess(Process):
                     joints_df.loc[indexer, ('Body', landmark_name, 'z')] = int(
                         body_results[0][pose.PoseLandmark[landmark_name]].z * scales[2])
 
-                for side in sides:
-                    # wrist = [joints_df.loc[i, ('Body', f'{side.upper()}_WRIST', 'x')],
-                    #          joints_df.loc[i, ('Body', f'{side.upper()}_WRIST', 'y')]]
+                # wrist = [joints_df.loc[i, ('Body', f'{side.upper()}_WRIST', 'x')],
+                #          joints_df.loc[i, ('Body', f'{side.upper()}_WRIST', 'y')]]
 
-                    x_start = 0
-                    x_end = scales[0]
-                    y_start = 0
-                    y_end = scales[1]
-
-                    hands_results = hand_models[side].detect_for_video(mp_image, frame_time).hand_landmarks  # todo check
-                    if len(hands_results) == 0:
-                        continue
-                    elif len(hands_results) == 1:
-                        hand_id = 0
-
-                    else:
-                        x = joints_df.loc[indexer, ('Body', f'{side.upper()}_WRIST', 'x')]
-                        y = joints_df.loc[indexer, ('Body', f'{side.upper()}_WRIST', 'y')]
-                        target = np.array([x, y])
-
-                        candidates = np.zeros(2)
-                        x = x_start + hands_results[0][hands.HandLandmark['WRIST']].x * (x_end - x_start)
-                        y = y_start + hands_results[0][hands.HandLandmark['WRIST']].y * (y_end - y_start)
-                        candidates[0] = np.linalg.norm(target - np.array([x, y]))
-
-                        x = x_start + hands_results[1][hands.HandLandmark['WRIST']].x * (x_end - x_start)
-                        y = y_start + hands_results[1][hands.HandLandmark['WRIST']].y * (y_end - y_start)
-                        candidates[1] = np.linalg.norm(target - np.array([x, y]))
-                        hand_id = np.argmin(candidates)
-
-                    for landmark_name in hands.HandLandmark._member_names_:
-                        joints_df.loc[indexer, (side, landmark_name, 'x')] = x_start + hands_results[hand_id][
-                            hands.HandLandmark[landmark_name]].x * (x_end - x_start)
-                        joints_df.loc[indexer, (side, landmark_name, 'y')] = y_start + hands_results[hand_id][
-                            hands.HandLandmark[landmark_name]].y * (y_end - y_start)
-                        joints_df.loc[indexer, (side, landmark_name, 'z')] = x_start + hands_results[hand_id][
-                            hands.HandLandmark[landmark_name]].z * (x_end - x_start)
-                indexer += 1
-                pbar.update(1)
-        # joints_df = joints_df.fillna(0)
-        joints_df = self.update_left_right(joints_df)
-        average_upper_arm_length = {}
-        average_forearm_length = {}
-        for side in sides:
-            # get upper arm length and forearm length:
-            upper_arm_lengths = []
-            forearm_lengths = []
-            for i in range(self.calibration_frames):
-                shoulder = joints_df.loc[i, (side, 'SHOULDER', ['x', 'y'])].values
-                elbow = joints_df.loc[i, (side, 'ELBOW', ['x', 'y'])].values
-                wrist = joints_df.loc[i, (side, 'WRIST', ['x', 'y'])].values
-
-                upper_arm_lengths.append(np.linalg.norm(shoulder - elbow))
-                forearm_lengths.append(np.linalg.norm(elbow - wrist))
-            average_upper_arm_length[side] = np.mean(np.array(upper_arm_lengths))
-            average_forearm_length[side] = np.mean(np.array(forearm_lengths))
-
-        joints_df = pd.DataFrame(index=[frame_id], columns=columns)
-
-        self.initialized.set()
-        t1 = time()
-        t2 = time()
-        t3 = time()
-        t4 = time()
-        while True:
-            frame, emg_timestep = vc.outputQ.get()
-            if frame is None:
-                self.write((None, emg_timestep))
-                continue
-            mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
-            start_time = time()
-
-
-            frame_time = int(time() * 1000)
-            t1 = time()
-            body_results = body_model.detect_for_video(mp_image, frame_time).pose_landmarks
-            t2 = time()
-            print('body: ', t2 - t1)
-            if len(body_results) == 0:
-                continue
-
-            for landmark_name in body_cols:
-                joints_df.loc[frame_id, ('Body', landmark_name, 'x')] = int(
-                    body_results[0][pose.PoseLandmark[landmark_name]].x * scales[0])
-                joints_df.loc[frame_id, ('Body', landmark_name, 'y')] = int(
-                    body_results[0][pose.PoseLandmark[landmark_name]].y * scales[1])
-                joints_df.loc[frame_id, ('Body', landmark_name, 'z')] = int(
-                    body_results[0][pose.PoseLandmark[landmark_name]].z * scales[2])
-
-            for side in sides:
-                if side == 'Right':
-                    x_start = 0
-                    x_end = int(scales[0] // 2)
-                else:
-                    x_start = int(scales[0] // 2)
-                    x_end = int(scales[0])
-
+                x_start = 0
+                x_end = scales[0]
                 y_start = 0
-                y_end = int(scales[1])
+                y_end = scales[1]
 
-                cropped_frame = frame[:, x_start:x_end]
-                rgb_cropped_frame = cv2.cvtColor(cropped_frame, cv2.COLOR_BGR2RGB)
-                mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=rgb_cropped_frame)
-
-
-                hands_results = hand_models[side].detect_for_video(mp_image, frame_time).hand_landmarks
-                t3 = time()
-                print('hands: ', t3 - t2)
+                hands_results = hand_models[side].detect_for_video(mp_image, frame_time).hand_landmarks  # todo check
                 if len(hands_results) == 0:
-                    print('no hands') # todo adaptive interpolation
                     continue
-
                 elif len(hands_results) == 1:
                     hand_id = 0
 
                 else:
-                    x = joints_df.loc[frame_id, ('Body', f'{side.upper()}_WRIST', 'x')]
-                    y = joints_df.loc[frame_id, ('Body', f'{side.upper()}_WRIST', 'y')]
+                    x = joints_df.loc[indexer, ('Body', f'{side.upper()}_WRIST', 'x')]
+                    y = joints_df.loc[indexer, ('Body', f'{side.upper()}_WRIST', 'y')]
                     target = np.array([x, y])
 
                     candidates = np.zeros(2)
@@ -369,50 +270,152 @@ class JointsProcess(Process):
                     candidates[1] = np.linalg.norm(target - np.array([x, y]))
                     hand_id = np.argmin(candidates)
 
-                t4 = time()
-                print('hand_id: ', t4 - t3)
-
                 for landmark_name in hands.HandLandmark._member_names_:
-                    joints_df.loc[frame_id, (side, landmark_name, 'x')] = x_start + hands_results[hand_id][
+                    joints_df.loc[indexer, (side, landmark_name, 'x')] = x_start + hands_results[hand_id][
                         hands.HandLandmark[landmark_name]].x * (x_end - x_start)
-                    joints_df.loc[frame_id, (side, landmark_name, 'y')] = y_start + hands_results[hand_id][
+                    joints_df.loc[indexer, (side, landmark_name, 'y')] = y_start + hands_results[hand_id][
                         hands.HandLandmark[landmark_name]].y * (y_end - y_start)
-                    joints_df.loc[frame_id, (side, landmark_name, 'z')] = x_start + hands_results[hand_id][
+                    joints_df.loc[indexer, (side, landmark_name, 'z')] = x_start + hands_results[hand_id][
                         hands.HandLandmark[landmark_name]].z * (x_end - x_start)
+                indexer += 1
+                pbar.update(1)
+        # joints_df = joints_df.fillna(0)
+        joints_df = self.update_left_right(joints_df)
+        average_upper_arm_length = {}
+        average_forearm_length = {}
+        # get upper arm length and forearm length:
+        upper_arm_lengths = []
+        forearm_lengths = []
+        for i in range(self.calibration_frames):
+            shoulder = joints_df.loc[i, (side, 'SHOULDER', ['x', 'y'])].values
+            elbow = joints_df.loc[i, (side, 'ELBOW', ['x', 'y'])].values
+            wrist = joints_df.loc[i, (side, 'WRIST', ['x', 'y'])].values
 
-                joints_df = joints_df.fillna(0)
+            upper_arm_lengths.append(np.linalg.norm(shoulder - elbow))
+            forearm_lengths.append(np.linalg.norm(elbow - wrist))
+        average_upper_arm_length[side] = np.mean(np.array(upper_arm_lengths))
+        average_forearm_length[side] = np.mean(np.array(forearm_lengths))
+
+        joints_df = pd.DataFrame(index=[frame_id], columns=columns, dtype=np.float64)
+
+        self.initialized.set()
+        t1 = time()
+        t2 = time()
+        t3 = time()
+        t4 = time()
+        while True:
+            frame, emg_timestep = vc.outputQ.get()
+            if frame is None:
+                self.write((None, emg_timestep))
+                continue
+            if system_name == 'Darwin':
+                frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+
+            mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=frame)
+            start_time = time()
+
+
+            frame_time = int(time() * 1000)
+            t1 = time()
+            body_results = body_model.detect_for_video(mp_image, frame_time).pose_landmarks
+            t2 = time()
+            print('body: ', t2 - t1)
+
+            if len(body_results) == 0:
+                self.write((None, emg_timestep))
+                continue
+
+            for landmark_name in body_cols:
+                joints_df.loc[frame_id, ('Body', landmark_name, 'x')] = int(
+                    body_results[0][pose.PoseLandmark[landmark_name]].x * scales[0])
+                joints_df.loc[frame_id, ('Body', landmark_name, 'y')] = int(
+                    body_results[0][pose.PoseLandmark[landmark_name]].y * scales[1])
+                joints_df.loc[frame_id, ('Body', landmark_name, 'z')] = int(
+                    body_results[0][pose.PoseLandmark[landmark_name]].z * scales[2])
+
+            if side == 'Right':
+                x_start = 0
+                x_end = int(scales[0] // 2)
+            else:
+                x_start = int(scales[0] // 2)
+                x_end = int(scales[0])
+
+            y_start = 0
+            y_end = int(scales[1])
+
+            cropped_frame = frame[:, x_start:x_end]
+            if system_name == 'Darwin':
+                cropped_frame = cv2.cvtColor(cropped_frame, cv2.COLOR_BGR2RGB)
+            mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=cropped_frame)
+
+
+            hands_results = hand_models[side].detect_for_video(mp_image, frame_time).hand_landmarks
+            t3 = time()
+            print('hands: ', t3 - t2)
+            if len(hands_results) == 0:
+                self.write((None, emg_timestep))
+                continue
+
+            elif len(hands_results) == 1:
+                hand_id = 0
+
+            else:
+                x = joints_df.loc[frame_id, ('Body', f'{side.upper()}_WRIST', 'x')]
+                y = joints_df.loc[frame_id, ('Body', f'{side.upper()}_WRIST', 'y')]
+                target = np.array([x, y])
+
+                candidates = np.zeros(2)
+                x = x_start + hands_results[0][hands.HandLandmark['WRIST']].x * (x_end - x_start)
+                y = y_start + hands_results[0][hands.HandLandmark['WRIST']].y * (y_end - y_start)
+                candidates[0] = np.linalg.norm(target - np.array([x, y]))
+
+                x = x_start + hands_results[1][hands.HandLandmark['WRIST']].x * (x_end - x_start)
+                y = y_start + hands_results[1][hands.HandLandmark['WRIST']].y * (y_end - y_start)
+                candidates[1] = np.linalg.norm(target - np.array([x, y]))
+                hand_id = np.argmin(candidates)
+
+            t4 = time()
+            print('hand_id: ', t4 - t3)
+
+            for landmark_name in hands.HandLandmark._member_names_:
+                joints_df.loc[frame_id, (side, landmark_name, 'x')] = x_start + hands_results[hand_id][
+                    hands.HandLandmark[landmark_name]].x * (x_end - x_start)
+                joints_df.loc[frame_id, (side, landmark_name, 'y')] = y_start + hands_results[hand_id][
+                    hands.HandLandmark[landmark_name]].y * (y_end - y_start)
+                joints_df.loc[frame_id, (side, landmark_name, 'z')] = x_start + hands_results[hand_id][
+                    hands.HandLandmark[landmark_name]].z * (x_end - x_start)
+
+            # joints_df = joints_df.fillna(0)
             joints_df = self.update_left_right(joints_df)
 
-            for side in sides:
+            upper_arm = joints_df.loc[:, idx[side, 'ELBOW', slice(None)]].values - joints_df.loc[:,
+                                                                                   idx[
+                                                                                       side, 'SHOULDER', slice(
+                                                                                           None)]].values
+            forearm = joints_df.loc[:, idx[side, 'WRIST', slice(None)]].values - joints_df.loc[:,
+                                                                                 idx[side, 'ELBOW', slice(
+                                                                                     None)]].values
+            upper_arm = upper_arm.astype(np.float64)
+            forearm = forearm.astype(np.float64)
 
-                upper_arm = joints_df.loc[:, idx[side, 'ELBOW', slice(None)]].values - joints_df.loc[:,
-                                                                                       idx[
-                                                                                           side, 'SHOULDER', slice(
-                                                                                               None)]].values
-                forearm = joints_df.loc[:, idx[side, 'WRIST', slice(None)]].values - joints_df.loc[:,
-                                                                                     idx[side, 'ELBOW', slice(
-                                                                                         None)]].values
-                upper_arm = upper_arm.astype(np.float64)
-                forearm = forearm.astype(np.float64)
+            missing_len_upper_arm = average_upper_arm_length[side] ** 2 - upper_arm[:, 0] ** 2 - upper_arm[:,
+                                                                                                 1] ** 2
+            missing_len_forearm = average_forearm_length[side] ** 2 - forearm[:, 0] ** 2 - forearm[:, 0] ** 2
 
-                missing_len_upper_arm = average_upper_arm_length[side] ** 2 - upper_arm[:, 0] ** 2 - upper_arm[:,
-                                                                                                     1] ** 2
-                missing_len_forearm = average_forearm_length[side] ** 2 - forearm[:, 0] ** 2 - forearm[:, 0] ** 2
+            missing_len_upper_arm = np.where(missing_len_upper_arm > 0, missing_len_upper_arm, 0)
+            missing_len_forearm = np.where(missing_len_forearm > 0, missing_len_forearm, 0)
 
-                missing_len_upper_arm = np.where(missing_len_upper_arm > 0, missing_len_upper_arm, 0)
-                missing_len_forearm = np.where(missing_len_forearm > 0, missing_len_forearm, 0)
+            upper_arm[:, 2] = np.sqrt(missing_len_upper_arm)
+            forearm[:, 2] = np.sqrt(missing_len_forearm)
 
-                upper_arm[:, 2] = np.sqrt(missing_len_upper_arm)
-                forearm[:, 2] = np.sqrt(missing_len_forearm)
-
-                joints_df.loc[:, idx['Body', f'{side.upper()}_ELBOW', 'z']] = joints_df.loc[:, idx[
-                                                                                                   'Body', f'{side.upper()}_SHOULDER', 'z']].values + upper_arm[
-                                                                                                                                                      :,
-                                                                                                                                                      2] * -1
-                joints_df.loc[:, idx['Body', f'{side.upper()}_WRIST', 'z']] = joints_df.loc[:, idx[
-                                                                                                   'Body', f'{side.upper()}_ELBOW', 'z']].values + forearm[
-                                                                                                                                                   :,
-                                                                                                                                                   2] * -1
+            joints_df.loc[:, idx['Body', f'{side.upper()}_ELBOW', 'z']] = joints_df.loc[:, idx[
+                                                                                               'Body', f'{side.upper()}_SHOULDER', 'z']].values + upper_arm[
+                                                                                                                                                  :,
+                                                                                                                                                  2] * -1
+            joints_df.loc[:, idx['Body', f'{side.upper()}_WRIST', 'z']] = joints_df.loc[:, idx[
+                                                                                               'Body', f'{side.upper()}_ELBOW', 'z']].values + forearm[
+                                                                                                                                               :,
+                                                                                                                                               2] * -1
             t5 = time()
             print('correction: ', t5 - t4)
             joints_df = self.update_left_right(joints_df)
@@ -452,7 +455,7 @@ class AnglesProcess(Process):
         joints_df = None
         while joints_df is None: # make sure the first frame is not None
             joints_df, emg_timestep = self.inputQ.get()
-        joints_df.fillna(0, inplace=True) # todo saveguard
+        # joints_df.fillna(0, inplace=True) # todo saveguard
         angles_df = anglesHelper.getArmAngles(joints_df, sides)
         # angles_df.loc[3] = angles_df.loc[0]
         angles_df = angles_df.reindex(range(max_interpolation_steps))
@@ -655,6 +658,7 @@ class ProcessManager:
         self.processes.append(process)
 
 if __name__ == '__main__':
+    print(system_name)
     cap = cv2.VideoCapture(0)  # 0 for the default camera, or provide a video file path
 
 
@@ -730,11 +734,14 @@ if __name__ == '__main__':
     while True:
         # Capture frame-by-frame
         ret, frame = cap.read()
-        frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+        if system_name == 'Darwin':
+          frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
         image = mp.Image(image_format=mp.ImageFormat.SRGB, data=frame)
         detection_result = detector.detect_for_video(image, int(time() * 1000))
         annotated_image = draw_landmarks_on_image(image.numpy_view(), detection_result)
-        cv2.imshow('show', cv2.cvtColor(annotated_image, cv2.COLOR_RGB2BGR))
+        if system_name == 'Darwin':
+            annotated_image = cv2.cvtColor(annotated_image, cv2.COLOR_RGB2BGR)
+        cv2.imshow('show', annotated_image)
 
         if not ret:
             break

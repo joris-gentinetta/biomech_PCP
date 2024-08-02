@@ -156,7 +156,11 @@ class AnglesHelper:
                 # Calculate the normal vector to the plane formed by the palm
                 vec1 = index - hand_wrist
                 vec2 = pinky - hand_wrist
-                palmNormal = np.cross(vec1, vec2)   # comes out of palm for the right arm
+                try:
+                    palmNormal = np.cross(vec1, vec2)   # comes out of palm for the right arm
+                except:
+                    print(i, side, 'Error: ', vec1, vec2)
+
                 palmNormal = palmNormal / np.linalg.norm(palmNormal)
 
                 elbowNormal = np.cross(upper_arm, lower_arm)  # goes inward for the right arm
