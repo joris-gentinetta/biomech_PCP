@@ -10,10 +10,9 @@ import pandas as pd
 from helpers.BesselFilter import BesselFilterArr
 import threading
 import platform
-from queue import Queue
 
 class EMG():
-    def __init__(self, socketAddr='tcp://127.0.0.1:1235', numElectrodes=16, tauA=0.05, tauD=0.1, usedChannels=None, usingSynergies=False, samplingFreq=None, offlineData=None, noiseLevel=None, maxVals=None, pulling=False):
+    def __init__(self, socketAddr='tcp://127.0.0.1:1235', numElectrodes=16, tauA=0.05, tauD=0.1, usedChannels=None, usingSynergies=False, samplingFreq=None, offlineData=None, noiseLevel=None, maxVals=None):
         self.numElectrodes = numElectrodes
         self.tauA = tauA
         self.tauD = tauD
@@ -21,8 +20,6 @@ class EMG():
         self.exitEvent = threading.Event()
         self.offlineData = self.offline_data_gen(offlineData) if offlineData is not None else None
         self.emgHistory = np.empty((self.numElectrodes, 1))
-        if pulling:
-            self.pulled_normed_emg = Queue()
 
         if usedChannels is None:
             self.usedChannels = []
@@ -325,7 +322,6 @@ class EMG():
         normed[normed < 0] = 0
         normed[normed > 1] = 1
 
-        self.pulled_normed_emg.put(normed)
         self.normedEMG = normed
 
     # first order muscle activation dynamics
@@ -365,7 +361,6 @@ class EMG():
             if self.offlineData is not None:
                 # self.emgHistory = np.concatenate((self.emgHistory, self.iEMG[:, None]), axis=1)
                 self.emgHistory = np.concatenate((self.emgHistory, self.normedEMG), axis=1)
-
 
 
 def plot_emg(emg, min_vals, max_vals, title='EMG'):

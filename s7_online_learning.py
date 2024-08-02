@@ -18,12 +18,13 @@ from torch.utils.data import DataLoader
 from helpers.models import TimeSeriesRegressorWrapper
 from tqdm import tqdm
 from os.path import join
+import signal
 
 torch.autograd.set_detect_anomaly(True)
 from multiprocessing import Queue as MPQueue
 
 from helpers.predict_utils import Config, OLDataset, evaluate_model, EarlyStopper, get_data
-from online_utils import JointsProcess, AnglesProcess, VisualizeProcess
+from online_utils import JointsProcess, AnglesProcess, VisualizeProcess, ProcessManager
 
 
 if __name__ == '__main__':
@@ -40,10 +41,13 @@ if __name__ == '__main__':
     parser.add_argument('-v', '--visualize', action='store_true', help='Visualize hand movements')
     args = parser.parse_args()
 
+    processManager = ProcessManager()
+    signal.signal(signal.SIGINT, processManager.signal_handler)
+
     epoch_len = 1000
     # sampling_frequency = 60
     calibration_frames = 30  # todo
-
+    queue_size = 50
 
     if torch.cuda.is_available():
         device = torch.device("cuda")
@@ -89,12 +93,11 @@ if __name__ == '__main__':
         trainsets, testsets, combined_sets = get_data(config, data_dirs, args.intact_hand, visualize=args.visualize,
                                                       test_dirs=test_dirs)
 
-        queue_size = 5
 
         visualizeQueue = MPQueue(queue_size)
         visualizeProcess = VisualizeProcess(args.intact_hand, visualizeQueue)
-        visualizeProcess.start()
-        visualizeProcess.initialized.wait()
+        processManager.manage_process(visualizeProcess)
+
 
         with wandb.init(mode=config.wandb_mode, project=config.wandb_project, name=config.name, config=config):
             config = wandb.config
@@ -197,23 +200,17 @@ if __name__ == '__main__':
         #         param.requires_grad = False if epoch < config.biophys_config['n_freeze_epochs'] else True
 
 
-        queue_size = 5
         jointsProcess = JointsProcess(args.intact_hand, queue_size)
         anglesProcess = AnglesProcess(args.intact_hand, queue_size, jointsProcess.outputQ)
         visualizeQueue = MPQueue(queue_size)
 
 
-        jointsProcess.start()
-        anglesProcess.start()
-
-
-        jointsProcess.initialized.wait()
-        anglesProcess.initialized.wait()
+        processManager.manage_process(jointsProcess)
+        processManager.manage_process(anglesProcess)
 
         if args.visualize:
             visualizeProcess = VisualizeProcess(args.intact_hand, visualizeQueue)
-            visualizeProcess.start()
-            visualizeProcess.initialized.wait()
+            processManager.manage_process(visualizeProcess)
 
         frame_id = 0
 
@@ -235,7 +232,7 @@ if __name__ == '__main__':
                     start_time = time()
 
 
-                    y = torch.tensor(angles_df.loc[frame_id, config.targets], dtype=torch.float32).unsqueeze(
+                    y = torch.tensor(angles_df.loc[config.targets], dtype=torch.float32).unsqueeze(
                         0).unsqueeze(0).to(device)
 
                     x = torch.tensor(emg_timestep[emg_channels], dtype=torch.float32).unsqueeze(0).unsqueeze(0).to(
@@ -249,12 +246,12 @@ if __name__ == '__main__':
 
                     epoch_loss += loss.item()
                     pred_angels_df = angles_df.copy()
-                    pred_angels_df.loc[frame_id, config.targets] = outputs.squeeze().to('cpu').detach().numpy()
+                    pred_angels_df.loc[config.targets] = outputs.squeeze().to('cpu').detach().numpy()
                     if not visualizeQueue.full():
                         visualizeQueue.put((angles_df, pred_angels_df))
-                    else:
-                        # print('VisualizeProcess input queue full')
-                        # print('VisualizeProcess fps: ', visualizeProcess.fps.value)
+                    elif args.visualize:
+                        print('VisualizeProcess input queue full')
+                        print('VisualizeProcess fps: ', visualizeProcess.fps.value)
                         pass
 
                     trunctuator += 1
