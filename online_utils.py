@@ -50,18 +50,19 @@ PRINT = False
 
 class InputThread:
     def __init__(self, src=0, queueSize=0, save=True, kE=None):
-        self.save = save
         self.stream = cv2.VideoCapture(src)
         # (self.grabbed, self.frame) = self.stream.read()
         self.outputQ = Queue(maxsize=queueSize)
-        self.saveQ = Queue(maxsize=queueSize)
         self.initialized = Event()
         self.emg = EMG()
         self.emg.startCommunication()
         # self.emg_timestep = np.asarray(self.emg.normedEMG)
         self.fps = Value('f', 0)
         self.counter = 0
-        self.sampler = 3
+        if save:
+            self.sampler = 1
+        else:
+            self.sampler = 3
 
         self.width = self.stream.get(cv2.CAP_PROP_FRAME_WIDTH)
         self.height = self.stream.get(cv2.CAP_PROP_FRAME_HEIGHT)
@@ -81,14 +82,11 @@ class InputThread:
             start_time = time()
             (self.grabbed, frame) = self.stream.read()
             emg_timestep = np.asarray(self.emg.normedEMG)
-            if self.save:
-                self.write_to_save((frame, emg_timestep))
             if self.counter % self.sampler != 0:
                 frame = None
             self.write_to_output((frame, emg_timestep))
             self.fps.value = 1 / (time() - start_time)
             self.counter += 1
-
 
     def write_to_output(self, data):
         if not self.outputQ.full():
@@ -97,23 +95,15 @@ class InputThread:
             print("InputThread output Queue is full", flush=True)
             pass
 
-    def write_to_save(self, data):
-        if not self.saveQ.full():
-            self.saveQ.put(data, block=False)
-        else:
-            print("InputThread save Queue is full", flush=True)
-            pass
-
     def reset(self):
         while not self.outputQ.empty():  # Clear the queue
             self.outputQ.get()
 
 
 class SaveThread:
-    def __init__(self, inputQ, frame_size, save_path, display=False, kE=None):
+    def __init__(self, inputQ, frame_size, save_path, kE=None):
         self.inputQ = inputQ
         self.save_path = save_path
-        self.display = display
         self.initialized = Event()
         self.frame_size = frame_size
         self._stop_event = kE
@@ -137,10 +127,7 @@ class SaveThread:
                 if frame is not None:
                     out.write(frame)
                     self.emg_data.append(emg_timestep)
-                    # if self.display:
-                    #     cv2.imshow('Frame', frame)
-                    #     if cv2.waitKey(1) & 0xFF == ord('q'):
-                    #         break
+
         self.emg_data = np.array(self.emg_data)
         np.save(join(self.save_path, 'emg.npy'), self.emg_data)
         out.release()
@@ -186,7 +173,7 @@ class JointsProcess(Process):
         vc.start()
         vc.initialized.wait()
         if self.save:
-            st = SaveThread(vc.saveQ, frame_size=(int(width), int(height)), save_path=self.save_path, display=True, kE=self.killEvent)
+            st = SaveThread(vc.saveQ, frame_size=(int(width), int(height)), save_path=self.save_path, kE=self.killEvent)
             st.start()
             st.initialized.wait()
 
@@ -640,14 +627,17 @@ class VisualizeProcess(Process):
 class ProcessManager:
     def __init__(self):
         self.processes = []
+        self.killEvent = Event()
 
     def signal_handler(self, sig, frame):
         print('You pressed Ctrl+C!')
+        self.killEvent.set()
         for p in self.processes:
             p.killEvent.set()
-        sleep(1)
+        sleep(2)
         for p in self.processes:
             p.terminate()
+        sleep(2)
         sys.exit(0)
 
     def manage_process(self, process):
@@ -657,101 +647,120 @@ class ProcessManager:
 
 
 if __name__ == '__main__':
-    print(system_name)
-    cap = cv2.VideoCapture(0)  # 0 for the default camera, or provide a video file path
+    mediapipe_test = False
+    if mediapipe_test:
+        print(system_name)
+        cap = cv2.VideoCapture(2)  # 0 for the default camera, or provide a video file path
 
 
-    body_model_path = 'models/mediapipe/pose_landmarker_lite.task'
-    hands_model_path = 'models/mediapipe/hand_landmarker.task'
-    BaseOptions = mp.tasks.BaseOptions
-    PoseLandmarker = mp.tasks.vision.PoseLandmarker
-    PoseLandmarkerOptions = mp.tasks.vision.PoseLandmarkerOptions
-    VisionRunningMode = mp.tasks.vision.RunningMode
+        body_model_path = 'models/mediapipe/pose_landmarker_lite.task'
+        hands_model_path = 'models/mediapipe/hand_landmarker.task'
+        BaseOptions = mp.tasks.BaseOptions
+        PoseLandmarker = mp.tasks.vision.PoseLandmarker
+        PoseLandmarkerOptions = mp.tasks.vision.PoseLandmarkerOptions
+        VisionRunningMode = mp.tasks.vision.RunningMode
 
-    options = mp.tasks.vision.HandLandmarkerOptions(base_options=BaseOptions(model_asset_path=hands_model_path)
-                                                    , num_hands=1,
-                                                    running_mode=VisionRunningMode.VIDEO)
-    hand_models = {'Right': mp.tasks.vision.HandLandmarker.create_from_options(options),
-                   'Left': mp.tasks.vision.HandLandmarker.create_from_options(options)}
+        options = mp.tasks.vision.HandLandmarkerOptions(base_options=BaseOptions(model_asset_path=hands_model_path)
+                                                        , num_hands=1,
+                                                        running_mode=VisionRunningMode.VIDEO)
+        hand_models = {'Right': mp.tasks.vision.HandLandmarker.create_from_options(options),
+                       'Left': mp.tasks.vision.HandLandmarker.create_from_options(options)}
 
-    detector = hand_models['Right']
-    options = PoseLandmarkerOptions(
-        base_options=BaseOptions(model_asset_path=body_model_path),
-        running_mode=VisionRunningMode.VIDEO)
-    body_model = PoseLandmarker.create_from_options(options)
+        detector = hand_models['Right']
+        options = PoseLandmarkerOptions(
+            base_options=BaseOptions(model_asset_path=body_model_path),
+            running_mode=VisionRunningMode.VIDEO)
+        body_model = PoseLandmarker.create_from_options(options)
 
-    # Create a VideoCapture object
-    before_time = time()
+        # Create a VideoCapture object
+        before_time = time()
 
-    from mediapipe import solutions
-    from mediapipe.framework.formats import landmark_pb2
-    import numpy as np
+        from mediapipe import solutions
+        from mediapipe.framework.formats import landmark_pb2
+        import numpy as np
 
-    MARGIN = 10  # pixels
-    FONT_SIZE = 1
-    FONT_THICKNESS = 1
-    HANDEDNESS_TEXT_COLOR = (88, 205, 54)  # vibrant green
-
-
-    def draw_landmarks_on_image(rgb_image, detection_result):
-        hand_landmarks_list = detection_result.hand_landmarks
-        handedness_list = detection_result.handedness
-        annotated_image = np.copy(rgb_image)
-
-        # Loop through the detected hands to visualize.
-        for idx in range(len(hand_landmarks_list)):
-            hand_landmarks = hand_landmarks_list[idx]
-            handedness = handedness_list[idx]
-
-            # Draw the hand landmarks.
-            hand_landmarks_proto = landmark_pb2.NormalizedLandmarkList()
-            hand_landmarks_proto.landmark.extend([
-                landmark_pb2.NormalizedLandmark(x=landmark.x, y=landmark.y, z=landmark.z) for landmark in hand_landmarks
-            ])
-            solutions.drawing_utils.draw_landmarks(
-                annotated_image,
-                hand_landmarks_proto,
-                solutions.hands.HAND_CONNECTIONS,
-                solutions.drawing_styles.get_default_hand_landmarks_style(),
-                solutions.drawing_styles.get_default_hand_connections_style())
-
-            # Get the top left corner of the detected hand's bounding box.
-            height, width, _ = annotated_image.shape
-            x_coordinates = [landmark.x for landmark in hand_landmarks]
-            y_coordinates = [landmark.y for landmark in hand_landmarks]
-            text_x = int(min(x_coordinates) * width)
-            text_y = int(min(y_coordinates) * height) - MARGIN
-
-            # Draw handedness (left or right hand) on the image.
-            cv2.putText(annotated_image, f"{handedness[0].category_name}",
-                        (text_x, text_y), cv2.FONT_HERSHEY_DUPLEX,
-                        FONT_SIZE, HANDEDNESS_TEXT_COLOR, FONT_THICKNESS, cv2.LINE_AA)
-
-        return annotated_image
+        MARGIN = 10  # pixels
+        FONT_SIZE = 1
+        FONT_THICKNESS = 1
+        HANDEDNESS_TEXT_COLOR = (88, 205, 54)  # vibrant green
 
 
-    while True:
-        # Capture frame-by-frame
-        ret, frame = cap.read()
-        if system_name == 'Darwin':
-          frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-        image = mp.Image(image_format=mp.ImageFormat.SRGB, data=frame)
-        detection_result = detector.detect_for_video(image, int(time() * 1000))
-        annotated_image = draw_landmarks_on_image(image.numpy_view(), detection_result)
-        if system_name == 'Darwin':
-            annotated_image = cv2.cvtColor(annotated_image, cv2.COLOR_RGB2BGR)
-        cv2.imshow('show', annotated_image)
+        def draw_landmarks_on_image(rgb_image, detection_result):
+            hand_landmarks_list = detection_result.hand_landmarks
+            handedness_list = detection_result.handedness
+            annotated_image = np.copy(rgb_image)
 
-        if not ret:
-            break
+            # Loop through the detected hands to visualize.
+            for idx in range(len(hand_landmarks_list)):
+                hand_landmarks = hand_landmarks_list[idx]
+                handedness = handedness_list[idx]
+
+                # Draw the hand landmarks.
+                hand_landmarks_proto = landmark_pb2.NormalizedLandmarkList()
+                hand_landmarks_proto.landmark.extend([
+                    landmark_pb2.NormalizedLandmark(x=landmark.x, y=landmark.y, z=landmark.z) for landmark in hand_landmarks
+                ])
+                solutions.drawing_utils.draw_landmarks(
+                    annotated_image,
+                    hand_landmarks_proto,
+                    solutions.hands.HAND_CONNECTIONS,
+                    solutions.drawing_styles.get_default_hand_landmarks_style(),
+                    solutions.drawing_styles.get_default_hand_connections_style())
+
+                # Get the top left corner of the detected hand's bounding box.
+                height, width, _ = annotated_image.shape
+                x_coordinates = [landmark.x for landmark in hand_landmarks]
+                y_coordinates = [landmark.y for landmark in hand_landmarks]
+                text_x = int(min(x_coordinates) * width)
+                text_y = int(min(y_coordinates) * height) - MARGIN
+
+                # Draw handedness (left or right hand) on the image.
+                cv2.putText(annotated_image, f"{handedness[0].category_name}",
+                            (text_x, text_y), cv2.FONT_HERSHEY_DUPLEX,
+                            FONT_SIZE, HANDEDNESS_TEXT_COLOR, FONT_THICKNESS, cv2.LINE_AA)
+
+            return annotated_image
 
 
-        # cv2.imshow('Frame', frame)
+        while True:
+            # Capture frame-by-frame
+            ret, frame = cap.read()
+            if system_name == 'Darwin':
+              frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+            image = mp.Image(image_format=mp.ImageFormat.SRGB, data=frame)
+            detection_result = detector.detect_for_video(image, int(time() * 1000))
+            annotated_image = draw_landmarks_on_image(image.numpy_view(), detection_result)
+            if system_name == 'Darwin':
+                annotated_image = cv2.cvtColor(annotated_image, cv2.COLOR_RGB2BGR)
+            cv2.imshow('show', annotated_image)
 
-        # Break the loop on 'q' key press
-        if cv2.waitKey(1) & 0xFF == ord('q'):
-            break
+            if not ret:
+                break
 
-    # Release the capture object and close all OpenCV windows
-    cap.release()
-    cv2.destroyAllWindows()
+
+            # cv2.imshow('Frame', frame)
+
+            # Break the loop on 'q' key press
+            if cv2.waitKey(1) & 0xFF == ord('q'):
+                break
+
+        # Release the capture object and close all OpenCV windows
+        cap.release()
+        cv2.destroyAllWindows()
+
+
+    camera = 2
+    queueSize = 10
+    save = True
+    killEvent = Event()
+    width = 1280
+    height = 720
+    vc = InputThread(src=camera, queueSize=queueSize, save=save, kE=killEvent)
+    vc.start()
+    vc.initialized.wait()
+    os.makedirs('test', exist_ok=True)
+    if save:
+        st = SaveThread(vc.saveQ, frame_size=(int(width), int(height)), save_path='test',
+                        kE=killEvent)
+        st.start()
+        st.initialized.wait()

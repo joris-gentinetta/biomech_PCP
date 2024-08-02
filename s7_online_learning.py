@@ -19,12 +19,12 @@ from helpers.models import TimeSeriesRegressorWrapper
 from tqdm import tqdm
 from os.path import join
 import signal
-
+import cv2
 torch.autograd.set_detect_anomaly(True)
 from multiprocessing import Queue as MPQueue
 
 from helpers.predict_utils import Config, OLDataset, evaluate_model, EarlyStopper, get_data
-from online_utils import JointsProcess, AnglesProcess, VisualizeProcess, ProcessManager
+from online_utils import JointsProcess, AnglesProcess, VisualizeProcess, ProcessManager, InputThread, SaveThread
 
 
 if __name__ == '__main__':
@@ -32,11 +32,8 @@ if __name__ == '__main__':
     parser.add_argument('--person_dir', type=str, required=True, help='Person directory')
     parser.add_argument('--intact_hand', type=str, required=True, help='Intact hand (Right/Left)')
     parser.add_argument('--config_name', type=str, required=True, help='Training configuration')
-    parser.add_argument('--multi_gpu', action='store_true', help='Use multiple GPUs')
     parser.add_argument('--allow_tf32', action='store_true', help='Allow TF32')
-    parser.add_argument('-hs', '--hyperparameter_search', action='store_true', help='Perform hyperparameter search')
-    parser.add_argument('-t', '--test', action='store_true', help='Test the model')
-    parser.add_argument('-s', '--save_model', action='store_true', help='Save a model')
+    parser.add_argument('-s', '--save_model', action='store_true', help='Save a model') # todo
     parser.add_argument('--offline', action='store_true', help='Offline training')
     parser.add_argument('-v', '--visualize', action='store_true', help='Visualize hand movements')
     parser.add_argument('-en', '--experiment_name', type=str, required=True, help='Experiment name')
@@ -50,7 +47,7 @@ if __name__ == '__main__':
     #     print('Experiment already exists!')
     #     exit()
     # else:
-    #     os.makedirs(save_path, exist_ok=True)
+    os.makedirs(save_path, exist_ok=True)
 
     processManager = ProcessManager()
     signal.signal(signal.SIGINT, processManager.signal_handler)
@@ -64,12 +61,6 @@ if __name__ == '__main__':
         device = torch.device("cuda")
         print('Using CUDA')
 
-        # List available GPUs
-        if args.multi_gpu:
-            n_gpus = torch.cuda.device_count()
-            print(f'Number of available GPUs: {n_gpus}')
-            for i in range(n_gpus):
-                print(f'GPU{i}: {torch.cuda.get_device_name(i)}')
 
     # elif torch.backends.mps.is_available():
     #     device = torch.device("mps")
@@ -94,7 +85,22 @@ if __name__ == '__main__':
         wandb_config = yaml.safe_load(file)
         config = Config(wandb_config)
 
-    if args.offline:
+    if args.save_input:
+        temp_vc = cv2.VideoCapture(args.camera)
+        width = temp_vc.get(cv2.CAP_PROP_FRAME_WIDTH)
+        height = temp_vc.get(cv2.CAP_PROP_FRAME_HEIGHT)
+        temp_vc.release()
+
+        vc = InputThread(src=args.camera, queueSize=queue_size, save=True, kE=processManager.killEvent)
+        vc.start()
+        vc.initialized.wait()
+        os.makedirs('test', exist_ok=True)
+        st = SaveThread(vc.outputQ, frame_size=(int(width), int(height)), save_path=save_path,
+                        kE=processManager.killEvent)
+        st.start()
+        st.initialized.wait()
+
+    elif args.offline:
         data_dirs = [join('data', args.person_dir, 'recordings', recording, 'experiments', '1') for recording in
                      config.recordings]
 
