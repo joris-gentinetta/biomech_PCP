@@ -40,14 +40,15 @@ if __name__ == '__main__':
     parser.add_argument('--offline', action='store_true', help='Offline training')
     parser.add_argument('-v', '--visualize', action='store_true', help='Visualize hand movements')
     parser.add_argument('-en', '--experiment_name', type=str, required=True, help='Experiment name')
+    parser.add_argument('-c', '--camera', type=int, required=False, help='Camera id')
     args = parser.parse_args()
 
     save_path = join('data', args.person_dir, 'recordings', args.experiment_name)
-    if os.path.exists(save_path):
-        print('Experiment already exists!')
-        exit()
-    else:
-        os.makedirs(save_path, exist_ok=True)
+    # if os.path.exists(save_path): # todo
+    #     print('Experiment already exists!')
+    #     exit()
+    # else:
+    #     os.makedirs(save_path, exist_ok=True)
 
     processManager = ProcessManager()
     signal.signal(signal.SIGINT, processManager.signal_handler)
@@ -207,18 +208,17 @@ if __name__ == '__main__':
         #     for param in model.model.biophys_model.parameters():
         #         param.requires_grad = False if epoch < config.biophys_config['n_freeze_epochs'] else True
 
+        if args.visualize:
+            visualizeQueue = MPQueue(queue_size)
+            visualizeProcess = VisualizeProcess(args.intact_hand, visualizeQueue)
+            processManager.manage_process(visualizeProcess)
 
-        jointsProcess = JointsProcess(args.intact_hand, queue_size, save_path)
+        jointsProcess = JointsProcess(args.intact_hand, queue_size, save_path, args.camera)
         anglesProcess = AnglesProcess(args.intact_hand, queue_size, jointsProcess.outputQ)
-        visualizeQueue = MPQueue(queue_size)
-
-
         processManager.manage_process(jointsProcess)
         processManager.manage_process(anglesProcess)
 
-        if args.visualize:
-            visualizeProcess = VisualizeProcess(args.intact_hand, visualizeQueue)
-            processManager.manage_process(visualizeProcess)
+
 
         frame_id = 0
 
@@ -227,13 +227,17 @@ if __name__ == '__main__':
         fps = 0
         true_start_time = time()
 
+        epoch_loss = 0
+        trunctuator = 0
+        states = model.model.get_starting_states(1, None)  # train_dataset[0][1].unsqueeze(0)
+        seq_loss = 0
+
+        # todo thrash the first few angles
+
         with tqdm(range(config.n_epochs)) as pbar:
             for epoch in pbar:
                 pbar.set_description(f'Epoch {epoch}')
-                epoch_loss = 0
-                trunctuator = 0
-                states = model.model.get_starting_states(1, None)  # train_dataset[0][1].unsqueeze(0)
-                seq_loss = 0
+
                 for i in range(epoch_len):
 
                     angles_df, emg_timestep = anglesProcess.outputQ.get()
@@ -255,7 +259,7 @@ if __name__ == '__main__':
                     epoch_loss += loss.item()
                     pred_angels_df = angles_df.copy()
                     pred_angels_df.loc[config.targets] = outputs.squeeze().to('cpu').detach().numpy()
-                    if not visualizeQueue.full():
+                    if args.visualize and not visualizeQueue.full():
                         visualizeQueue.put((angles_df, pred_angels_df))
                     elif args.visualize:
                         print('VisualizeProcess input queue full')

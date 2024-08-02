@@ -143,7 +143,7 @@ class SaveThread:
 
 
 class JointsProcess(Process):
-    def __init__(self, intact_hand, queueSize=0, save_path=None):
+    def __init__(self, intact_hand, queueSize=0, save_path=None, camera=0):
         super().__init__()
         self.outputQ = MPQueue(queueSize)
         self.initialized = Event()
@@ -154,6 +154,7 @@ class JointsProcess(Process):
         self.killEvent = Event()
         self.queueSize = queueSize
         self.save_path = save_path
+        self.camera = camera
 
     def update_left_right(self, joints_df):
         for key, value in {'Left': 'LEFT', 'Right': 'RIGHT'}.items():
@@ -169,12 +170,12 @@ class JointsProcess(Process):
         return joints_df
 
     def run(self):
-        temp_vc = cv2.VideoCapture(0)
+        temp_vc = cv2.VideoCapture(self.camera)
         width = temp_vc.get(cv2.CAP_PROP_FRAME_WIDTH)
         height = temp_vc.get(cv2.CAP_PROP_FRAME_HEIGHT)
         temp_vc.release()
 
-        vc = InputThread(src=0, queueSize=self.queueSize)
+        vc = InputThread(src=self.camera, queueSize=self.queueSize)
         vc.start()
         vc.initialized.wait()
 
@@ -213,67 +214,68 @@ class JointsProcess(Process):
         print('Calibrating...')
         joints_df = pd.DataFrame(columns=columns)
         indexer = 0
-        for i in tqdm(range(self.calibration_frames)):
-
-            frame = vc.outputQ.get()[0]
-            if frame is None:
-                continue
-
-            frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-            mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=frame)
-
-            frame_time = int(time() * 1000)
-            body_results = body_model.detect_for_video(mp_image, frame_time).pose_landmarks  # todo check
-            if len(body_results) == 0:
-                continue
-
-            for landmark_name in body_cols:
-                joints_df.loc[indexer, ('Body', landmark_name, 'x')] = int(
-                    body_results[0][pose.PoseLandmark[landmark_name]].x * scales[0])
-                joints_df.loc[indexer, ('Body', landmark_name, 'y')] = int(
-                    body_results[0][pose.PoseLandmark[landmark_name]].y * scales[1])
-                joints_df.loc[indexer, ('Body', landmark_name, 'z')] = int(
-                    body_results[0][pose.PoseLandmark[landmark_name]].z * scales[2])
-
-            for side in sides:
-                # wrist = [joints_df.loc[i, ('Body', f'{side.upper()}_WRIST', 'x')],
-                #          joints_df.loc[i, ('Body', f'{side.upper()}_WRIST', 'y')]]
-
-                x_start = 0
-                x_end = scales[0]
-                y_start = 0
-                y_end = scales[1]
-
-                hands_results = hand_models[side].detect_for_video(mp_image, frame_time).hand_landmarks  # todo check
-                if len(hands_results) == 0:
+        with tqdm(total=self.calibration_frames) as pbar:
+            while indexer < self.calibration_frames:
+                frame = vc.outputQ.get()[0]
+                if frame is None:
                     continue
-                elif len(hands_results) == 1:
-                    hand_id = 0
 
-                else:
-                    x = joints_df.loc[indexer, ('Body', f'{side.upper()}_WRIST', 'x')]
-                    y = joints_df.loc[indexer, ('Body', f'{side.upper()}_WRIST', 'y')]
-                    target = np.array([x, y])
+                frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+                mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=frame)
 
-                    candidates = np.zeros(2)
-                    x = x_start + hands_results[0][hands.HandLandmark['WRIST']].x * (x_end - x_start)
-                    y = y_start + hands_results[0][hands.HandLandmark['WRIST']].y * (y_end - y_start)
-                    candidates[0] = np.linalg.norm(target - np.array([x, y]))
+                frame_time = int(time() * 1000)
+                body_results = body_model.detect_for_video(mp_image, frame_time).pose_landmarks  # todo check
+                if len(body_results) == 0:
+                    continue
 
-                    x = x_start + hands_results[1][hands.HandLandmark['WRIST']].x * (x_end - x_start)
-                    y = y_start + hands_results[1][hands.HandLandmark['WRIST']].y * (y_end - y_start)
-                    candidates[1] = np.linalg.norm(target - np.array([x, y]))
-                    hand_id = np.argmin(candidates)
+                for landmark_name in body_cols:
+                    joints_df.loc[indexer, ('Body', landmark_name, 'x')] = int(
+                        body_results[0][pose.PoseLandmark[landmark_name]].x * scales[0])
+                    joints_df.loc[indexer, ('Body', landmark_name, 'y')] = int(
+                        body_results[0][pose.PoseLandmark[landmark_name]].y * scales[1])
+                    joints_df.loc[indexer, ('Body', landmark_name, 'z')] = int(
+                        body_results[0][pose.PoseLandmark[landmark_name]].z * scales[2])
 
-                for landmark_name in hands.HandLandmark._member_names_:
-                    joints_df.loc[indexer, (side, landmark_name, 'x')] = x_start + hands_results[hand_id][
-                        hands.HandLandmark[landmark_name]].x * (x_end - x_start)
-                    joints_df.loc[indexer, (side, landmark_name, 'y')] = y_start + hands_results[hand_id][
-                        hands.HandLandmark[landmark_name]].y * (y_end - y_start)
-                    joints_df.loc[indexer, (side, landmark_name, 'z')] = x_start + hands_results[hand_id][
-                        hands.HandLandmark[landmark_name]].z * (x_end - x_start)
-            indexer += 1
-        joints_df = joints_df.fillna(0)
+                for side in sides:
+                    # wrist = [joints_df.loc[i, ('Body', f'{side.upper()}_WRIST', 'x')],
+                    #          joints_df.loc[i, ('Body', f'{side.upper()}_WRIST', 'y')]]
+
+                    x_start = 0
+                    x_end = scales[0]
+                    y_start = 0
+                    y_end = scales[1]
+
+                    hands_results = hand_models[side].detect_for_video(mp_image, frame_time).hand_landmarks  # todo check
+                    if len(hands_results) == 0:
+                        continue
+                    elif len(hands_results) == 1:
+                        hand_id = 0
+
+                    else:
+                        x = joints_df.loc[indexer, ('Body', f'{side.upper()}_WRIST', 'x')]
+                        y = joints_df.loc[indexer, ('Body', f'{side.upper()}_WRIST', 'y')]
+                        target = np.array([x, y])
+
+                        candidates = np.zeros(2)
+                        x = x_start + hands_results[0][hands.HandLandmark['WRIST']].x * (x_end - x_start)
+                        y = y_start + hands_results[0][hands.HandLandmark['WRIST']].y * (y_end - y_start)
+                        candidates[0] = np.linalg.norm(target - np.array([x, y]))
+
+                        x = x_start + hands_results[1][hands.HandLandmark['WRIST']].x * (x_end - x_start)
+                        y = y_start + hands_results[1][hands.HandLandmark['WRIST']].y * (y_end - y_start)
+                        candidates[1] = np.linalg.norm(target - np.array([x, y]))
+                        hand_id = np.argmin(candidates)
+
+                    for landmark_name in hands.HandLandmark._member_names_:
+                        joints_df.loc[indexer, (side, landmark_name, 'x')] = x_start + hands_results[hand_id][
+                            hands.HandLandmark[landmark_name]].x * (x_end - x_start)
+                        joints_df.loc[indexer, (side, landmark_name, 'y')] = y_start + hands_results[hand_id][
+                            hands.HandLandmark[landmark_name]].y * (y_end - y_start)
+                        joints_df.loc[indexer, (side, landmark_name, 'z')] = x_start + hands_results[hand_id][
+                            hands.HandLandmark[landmark_name]].z * (x_end - x_start)
+                indexer += 1
+                pbar.update(1)
+        # joints_df = joints_df.fillna(0)
         joints_df = self.update_left_right(joints_df)
         average_upper_arm_length = {}
         average_forearm_length = {}
@@ -281,7 +283,7 @@ class JointsProcess(Process):
             # get upper arm length and forearm length:
             upper_arm_lengths = []
             forearm_lengths = []
-            for i in range(indexer):
+            for i in range(self.calibration_frames):
                 shoulder = joints_df.loc[i, (side, 'SHOULDER', ['x', 'y'])].values
                 elbow = joints_df.loc[i, (side, 'ELBOW', ['x', 'y'])].values
                 wrist = joints_df.loc[i, (side, 'WRIST', ['x', 'y'])].values
@@ -438,6 +440,7 @@ class AnglesProcess(Process):
 
 
     def run(self):
+        max_interpolation_steps = 10
         anglesHelper = AnglesHelper()
         sides = [self.intact_hand]
         self.initialized.set()
@@ -448,8 +451,8 @@ class AnglesProcess(Process):
             joints_df, emg_timestep = self.inputQ.get()
         joints_df.fillna(0, inplace=True) # todo saveguard
         angles_df = anglesHelper.getArmAngles(joints_df, sides)
-        angles_df.loc[3] = angles_df.loc[0]
-        angles_df = angles_df.reindex([0, 1, 2, 3])
+        # angles_df.loc[3] = angles_df.loc[0]
+        angles_df = angles_df.reindex(range(max_interpolation_steps))
 
 
 
@@ -459,15 +462,19 @@ class AnglesProcess(Process):
             if joints_df is None:
                 continue
             start_time = time()
-
-            angles_df.loc[3, :] = anglesHelper.getArmAngles(joints_df, sides).loc[frame_id, :]
-            interpolated = angles_df.interpolate(method='index')
-            angles_df.loc[0, :] = angles_df.loc[3, :]
+            steps = len(emg_buffer)
+            if steps > max_interpolation_steps:
+                exit(f'More than {max_interpolation_steps} interpolation steps ({steps})')
+            # erase all rows but 0:
+            angles_df.loc[1:, :] = np.nan
+            angles_df.loc[steps, :] = anglesHelper.getArmAngles(joints_df, sides).loc[frame_id, :]
+            interpolated = angles_df.interpolate(method='index', limit_area='inside')
+            angles_df.loc[0, :] = angles_df.loc[steps, :]
 
             # todo filtering
 
             interpolated = self.scale(interpolated)
-            for i in range(0, 3):
+            for i in range(0, steps):
                 self.write((interpolated.loc[i+1, :], emg_buffer[i]))
             emg_buffer = []
             self.fps.value = 3 / (time() - start_time)
@@ -564,6 +571,7 @@ class VisualizeProcess(Process):
             camera_pitch = -25
             camera_target_position = [0.59, -0.65, -0.3]
             p.resetDebugVisualizerCamera(camera_distance, camera_yaw, camera_pitch, camera_target_position)
+            p.stepSimulation()
 
             return target_hand, pred_hand
 
@@ -644,33 +652,91 @@ class ProcessManager:
         self.processes.append(process)
 
 if __name__ == '__main__':
+    cap = cv2.VideoCapture(0)  # 0 for the default camera, or provide a video file path
 
+
+    body_model_path = 'models/mediapipe/pose_landmarker_lite.task'
+    hands_model_path = 'models/mediapipe/hand_landmarker.task'
+    BaseOptions = mp.tasks.BaseOptions
+    PoseLandmarker = mp.tasks.vision.PoseLandmarker
+    PoseLandmarkerOptions = mp.tasks.vision.PoseLandmarkerOptions
+    VisionRunningMode = mp.tasks.vision.RunningMode
+
+    options = mp.tasks.vision.HandLandmarkerOptions(base_options=BaseOptions(model_asset_path=hands_model_path)
+                                                    , num_hands=1,
+                                                    running_mode=VisionRunningMode.VIDEO)  # todo num_hands
+    hand_models = {'Right': mp.tasks.vision.HandLandmarker.create_from_options(options),
+                   'Left': mp.tasks.vision.HandLandmarker.create_from_options(options)}
+
+    detector = hand_models['Right']
+    options = PoseLandmarkerOptions(
+        base_options=BaseOptions(model_asset_path=body_model_path),
+        running_mode=VisionRunningMode.VIDEO)
+    body_model = PoseLandmarker.create_from_options(options)
 
     # Create a VideoCapture object
-    cap = cv2.VideoCapture(0)  # 0 for the default camera, or provide a video file path
     before_time = time()
+
+    from mediapipe import solutions
+    from mediapipe.framework.formats import landmark_pb2
+    import numpy as np
+
+    MARGIN = 10  # pixels
+    FONT_SIZE = 1
+    FONT_THICKNESS = 1
+    HANDEDNESS_TEXT_COLOR = (88, 205, 54)  # vibrant green
+
+
+    def draw_landmarks_on_image(rgb_image, detection_result):
+        hand_landmarks_list = detection_result.hand_landmarks
+        handedness_list = detection_result.handedness
+        annotated_image = np.copy(rgb_image)
+
+        # Loop through the detected hands to visualize.
+        for idx in range(len(hand_landmarks_list)):
+            hand_landmarks = hand_landmarks_list[idx]
+            handedness = handedness_list[idx]
+
+            # Draw the hand landmarks.
+            hand_landmarks_proto = landmark_pb2.NormalizedLandmarkList()
+            hand_landmarks_proto.landmark.extend([
+                landmark_pb2.NormalizedLandmark(x=landmark.x, y=landmark.y, z=landmark.z) for landmark in hand_landmarks
+            ])
+            solutions.drawing_utils.draw_landmarks(
+                annotated_image,
+                hand_landmarks_proto,
+                solutions.hands.HAND_CONNECTIONS,
+                solutions.drawing_styles.get_default_hand_landmarks_style(),
+                solutions.drawing_styles.get_default_hand_connections_style())
+
+            # Get the top left corner of the detected hand's bounding box.
+            height, width, _ = annotated_image.shape
+            x_coordinates = [landmark.x for landmark in hand_landmarks]
+            y_coordinates = [landmark.y for landmark in hand_landmarks]
+            text_x = int(min(x_coordinates) * width)
+            text_y = int(min(y_coordinates) * height) - MARGIN
+
+            # Draw handedness (left or right hand) on the image.
+            cv2.putText(annotated_image, f"{handedness[0].category_name}",
+                        (text_x, text_y), cv2.FONT_HERSHEY_DUPLEX,
+                        FONT_SIZE, HANDEDNESS_TEXT_COLOR, FONT_THICKNESS, cv2.LINE_AA)
+
+        return annotated_image
+
+
     while True:
         # Capture frame-by-frame
         ret, frame = cap.read()
+        frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+        image = mp.Image(image_format=mp.ImageFormat.SRGB, data=frame)
+        detection_result = detector.detect_for_video(image, int(time() * 1000))
+        annotated_image = draw_landmarks_on_image(image.numpy_view(), detection_result)
+        cv2.imshow('show', cv2.cvtColor(annotated_image, cv2.COLOR_RGB2BGR))
 
         if not ret:
             break
 
-        # Get the timestamp of the current frame
-        timestamp = cap.get(cv2.CAP_PROP_POS_MSEC)
-        after_time = time()
-        fps = (1 / (after_time - before_time))
-        before_time = after_time
-        print(f"FPS: {fps}")
-        # Get the current frame position
-        # frame_pos = cap.get(cv2.CAP_PROP_POS_FRAMES)
-        #
-        # # Calculate the timestamp
-        # timestamp = (frame_pos / 30) * 1000  # Convert to milliseconds
-        # print(f"Timestamp: {timestamp} ms")
-        # print(f"Timestamp: {timestamp} ms")
-        #
-        # # Display the resulting frame
+
         # cv2.imshow('Frame', frame)
 
         # Break the loop on 'q' key press
