@@ -46,7 +46,8 @@ frame_id = 0
 
 
 class InputThread:
-    def __init__(self, src=0, queueSize=0):
+    def __init__(self, src=0, queueSize=0, save=True):
+        self.save = save
         self.stream = cv2.VideoCapture(src)
         # (self.grabbed, self.frame) = self.stream.read()
         self.outputQ = Queue(maxsize=queueSize)
@@ -76,7 +77,8 @@ class InputThread:
             start_time = time()
             (self.grabbed, frame) = self.stream.read()
             emg_timestep = np.asarray(self.emg.normedEMG)
-            self.write_to_save((frame, emg_timestep))
+            if self.save:
+                self.write_to_save((frame, emg_timestep))
             if self.counter % self.sampler != 0:
                 frame = None
             self.write_to_output((frame, emg_timestep))
@@ -143,7 +145,7 @@ class SaveThread:
 
 
 class JointsProcess(Process):
-    def __init__(self, intact_hand, queueSize=0, save_path=None, camera=0):
+    def __init__(self, intact_hand, queueSize=0, save_path=None, camera=0, save=True):
         super().__init__()
         self.outputQ = MPQueue(queueSize)
         self.initialized = Event()
@@ -155,6 +157,7 @@ class JointsProcess(Process):
         self.queueSize = queueSize
         self.save_path = save_path
         self.camera = camera
+        self.save = save
 
     def update_left_right(self, joints_df):
         for key, value in {'Left': 'LEFT', 'Right': 'RIGHT'}.items():
@@ -175,13 +178,13 @@ class JointsProcess(Process):
         height = temp_vc.get(cv2.CAP_PROP_FRAME_HEIGHT)
         temp_vc.release()
 
-        vc = InputThread(src=self.camera, queueSize=self.queueSize)
+        vc = InputThread(src=self.camera, queueSize=self.queueSize, save=self.save)
         vc.start()
         vc.initialized.wait()
-
-        st = SaveThread(vc.saveQ, frame_size=(int(width), int(height)), save_path=self.save_path, display=True, kE=self.killEvent)
-        st.start()
-        st.initialized.wait()
+        if self.save:
+            st = SaveThread(vc.saveQ, frame_size=(int(width), int(height)), save_path=self.save_path, display=True, kE=self.killEvent)
+            st.start()
+            st.initialized.wait()
 
         body_model_path = 'models/mediapipe/pose_landmarker_lite.task'
         hands_model_path = 'models/mediapipe/hand_landmarker.task'

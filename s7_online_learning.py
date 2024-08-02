@@ -41,6 +41,7 @@ if __name__ == '__main__':
     parser.add_argument('-v', '--visualize', action='store_true', help='Visualize hand movements')
     parser.add_argument('-en', '--experiment_name', type=str, required=True, help='Experiment name')
     parser.add_argument('-c', '--camera', type=int, required=False, help='Camera id')
+    parser.add_argument('-si', '--save_input', action='store_true', help='Save input data')
     args = parser.parse_args()
 
     save_path = join('data', args.person_dir, 'recordings', args.experiment_name)
@@ -213,7 +214,7 @@ if __name__ == '__main__':
             visualizeProcess = VisualizeProcess(args.intact_hand, visualizeQueue)
             processManager.manage_process(visualizeProcess)
 
-        jointsProcess = JointsProcess(args.intact_hand, queue_size, save_path, args.camera)
+        jointsProcess = JointsProcess(args.intact_hand, queue_size, save_path, args.camera, args.save_input)
         anglesProcess = AnglesProcess(args.intact_hand, queue_size, jointsProcess.outputQ)
         processManager.manage_process(jointsProcess)
         processManager.manage_process(anglesProcess)
