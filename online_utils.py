@@ -17,6 +17,7 @@ import pandas as pd
 
 pd.options.mode.copy_on_write = True
 idx = pd.IndexSlice
+from os.path import join
 
 from helpers.utils import AnglesHelper
 from helpers.EMGClass import EMG
@@ -110,6 +111,7 @@ class SaveThread:
         self.initialized = Event()
         self.frame_size = frame_size
         self._stop_event = kE
+        self.emg_data = []
 
     def start(self):
         t = Thread(target=self.update, args=())
@@ -120,25 +122,28 @@ class SaveThread:
 
     def update(self):
         fourcc = cv2.VideoWriter_fourcc(*'mp4v')
-        out = cv2.VideoWriter(self.save_path, fourcc, 20.0, self.frame_size)  # Adjust frame rate as needed
+        out = cv2.VideoWriter(join(self.save_path, 'video.mp4'), fourcc, FRAME_RATE, self.frame_size)  # Adjust frame rate as needed
+
 
         while not self._stop_event.is_set():
             if not self.inputQ.empty():
                 frame, emg_timestep = self.inputQ.get()
                 if frame is not None:
                     out.write(frame)
+                    self.emg_data.append(emg_timestep)
                     # if self.display:
                     #     cv2.imshow('Frame', frame)
                     #     if cv2.waitKey(1) & 0xFF == ord('q'):
                     #         break
-
+        self.emg_data = np.array(self.emg_data)
+        np.save(join(self.save_path, 'emg.npy'), self.emg_data)
         out.release()
         cv2.destroyAllWindows()
 
 
 
 class JointsProcess(Process):
-    def __init__(self, intact_hand, queueSize=0):
+    def __init__(self, intact_hand, queueSize=0, save_path=None):
         super().__init__()
         self.outputQ = MPQueue(queueSize)
         self.initialized = Event()
@@ -148,6 +153,7 @@ class JointsProcess(Process):
         self.input_fps = Value('f', 0)
         self.killEvent = Event()
         self.queueSize = queueSize
+        self.save_path = save_path
 
     def update_left_right(self, joints_df):
         for key, value in {'Left': 'LEFT', 'Right': 'RIGHT'}.items():
@@ -172,7 +178,7 @@ class JointsProcess(Process):
         vc.start()
         vc.initialized.wait()
 
-        st = SaveThread(vc.saveQ, frame_size=(int(width), int(height)), save_path='output.mp4', display=True, kE=self.killEvent)
+        st = SaveThread(vc.saveQ, frame_size=(int(width), int(height)), save_path=self.save_path, display=True, kE=self.killEvent)
         st.start()
         st.initialized.wait()
 

@@ -39,7 +39,15 @@ if __name__ == '__main__':
     parser.add_argument('-s', '--save_model', action='store_true', help='Save a model')
     parser.add_argument('--offline', action='store_true', help='Offline training')
     parser.add_argument('-v', '--visualize', action='store_true', help='Visualize hand movements')
+    parser.add_argument('-en', '--experiment_name', type=str, required=True, help='Experiment name')
     args = parser.parse_args()
+
+    save_path = join('data', args.person_dir, 'recordings', args.experiment_name)
+    if os.path.exists(save_path):
+        print('Experiment already exists!')
+        exit()
+    else:
+        os.makedirs(save_path, exist_ok=True)
 
     processManager = ProcessManager()
     signal.signal(signal.SIGINT, processManager.signal_handler)
@@ -200,7 +208,7 @@ if __name__ == '__main__':
         #         param.requires_grad = False if epoch < config.biophys_config['n_freeze_epochs'] else True
 
 
-        jointsProcess = JointsProcess(args.intact_hand, queue_size)
+        jointsProcess = JointsProcess(args.intact_hand, queue_size, save_path)
         anglesProcess = AnglesProcess(args.intact_hand, queue_size, jointsProcess.outputQ)
         visualizeQueue = MPQueue(queue_size)
 
