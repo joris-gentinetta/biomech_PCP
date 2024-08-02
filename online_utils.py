@@ -42,13 +42,14 @@ from threading import Thread
 from queue import Queue
 import platform
 
-FRAME_RATE = 60 # NOT USED EVERYWHERE # todo
+FRAME_RATE = 60
 frame_id = 0
 system_name = platform.system()
+PRINT = False
 
 
 class InputThread:
-    def __init__(self, src=0, queueSize=0, save=True):
+    def __init__(self, src=0, queueSize=0, save=True, kE=None):
         self.save = save
         self.stream = cv2.VideoCapture(src)
         # (self.grabbed, self.frame) = self.stream.read()
@@ -60,11 +61,12 @@ class InputThread:
         # self.emg_timestep = np.asarray(self.emg.normedEMG)
         self.fps = Value('f', 0)
         self.counter = 0
-        self.sampler = 3 # todo expose
+        self.sampler = 3
 
         self.width = self.stream.get(cv2.CAP_PROP_FRAME_WIDTH)
         self.height = self.stream.get(cv2.CAP_PROP_FRAME_HEIGHT)
         self.input_fps = self.stream.get(cv2.CAP_PROP_FPS)
+        self._stop_event = kE
 
     def start(self):
         t = Thread(target=self.update, args=())
@@ -75,7 +77,7 @@ class InputThread:
 
     def update(self):
 
-        while True:
+        while not self._stop_event.is_set():
             start_time = time()
             (self.grabbed, frame) = self.stream.read()
             emg_timestep = np.asarray(self.emg.normedEMG)
@@ -147,12 +149,12 @@ class SaveThread:
 
 
 class JointsProcess(Process):
-    def __init__(self, intact_hand, queueSize=0, save_path=None, camera=0, save=True):
+    def __init__(self, intact_hand, queueSize=0, save_path=None, camera=0, save=True, calibration_frames=20):
         super().__init__()
         self.outputQ = MPQueue(queueSize)
         self.initialized = Event()
         self.intact_hand = intact_hand
-        self.calibration_frames = 20
+        self.calibration_frames = calibration_frames
         self.fps = Value('f', 0)
         self.input_fps = Value('f', 0)
         self.killEvent = Event()
@@ -180,7 +182,7 @@ class JointsProcess(Process):
         height = temp_vc.get(cv2.CAP_PROP_FRAME_HEIGHT)
         temp_vc.release()
 
-        vc = InputThread(src=self.camera, queueSize=self.queueSize, save=self.save)
+        vc = InputThread(src=self.camera, queueSize=self.queueSize, save=self.save, kE=self.killEvent)
         vc.start()
         vc.initialized.wait()
         if self.save:
@@ -240,9 +242,6 @@ class JointsProcess(Process):
                         body_results[0][pose.PoseLandmark[landmark_name]].y * scales[1])
                     joints_df.loc[indexer, ('Body', landmark_name, 'z')] = int(
                         body_results[0][pose.PoseLandmark[landmark_name]].z * scales[2])
-
-                # wrist = [joints_df.loc[i, ('Body', f'{side.upper()}_WRIST', 'x')],
-                #          joints_df.loc[i, ('Body', f'{side.upper()}_WRIST', 'y')]]
 
                 x_start = 0
                 x_end = scales[0]
@@ -319,7 +318,8 @@ class JointsProcess(Process):
             t1 = time()
             body_results = body_model.detect_for_video(mp_image, frame_time).pose_landmarks
             t2 = time()
-            print('body: ', t2 - t1)
+            if PRINT:
+                print('body: ', t2 - t1)
 
             if len(body_results) == 0:
                 self.write((None, emg_timestep))
@@ -343,7 +343,8 @@ class JointsProcess(Process):
             y_start = 0
             y_end = int(scales[1])
 
-            cropped_frame = frame[:, x_start:x_end]
+            # cropped_frame = frame[:, x_start:x_end]
+            cropped_frame = frame
             if system_name == 'Darwin':
                 cropped_frame = cv2.cvtColor(cropped_frame, cv2.COLOR_BGR2RGB)
             mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=cropped_frame)
@@ -351,7 +352,8 @@ class JointsProcess(Process):
 
             hands_results = hand_models[side].detect_for_video(mp_image, frame_time).hand_landmarks
             t3 = time()
-            print('hands: ', t3 - t2)
+            if PRINT:
+                print('hands: ', t3 - t2)
             if len(hands_results) == 0:
                 self.write((None, emg_timestep))
                 continue
@@ -375,7 +377,8 @@ class JointsProcess(Process):
                 hand_id = np.argmin(candidates)
 
             t4 = time()
-            print('hand_id: ', t4 - t3)
+            if PRINT:
+                print('hand_id: ', t4 - t3)
 
             for landmark_name in hands.HandLandmark._member_names_:
                 joints_df.loc[frame_id, (side, landmark_name, 'x')] = x_start + hands_results[hand_id][
@@ -417,7 +420,8 @@ class JointsProcess(Process):
                                                                                                                                                :,
                                                                                                                                                2] * -1
             t5 = time()
-            print('correction: ', t5 - t4)
+            if PRINT:
+                print('correction: ', t5 - t4)
             joints_df = self.update_left_right(joints_df)
             self.write((joints_df, emg_timestep))
             self.fps.value = 1 / (time() - start_time)
@@ -455,9 +459,7 @@ class AnglesProcess(Process):
         joints_df = None
         while joints_df is None: # make sure the first frame is not None
             joints_df, emg_timestep = self.inputQ.get()
-        # joints_df.fillna(0, inplace=True) # todo saveguard
         angles_df = anglesHelper.getArmAngles(joints_df, sides)
-        # angles_df.loc[3] = angles_df.loc[0]
         angles_df = angles_df.reindex(range(max_interpolation_steps))
 
 
@@ -471,14 +473,10 @@ class AnglesProcess(Process):
             steps = len(emg_buffer)
             if steps > max_interpolation_steps:
                 exit(f'More than {max_interpolation_steps} interpolation steps ({steps})')
-            # erase all rows but 0:
             angles_df.loc[1:, :] = np.nan
             angles_df.loc[steps, :] = anglesHelper.getArmAngles(joints_df, sides).loc[frame_id, :]
             interpolated = angles_df.interpolate(method='index', limit_area='inside')
             angles_df.loc[0, :] = angles_df.loc[steps, :]
-
-            # todo filtering
-
             interpolated = self.scale(interpolated)
             for i in range(0, steps):
                 self.write((interpolated.loc[i+1, :], emg_buffer[i]))
@@ -657,6 +655,7 @@ class ProcessManager:
         process.initialized.wait()
         self.processes.append(process)
 
+
 if __name__ == '__main__':
     print(system_name)
     cap = cv2.VideoCapture(0)  # 0 for the default camera, or provide a video file path
@@ -671,7 +670,7 @@ if __name__ == '__main__':
 
     options = mp.tasks.vision.HandLandmarkerOptions(base_options=BaseOptions(model_asset_path=hands_model_path)
                                                     , num_hands=1,
-                                                    running_mode=VisionRunningMode.VIDEO)  # todo num_hands
+                                                    running_mode=VisionRunningMode.VIDEO)
     hand_models = {'Right': mp.tasks.vision.HandLandmarker.create_from_options(options),
                    'Left': mp.tasks.vision.HandLandmarker.create_from_options(options)}
 
