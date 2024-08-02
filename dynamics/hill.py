@@ -16,7 +16,7 @@ lM_opt = math.log(0.06)
 c = 1
 A = 1
 lT_s = math.log(0.04)
-c_PE = math.log(3)
+c_PE = math.log(10)
 c_AL = math.log(7)
 a_con = 0
 b_con = 0
@@ -68,9 +68,9 @@ class Muscles_Hill(nn.Module):
         del_lMT = muscle_SS[:, :, 0, :]
         # vMT = muscle_SS[:, :, 1, :]
 
-        epsMT = del_lMT/self.lM_opt
-        epsM = del_lM/self.lM_opt
-        epsT = (epsMT - epsM)*self.lM_opt/self.lT_s - 1
+        epsMT = del_lMT#/self.lM_opt
+        epsM = del_lM#/self.lM_opt
+        epsT = (epsMT - epsM)*self.lM_opt/self.lT_s #- 1
 
         f_PE = self.fMax*torch.exp(self.c_PE*(epsM - 0.5))
         f_L = self.fMax*torch.exp(-self.c_AL*epsM**2)
@@ -79,13 +79,23 @@ class Muscles_Hill(nn.Module):
 
         # get the velocity scaling factor
         # fV = (f_SE - f_PE*self.fMax)/(alphas*f_L*self.fMax)
-        fV = (f_SE - f_PE)/(alphas*f_L)
+        fV = nn.functional.relu(f_SE - f_PE)/(alphas*f_L) # todo something with the fV relationship still aint cutting it
+
+        if torch.any(fV < 0):
+            print('negative fV')
 
         # invert the force velocity relationship to get the velocity
         d_epsM_dt = torch.where(fV <= 1, self.b_con*(1 - fV)/(fV + self.a_con), self.b_ecc*(fV - 1)/(self.a_ecc*(1 - self.fEcc) - self.fEcc + fV))
 
-        K_PE = self.c_PE/self.lM_opt*f_PE
-        K_L = -2*self.c_AL*epsM*f_L # this can be negative so watch me!
+        # if we assume this is a normalized strain rate, we should be able to adjust to the actual strain rate
+        d_epsM_dt = d_epsM_dt*self.lM_opt
+
+        # K_PE = self.c_PE/self.lM_opt*f_PE
+        # K_L = -2*self.c_AL*epsM*f_L # this can be negative so watch me!
+        # K_SE = torch.where(epsT > self.epsT_toe, self.ET, 2*self.quadT*nn.functional.relu(epsT))
+        # K_M = K_L*fV + K_PE
+        K_PE = self.c_PE*f_PE
+        K_L = -2*alphas*self.c_AL*epsM*f_L # this can be negative so watch me!
         K_SE = torch.where(epsT > self.epsT_toe, self.ET, 2*self.quadT*nn.functional.relu(epsT))
         K_M = K_L*fV + K_PE
 
@@ -93,7 +103,8 @@ class Muscles_Hill(nn.Module):
         F = f_SE
 
         # stiffness is from the muscle (parallel elements) and tendon (series element)
-        K = 1/(1/K_M + 1/K_SE)
+        # K = 1/(1/K_M + 1/K_SE)
+        K = K_M + K_SE
 
         return F, K, d_epsM_dt
 
@@ -119,7 +130,7 @@ class Muscles_Hill(nn.Module):
 
         epsMT = del_lMT#/lM_opt
         epsM = del_lM#/lM_opt
-        epsT = (epsMT - epsM)#*lM_opt/lT_s - 1
+        epsT = (epsMT - epsM)*lM_opt/lT_s# - 1
 
         f_PE = torch.exp(c_PE*(epsM - 0.5))
         f_L = torch.exp(-c_AL*epsM**2)
@@ -134,9 +145,9 @@ class Muscles_Hill(nn.Module):
         initial_del_lM = del_lM_range[min_idx]
 
         # calculate force components for validation
-        epsM_V = initial_del_lM/self.lM_opt
-        epsMT_V = muscle_SS[:, :, 0, :]/self.lM_opt
-        epsT_V = (epsMT_V - epsM_V)*self.lM_opt/self.lT_s - 1
+        epsM_V = initial_del_lM#/self.lM_opt
+        epsMT_V = muscle_SS[:, :, 0, :]#/self.lM_opt
+        epsT_V = (epsMT_V - epsM_V)*self.lM_opt/self.lT_s# - 1
 
         f_PE_V = self.fMax*torch.exp(self.c_PE*(epsM_V - 0.5))
         f_L_V = self.fMax*torch.exp(-self.c_AL*epsM_V**2)
