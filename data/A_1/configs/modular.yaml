@@ -60,7 +60,7 @@ parameters:
     value: 10
 
   batch_size:
-    value: 8
+    value: 1
 
   wandb_mode:
     value: disabled

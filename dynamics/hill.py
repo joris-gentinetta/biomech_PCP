@@ -12,7 +12,7 @@ from torch.nn.functional import relu
 
 ## Muscle parameters
 fMax = math.log(1000)
-lM_opt = math.log(0.6)
+lM_opt = math.log(0.06)
 c = 1
 A = 1
 lT_s = math.log(0.04)
@@ -66,19 +66,20 @@ class Muscles_Hill(nn.Module):
         alphas = torch.clamp(alphas, 0.001, 1) # make sure to avoid singularity issues)
 
         del_lMT = muscle_SS[:, :, 0, :]
-        vMT = muscle_SS[:, :, 1, :]
+        # vMT = muscle_SS[:, :, 1, :]
 
         epsMT = del_lMT/self.lM_opt
         epsM = del_lM/self.lM_opt
         epsT = (epsMT - epsM)*self.lM_opt/self.lT_s - 1
 
-        f_PE = torch.exp(self.c_PE*(epsM - 0.5))
-        f_L = torch.exp(-self.c_AL*epsM**2)
+        f_PE = self.fMax*torch.exp(self.c_PE*(epsM - 0.5))
+        f_L = self.fMax*torch.exp(-self.c_AL*epsM**2)
         # f_V = nn.functional.relu(-torch.atan(-0.5*self.velM)/math.atan(5) + 1)
-        f_SE = torch.where(epsT > self.epsT_toe, self.ET*epsT - self.T_affine, self.quadT*epsT*nn.functional.relu(epsT))
+        f_SE = self.fMax*torch.where(epsT > self.epsT_toe, self.ET*epsT - self.T_affine, self.quadT*epsT*nn.functional.relu(epsT))
 
         # get the velocity scaling factor
-        fV = (f_SE - f_PE*self.fMax)/(alphas*f_L*self.fMax)
+        # fV = (f_SE - f_PE*self.fMax)/(alphas*f_L*self.fMax)
+        fV = (f_SE - f_PE)/(alphas*f_L)
 
         # invert the force velocity relationship to get the velocity
         d_epsM_dt = torch.where(fV <= 1, self.b_con*(1 - fV)/(fV + self.a_con), self.b_ecc*(fV - 1)/(self.a_ecc*(1 - self.fEcc) - self.fEcc + fV))
@@ -102,7 +103,7 @@ class Muscles_Hill(nn.Module):
 
         alphas = alphas_raw[:, 0, :].view(-1, self.n_joints, 2, 1)  # this is now [batch_size, n_joints, 2, 1] to match other values
 
-        steps = 1000
+        steps = 20001
 
         # for these calculations will need to unsqueeze parameters along the range dimension
         lM_opt = self.lM_opt.unsqueeze(0).unsqueeze(3)
@@ -126,11 +127,22 @@ class Muscles_Hill(nn.Module):
         f_V = torch.ones_like(f_L)
         f_SE = torch.where(epsT > self.epsT_toe, self.ET*epsT - self.T_affine, self.quadT*epsT*nn.functional.relu(epsT))
 
-        F = alphas*(f_L*f_V + f_PE) - f_SE
+        F_err = torch.abs(alphas*f_L*f_V + f_PE - f_SE)
 
         # then the lowest value of the force is the initial state
-        min_idx = torch.argmin(torch.abs(F), dim=-1)
+        min_idx = torch.argmin(F_err, dim=-1)
         initial_del_lM = del_lM_range[min_idx]
+
+        # calculate force components for validation
+        epsM_V = initial_del_lM/self.lM_opt
+        epsMT_V = muscle_SS[:, :, 0, :]/self.lM_opt
+        epsT_V = (epsMT_V - epsM_V)*self.lM_opt/self.lT_s - 1
+
+        f_PE_V = self.fMax*torch.exp(self.c_PE*(epsM_V - 0.5))
+        f_L_V = self.fMax*torch.exp(-self.c_AL*epsM_V**2)
+        f_SE_V = self.fMax*torch.where(epsT_V > self.epsT_toe, self.ET*epsT_V - self.T_affine, self.quadT*epsT_V*nn.functional.relu(epsT_V))
+
+        F_V = alphas_raw[:, 0, :].view(-1, self.n_joints, 2)*f_L_V + f_PE_V
 
         return initial_del_lM
 

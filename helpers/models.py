@@ -303,7 +303,7 @@ class ModularModel(TimeSeriesRegressor):
     # def get_starting_states(self, batch_size, y=None):
     def get_starting_states(self, batch_size, y=None, x=None):
         return [self.activation_model.get_starting_states(batch_size, y),
-                [self.muscle_model.get_starting_states(batch_size, y, [self.activation_model(x, self.activation_model.get_starting_states(batch_size, y))[0], self.joint_model.get_starting_states(batch_size, y)[0]]),
+                [self.muscle_model.get_starting_states(batch_size, y, [self.sigmoid(self.activation_model(x, self.activation_model.get_starting_states(batch_size, y))[0]), self.joint_model.get_starting_states(batch_size, y)[0]]),
                      self.joint_model.get_starting_states(batch_size, y)[0]],
                 self.joint_model.get_starting_states(batch_size, y)[1]]
 
