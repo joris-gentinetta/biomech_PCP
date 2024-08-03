@@ -23,6 +23,7 @@ from helpers.utils import AnglesHelper
 from helpers.EMGClass import EMG
 
 import warnings
+import signal
 
 warnings.filterwarnings("ignore")
 from time import time
@@ -48,15 +49,14 @@ system_name = platform.system()
 PRINT = False
 
 
-class InputThread:
+class InputThread(Thread):
     def __init__(self, src=0, queueSize=0, save=True, kE=None):
+        super().__init__()
         self.stream = cv2.VideoCapture(src)
-        # (self.grabbed, self.frame) = self.stream.read()
         self.outputQ = Queue(maxsize=queueSize)
         self.initialized = Event()
         self.emg = EMG()
         self.emg.startCommunication()
-        # self.emg_timestep = np.asarray(self.emg.normedEMG)
         self.fps = Value('f', 0)
         self.counter = 0
         if save:
@@ -67,18 +67,11 @@ class InputThread:
         self.width = self.stream.get(cv2.CAP_PROP_FRAME_WIDTH)
         self.height = self.stream.get(cv2.CAP_PROP_FRAME_HEIGHT)
         self.input_fps = self.stream.get(cv2.CAP_PROP_FPS)
-        self._stop_event = kE
+        self.killEvent = kE
 
-    def start(self):
-        t = Thread(target=self.update, args=())
-        t.daemon = True
-        t.start()
+    def run(self):
         self.initialized.set()
-        return self
-
-    def update(self):
-
-        while not self._stop_event.is_set():
+        while not self.killEvent.is_set():
             start_time = time()
             (self.grabbed, frame) = self.stream.read()
             emg_timestep = np.asarray(self.emg.normedEMG)
@@ -87,6 +80,7 @@ class InputThread:
             self.write_to_output((frame, emg_timestep))
             self.fps.value = 1 / (time() - start_time)
             self.counter += 1
+        self.emg.shutdown()
 
     def write_to_output(self, data):
         if not self.outputQ.full():
@@ -100,31 +94,27 @@ class InputThread:
             self.outputQ.get()
 
 
-class SaveThread:
+class SaveThread(Thread):
     def __init__(self, inputQ, frame_size, save_path, kE=None):
+        super().__init__()
         self.inputQ = inputQ
         self.save_path = save_path
         self.initialized = Event()
         self.frame_size = frame_size
-        self._stop_event = kE
+        self.killEvent = kE
         self.emg_data = []
+        os.makedirs(save_path, exist_ok=True)
 
-    def start(self):
-        t = Thread(target=self.update, args=())
-        t.daemon = True
-        t.start()
-        self.initialized.set()
-        return self
-
-    def update(self):
+    def run(self):
         fourcc = cv2.VideoWriter_fourcc(*'mp4v')
         out = cv2.VideoWriter(join(self.save_path, 'video.mp4'), fourcc, FRAME_RATE, self.frame_size)  # Adjust frame rate as needed
+        self.initialized.set()
 
-
-        while not self._stop_event.is_set():
+        while not self.killEvent.is_set():
             if not self.inputQ.empty():
                 frame, emg_timestep = self.inputQ.get()
                 if frame is not None:
+                    # frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
                     out.write(frame)
                     self.emg_data.append(emg_timestep)
 
@@ -172,10 +162,6 @@ class JointsProcess(Process):
         vc = InputThread(src=self.camera, queueSize=self.queueSize, save=self.save, kE=self.killEvent)
         vc.start()
         vc.initialized.wait()
-        if self.save:
-            st = SaveThread(vc.saveQ, frame_size=(int(width), int(height)), save_path=self.save_path, kE=self.killEvent)
-            st.start()
-            st.initialized.wait()
 
         body_model_path = 'models/mediapipe/pose_landmarker_lite.task'
         hands_model_path = 'models/mediapipe/hand_landmarker.task'
@@ -289,7 +275,7 @@ class JointsProcess(Process):
         t2 = time()
         t3 = time()
         t4 = time()
-        while True:
+        while not self.killEvent.is_set():
             frame, emg_timestep = vc.outputQ.get()
             if frame is None:
                 self.write((None, emg_timestep))
@@ -440,7 +426,6 @@ class AnglesProcess(Process):
         max_interpolation_steps = 10
         anglesHelper = AnglesHelper()
         sides = [self.intact_hand]
-        self.initialized.set()
         emg_buffer = []
 
         joints_df = None
@@ -448,10 +433,9 @@ class AnglesProcess(Process):
             joints_df, emg_timestep = self.inputQ.get()
         angles_df = anglesHelper.getArmAngles(joints_df, sides)
         angles_df = angles_df.reindex(range(max_interpolation_steps))
+        self.initialized.set()
 
-
-
-        while True:
+        while not self.killEvent.is_set():
             joints_df, emg_timestep = self.inputQ.get()
             emg_buffer.append(emg_timestep)
             if joints_df is None:
@@ -482,13 +466,13 @@ class AnglesProcess(Process):
         angles_df = np.clip(angles_df, -1, 1)
         return angles_df
 
-
     def write(self, data):
         if not self.outputQ.full():
             self.outputQ.put(data, block=False)
         else:
             print("AnglesProcess output queue full", flush=True)
             pass
+
     def reset(self):
         while not self.outputQ.empty():
             self.outputQ.get()
@@ -583,7 +567,7 @@ class VisualizeProcess(Process):
         target_hand, pred_hand = init_physics_client()
         self.initialized.set()  # Signal that the initialization is complete
 
-        while True:
+        while not self.killEvent.is_set():
             target_angles, pred_angles = self.inputQ.get()
             time_start = time()
 
@@ -626,6 +610,8 @@ class VisualizeProcess(Process):
 
 class ProcessManager:
     def __init__(self):
+        signal.signal(signal.SIGINT, self.signal_handler)
+
         self.processes = []
         self.killEvent = Event()
 
@@ -634,11 +620,10 @@ class ProcessManager:
         self.killEvent.set()
         for p in self.processes:
             p.killEvent.set()
-        sleep(2)
         for p in self.processes:
-            p.terminate()
-        sleep(2)
-        sys.exit(0)
+            p.join()
+
+        # sys.exit(0)
 
     def manage_process(self, process):
         process.start()
@@ -647,7 +632,7 @@ class ProcessManager:
 
 
 if __name__ == '__main__':
-    mediapipe_test = False
+    mediapipe_test = True
     if mediapipe_test:
         print(system_name)
         cap = cv2.VideoCapture(2)  # 0 for the default camera, or provide a video file path
@@ -726,12 +711,12 @@ if __name__ == '__main__':
             # Capture frame-by-frame
             ret, frame = cap.read()
             if system_name == 'Darwin':
-              frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+                frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
             image = mp.Image(image_format=mp.ImageFormat.SRGB, data=frame)
             detection_result = detector.detect_for_video(image, int(time() * 1000))
             annotated_image = draw_landmarks_on_image(image.numpy_view(), detection_result)
-            if system_name == 'Darwin':
-                annotated_image = cv2.cvtColor(annotated_image, cv2.COLOR_RGB2BGR)
+            # if system_name == 'Darwin':
+            #     annotated_image = cv2.cvtColor(annotated_image, cv2.COLOR_RGB2BGR) # todo
             cv2.imshow('show', annotated_image)
 
             if not ret:
@@ -747,20 +732,3 @@ if __name__ == '__main__':
         # Release the capture object and close all OpenCV windows
         cap.release()
         cv2.destroyAllWindows()
-
-
-    camera = 2
-    queueSize = 10
-    save = True
-    killEvent = Event()
-    width = 1280
-    height = 720
-    vc = InputThread(src=camera, queueSize=queueSize, save=save, kE=killEvent)
-    vc.start()
-    vc.initialized.wait()
-    os.makedirs('test', exist_ok=True)
-    if save:
-        st = SaveThread(vc.saveQ, frame_size=(int(width), int(height)), save_path='test',
-                        kE=killEvent)
-        st.start()
-        st.initialized.wait()

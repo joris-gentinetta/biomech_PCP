@@ -50,7 +50,6 @@ if __name__ == '__main__':
     os.makedirs(save_path, exist_ok=True)
 
     processManager = ProcessManager()
-    signal.signal(signal.SIGINT, processManager.signal_handler)
 
     epoch_len = 1000
     # sampling_frequency = 60
@@ -92,13 +91,10 @@ if __name__ == '__main__':
         temp_vc.release()
 
         vc = InputThread(src=args.camera, queueSize=queue_size, save=True, kE=processManager.killEvent)
-        vc.start()
-        vc.initialized.wait()
-        os.makedirs('test', exist_ok=True)
+        processManager.manage_process(vc)
         st = SaveThread(vc.outputQ, frame_size=(int(width), int(height)), save_path=save_path,
                         kE=processManager.killEvent)
-        st.start()
-        st.initialized.wait()
+        processManager.manage_process(st)
 
     elif args.offline:
         data_dirs = [join('data', args.person_dir, 'recordings', recording, 'experiments', '1') for recording in
@@ -248,6 +244,8 @@ if __name__ == '__main__':
                 epoch_start_time = time()
                 counter = 0
                 for i in range(epoch_len):
+                    if processManager.killEvent.is_set():
+                        break
 
                     angles_df, emg_timestep = anglesProcess.outputQ.get()
                     start_time = time()

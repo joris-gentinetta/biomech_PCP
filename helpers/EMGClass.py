@@ -81,15 +81,18 @@ class EMG():
         self.rawHistory = np.zeros((self.numElectrodes, self.numPackets)) # switch to processing packets (apply filters only once on a number of packets)
 
     def __del__(self):
+        self.shutdown()
+
+    def shutdown(self):
         try:
+            self.exitEvent.set()
+            self.emgThread.join()
             # close the socket
             self.sock.close()
             self.ctx.term()
 
-            self.exitEvent.set()
-
         except Exception as e:
-            print(f'__del__: Socket closing error {e}')
+            print(f'EMG shutdown error {e}')
 
     def offline_data_gen(self, data):
         padded = np.pad(data, ((0, 0), (self.numPackets*100, self.numPackets*100)), mode='edge')
