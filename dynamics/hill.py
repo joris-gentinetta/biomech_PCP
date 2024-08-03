@@ -11,7 +11,7 @@ from utils import Exponential
 from torch.nn.functional import relu
 
 ## Muscle parameters
-fMax = math.log(1000)
+fMax = math.log(100)
 lM_opt = math.log(0.06)
 c = 1
 A = 1
@@ -52,7 +52,7 @@ class Muscles_Hill(nn.Module):
         ## define constants
         self.epsT_toe = 0.0127 # strain at transition to linear
         self.ET = 37.5 # young's modulus of tendon
-        self.T_affine = 0.2375 # intercept for tendon quadratic/exponential
+        self.T_affine = 0.2375 # intercept for tendon quadratic/linear
         self.quadT = 1480.3
 
         parameterization = Exponential()
@@ -70,7 +70,7 @@ class Muscles_Hill(nn.Module):
 
         epsMT = del_lMT#/self.lM_opt
         epsM = del_lM#/self.lM_opt
-        epsT = (epsMT - epsM)*self.lM_opt/self.lT_s #- 1
+        epsT = (epsMT - epsM)*self.lM_opt/self.lT_s# - 1
 
         f_PE = self.fMax*torch.exp(self.c_PE*(epsM - 0.5))
         f_L = self.fMax*torch.exp(-self.c_AL*epsM**2)
@@ -78,33 +78,33 @@ class Muscles_Hill(nn.Module):
         f_SE = self.fMax*torch.where(epsT > self.epsT_toe, self.ET*epsT - self.T_affine, self.quadT*epsT*nn.functional.relu(epsT))
 
         # get the velocity scaling factor
-        # fV = (f_SE - f_PE*self.fMax)/(alphas*f_L*self.fMax)
-        fV = nn.functional.relu(f_SE - f_PE)/(alphas*f_L) # todo something with the fV relationship still aint cutting it
+        fV = (f_SE - f_PE)/(alphas*f_L)  # todo we can rewrite this with the damped equilibrum model, allowing us to find the unique velocity solution that maintains equilibrum
+        # fV = nn.functional.relu(f_SE - f_PE)/(alphas*f_L)
 
-        if torch.any(fV < 0):
-            print('negative fV')
-
-        # invert the force velocity relationship to get the velocity
-        d_epsM_dt = torch.where(fV <= 1, self.b_con*(1 - fV)/(fV + self.a_con), self.b_ecc*(fV - 1)/(self.a_ecc*(1 - self.fEcc) - self.fEcc + fV))
+        # invert the force velocity relationship to get the velocity, in terms of optimal fiber lengths per second
+        # vel_opts = torch.where(fV <= 1, self.b_con*(1 - fV)/(fV + self.a_con), self.b_ecc*(fV - 1)/(self.a_ecc*(1 - self.fEcc) - self.fEcc + fV))
+        vel_opts = torch.where(fV <= 0, 0, torch.where(fV <= 1, self.b_con*(1 - fV)/(fV + self.a_con), self.b_ecc*(fV - 1)/(self.a_ecc*(1 - self.fEcc) - self.fEcc + fV)))
+        d_epsM_dt = vel_opts*self.lM_opt
 
         # if we assume this is a normalized strain rate, we should be able to adjust to the actual strain rate
-        d_epsM_dt = d_epsM_dt*self.lM_opt
+        # d_epsM_dt = d_epsM_dt*self.lM_opt
 
-        # K_PE = self.c_PE/self.lM_opt*f_PE
-        # K_L = -2*self.c_AL*epsM*f_L # this can be negative so watch me!
-        # K_SE = torch.where(epsT > self.epsT_toe, self.ET, 2*self.quadT*nn.functional.relu(epsT))
+        K_PE = self.c_PE/self.lM_opt*f_PE
+        K_L = -2*alphas*self.c_AL*epsM*f_L/self.lM_opt # this can be negative so watch me!
+        K_SE = torch.where(epsT > self.epsT_toe, self.ET/self.lT_s, 2*self.quadT*nn.functional.relu(epsT)/self.lT_s)
         # K_M = K_L*fV + K_PE
-        K_PE = self.c_PE*f_PE
-        K_L = -2*alphas*self.c_AL*epsM*f_L # this can be negative so watch me!
-        K_SE = torch.where(epsT > self.epsT_toe, self.ET, 2*self.quadT*nn.functional.relu(epsT))
-        K_M = K_L*fV + K_PE
+        # K_PE = self.c_PE*f_PE
+        # K_L = -2*alphas*self.c_AL*epsM*f_L # this can be negative so watch me!
+        # K_SE = torch.where(epsT > self.epsT_toe, self.ET, 2*self.quadT*nn.functional.relu(epsT))
+        # K_M = nn.functional.relu(K_L*fV + K_PE)
+        K_M = K_PE
 
         # muscle force is just the tendon force, which definitionally must equal the muscle force
         F = f_SE
 
         # stiffness is from the muscle (parallel elements) and tendon (series element)
-        # K = 1/(1/K_M + 1/K_SE)
-        K = K_M + K_SE
+        K = 1/(1/K_M + 1/K_SE)
+        # K = K_M + K_SE
 
         return F, K, d_epsM_dt
 
