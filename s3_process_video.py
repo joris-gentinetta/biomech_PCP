@@ -11,7 +11,7 @@ import numpy as np
 import pandas as pd
 pd.options.mode.copy_on_write = True
 idx = pd.IndexSlice
-
+import os
 from tqdm import tqdm
 from helpers.utils import AnglesHelper
 from helpers.visualization import Visualization
@@ -22,7 +22,7 @@ import warnings
 warnings.filterwarnings("ignore")
 
 def run_mediapipe(cap, frames, video_timestamps, sides, scales, hand_roi_size, process=False):
-    body_model_path = 'models/mediapipe/pose_landmarker_heavy.task'
+    body_model_path = 'models/mediapipe/pose_landmarker_lite.task'
     hands_model_path = 'models/mediapipe/hand_landmarker.task'
     BaseOptions = mp.tasks.BaseOptions
     PoseLandmarker = mp.tasks.vision.PoseLandmarker
@@ -56,7 +56,7 @@ def run_mediapipe(cap, frames, video_timestamps, sides, scales, hand_roi_size, p
             break
         rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
         mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=rgb_frame)
-        body_results = body_model.detect_for_video(mp_image, int(video_timestamps[frame_id] / 1000)).pose_landmarks # todo check
+        body_results = body_model.detect_for_video(mp_image, video_timestamps[frame_id]).pose_landmarks # todo check
         if len(body_results) == 0:
             frame_id += 1
             continue
@@ -94,7 +94,7 @@ def run_mediapipe(cap, frames, video_timestamps, sides, scales, hand_roi_size, p
                 y_start = 0
                 y_end = scales[1]
 
-            hands_results = hand_models[side].detect_for_video(mp_image, int(video_timestamps[frame_id] / 1000)).hand_landmarks # todo check
+            hands_results = hand_models[side].detect_for_video(mp_image, video_timestamps[frame_id]).hand_landmarks # todo check
             if len(hands_results) == 0:
                 continue
             elif len(hands_results) == 1:
@@ -150,19 +150,23 @@ if __name__ == "__main__":
 
     sides = [args.intact_hand] if args.intact_hand else ['Right', 'Left']
     experiment_dir = join(args.data_dir, 'experiments', args.experiment_name)
-    input_video_path = join(experiment_dir, "cropped_video.mp4")
+    os.makedirs(experiment_dir, exist_ok=True)
+
+    input_video_path = join(args.data_dir, "video.mp4")
 
 
-    cap = cv2.VideoCapture(input_video_path)
 
 
     vid = imageio.get_reader(input_video_path, 'ffmpeg')
     vid_size = vid.get_meta_data()['size']
-    scales = (vid_size[0], vid_size[1], vid_size[0])
-    n_frames = cap.get(cv2.CAP_PROP_FRAME_COUNT)
-    frames = range(0, int(n_frames))
+    fps = vid.get_meta_data()['fps'] # todo check
+    vid.close()
 
-    video_timestamps = np.load(join(experiment_dir, "cropped_video_timestamps.npy"))
+    cap = cv2.VideoCapture(input_video_path)
+    scales = (vid_size[0], vid_size[1], vid_size[0])
+    n_frames = cap.get(cv2.CAP_PROP_FRAME_COUNT) if args.video_end == -1 else args.video_end
+    frames = range(0, int(n_frames))
+    video_timestamps = [int(frame * 1000 / fps) for frame in frames]
     joints_df = run_mediapipe(cap, frames, video_timestamps, sides, scales, args.hand_roi_size, args.process)
     cap.release()
 
@@ -222,24 +226,20 @@ if __name__ == "__main__":
     smooth_angles_df.to_parquet(join(experiment_dir, "smooth_angles.parquet"))
 
     start = args.video_start
-    end = args.video_end
-    if end == -1:
-        end = len(angles_df)
+    end = args.video_end if args.video_end != -1 else len(angles_df)
+
     angles_df = pd.read_parquet(join(experiment_dir, "angles.parquet"))
-    angles_df = angles_df.loc[start:end-1]
+    angles_df = angles_df.loc[start:]
     angles_df.to_parquet(join(experiment_dir, "cropped_angles.parquet"))
     smooth_angles_df = pd.read_parquet(join(experiment_dir, "smooth_angles.parquet"))
-    smooth_angles_df = smooth_angles_df.loc[start:end-1]
+    smooth_angles_df = smooth_angles_df.loc[start:]
     smooth_angles_df.to_parquet(join(experiment_dir, "cropped_smooth_angles.parquet"))
-    emg = np.load(join(experiment_dir, "aligned_emg.npy"))
-    np.save(join(experiment_dir, "cropped_aligned_emg.npy"), emg[start:end])
+    emg = np.load(join(args.data_dir, "emg.npy"))
+    np.save(join(experiment_dir, "cropped_emg.npy"), emg[start:end])
 
     if args.visualize:
         df3d = pd.read_parquet(join(experiment_dir, "corrected.parquet"))
-        end = args.video_end
-        if end == -1:
-            end = len(df3d)
         if args.intact_hand is not None:
             df3d = AnglesHelper().mirror_pose(df3d, args.intact_hand)
 
-        vis = Visualization(experiment_dir, df3d, start_frame=args.video_start, end_frame=end, name_addition="_corrected")
+        vis = Visualization(args.data_dir, args.experiment_name, df3d, start_frame=args.video_start, end_frame=end, name_addition="_corrected")

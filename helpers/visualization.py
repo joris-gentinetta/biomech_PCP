@@ -38,16 +38,16 @@ logging.getLogger('matplotlib').setLevel(logging.WARNING)
 
 
 class Visualization():
-    def __init__(self, data_dir, df_3d, start_frame, end_frame, alternative=True, name_addition=""):
+    def __init__(self, data_dir, experiment_name, df_3d, start_frame, end_frame, alternative=True, name_addition=""):
         """
         This function takes as an input the video and outputs a video 
         with the original video with the 2D joints and the 3D plot.  
         """
-        self.data_dir = data_dir
+        self.data_dir = join(data_dir, 'experiments', experiment_name)
         self.start_frame = start_frame
         self.end_frame = end_frame
         self.name_addition = name_addition
-        self.video_fnm = join(data_dir, 'cropped_video.mp4')
+        self.video_fnm = join(data_dir, 'video.mp4')
         self.df_3d = df_3d.copy().sort_index(axis=1)
         self.df_3d.loc[:, idx[slice(None), slice(None), 'z']] = self.df_3d.loc[:, idx[slice(None), slice(None), 'z']] - np.min(self.df_3d.loc[:, idx[slice(None), slice(None), 'z']]) - 500
         # self.df_3d.loc[:, idx[slice(None), slice(None), 'x']] = self.df_3d.loc[:, idx[slice(None), slice(None), 'x']] - np.min(self.df_3d.loc[:, idx[slice(None), slice(None), 'x']])
