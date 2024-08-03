@@ -50,6 +50,8 @@ if __name__ == '__main__':
     os.makedirs(save_path, exist_ok=True)
 
     processManager = ProcessManager()
+    signal.signal(signal.SIGINT, processManager.signal_handler)
+
 
     epoch_len = 1000
     # sampling_frequency = 60
@@ -90,10 +92,9 @@ if __name__ == '__main__':
         height = temp_vc.get(cv2.CAP_PROP_FRAME_HEIGHT)
         temp_vc.release()
 
-        vc = InputThread(src=args.camera, queueSize=queue_size, save=True, kE=processManager.killEvent)
+        vc = InputThread(src=args.camera, queueSize=queue_size, save=True)
         processManager.manage_process(vc)
-        st = SaveThread(vc.outputQ, frame_size=(int(width), int(height)), save_path=save_path,
-                        kE=processManager.killEvent)
+        st = SaveThread(vc.outputQ, frame_size=(int(width), int(height)), save_path=save_path)
         processManager.manage_process(st)
 
     elif args.offline:
@@ -217,8 +218,9 @@ if __name__ == '__main__':
             visualizeProcess = VisualizeProcess(args.intact_hand, visualizeQueue)
             processManager.manage_process(visualizeProcess)
 
-        jointsProcess = JointsProcess(args.intact_hand, queue_size, save_path, args.camera, args.save_input, args.calibration_frames)
-        anglesProcess = AnglesProcess(args.intact_hand, queue_size, jointsProcess.outputQ)
+        joint_to_angles_Q = MPQueue(queue_size)
+        anglesProcess = AnglesProcess(args.intact_hand, queue_size, joint_to_angles_Q)
+        jointsProcess = JointsProcess(args.intact_hand, queue_size, joint_to_angles_Q, save_path, args.camera, args.save_input, args.calibration_frames)
         processManager.manage_process(jointsProcess)
         processManager.manage_process(anglesProcess)
 
@@ -244,10 +246,8 @@ if __name__ == '__main__':
                 epoch_start_time = time()
                 counter = 0
                 for i in range(epoch_len):
-                    if processManager.killEvent.is_set():
-                        break
 
-                    angles_df, emg_timestep = anglesProcess.outputQ.get()
+                    angles_df, emg_timestep = anglesProcess.outputQ.get(timeout=2)
                     start_time = time()
 
 

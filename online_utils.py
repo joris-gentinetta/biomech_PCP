@@ -67,7 +67,7 @@ class InputThread(Thread):
         self.width = self.stream.get(cv2.CAP_PROP_FRAME_WIDTH)
         self.height = self.stream.get(cv2.CAP_PROP_FRAME_HEIGHT)
         self.input_fps = self.stream.get(cv2.CAP_PROP_FPS)
-        self.killEvent = kE
+        self.killEvent = Event()
 
     def run(self):
         self.initialized.set()
@@ -101,7 +101,7 @@ class SaveThread(Thread):
         self.save_path = save_path
         self.initialized = Event()
         self.frame_size = frame_size
-        self.killEvent = kE
+        self.killEvent = Event()
         self.emg_data = []
         os.makedirs(save_path, exist_ok=True)
 
@@ -126,9 +126,9 @@ class SaveThread(Thread):
 
 
 class JointsProcess(Process):
-    def __init__(self, intact_hand, queueSize=0, save_path=None, camera=0, save=True, calibration_frames=20):
+    def __init__(self, intact_hand, queueSize, outputQ, save_path, camera, save, calibration_frames, kE=None):
         super().__init__()
-        self.outputQ = MPQueue(queueSize)
+        self.outputQ = outputQ
         self.initialized = Event()
         self.intact_hand = intact_hand
         self.calibration_frames = calibration_frames
@@ -399,6 +399,8 @@ class JointsProcess(Process):
             self.write((joints_df, emg_timestep))
             self.fps.value = 1 / (time() - start_time)
             self.input_fps.value = vc.fps.value
+        vc.killEvent.set()
+        vc.join()
 
     def write(self, data):
         if not self.outputQ.full():
@@ -412,7 +414,7 @@ class JointsProcess(Process):
 
 
 class AnglesProcess(Process):
-    def __init__(self, intact_hand, queueSize=0, inputQ=None):
+    def __init__(self, intact_hand, queueSize=0, inputQ=None, kE=None):
         super().__init__()
         self.inputQ = inputQ
         self.outputQ = MPQueue(queueSize)
@@ -479,7 +481,7 @@ class AnglesProcess(Process):
 
 
 class VisualizeProcess(Process):
-    def __init__(self, intact_hand, inputQ=None):
+    def __init__(self, intact_hand, inputQ=None, kE=None):
         super().__init__()
         self.intact_hand = intact_hand
         self.inputQ = inputQ
@@ -607,22 +609,22 @@ class VisualizeProcess(Process):
             p.stepSimulation()
 
             self.fps.value = (1 / (time() - time_start))
+        print('VisualizeProcess killed', flush=True)
 
 class ProcessManager:
     def __init__(self):
-        signal.signal(signal.SIGINT, self.signal_handler)
 
         self.processes = []
         self.killEvent = Event()
 
     def signal_handler(self, sig, frame):
         print('You pressed Ctrl+C!')
-        self.killEvent.set()
-        for p in self.processes:
-            p.killEvent.set()
-        for p in self.processes:
-            p.join()
+        for process in self.processes:
+            process.killEvent.set()
+            sleep(1)
 
+        self.killEvent.set()
+        sleep(5)
         # sys.exit(0)
 
     def manage_process(self, process):
