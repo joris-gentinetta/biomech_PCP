@@ -43,11 +43,11 @@ if __name__ == '__main__':
     args = parser.parse_args()
 
     save_path = join('data', args.person_dir, 'recordings', args.experiment_name)
-    # if os.path.exists(save_path): # todo
-    #     print('Experiment already exists!')
-    #     exit()
-    # else:
-    os.makedirs(save_path, exist_ok=True)
+    if os.path.exists(save_path): # todo
+        print('Experiment already exists!')
+        exit()
+    else:
+        os.makedirs(save_path, exist_ok=True)
 
     processManager = ProcessManager()
     signal.signal(signal.SIGINT, processManager.signal_handler)
