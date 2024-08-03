@@ -159,7 +159,7 @@ class JointsProcess(Process):
         height = temp_vc.get(cv2.CAP_PROP_FRAME_HEIGHT)
         temp_vc.release()
 
-        vc = InputThread(src=self.camera, queueSize=self.queueSize, save=self.save, kE=self.killEvent)
+        vc = InputThread(src=self.camera, queueSize=self.queueSize, save=self.save)
         vc.start()
         vc.initialized.wait()
 
