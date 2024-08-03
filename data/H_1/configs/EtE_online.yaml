@@ -8,12 +8,18 @@ metric:
 parameters:
   recordings:
     value:
-    - trigger_1
-    - trigger_2
+    - wristFlEx
+    - digitsFlEx
+    - thumbRot
+    - fingersFlEx
+    - thumbOut
+    - indexFlEx
+    - thumbIn
+    - indexFlDigitsEx
 
   test_recordings:
     value:
-      - trigger_3
+
 
 
   features:
@@ -26,9 +32,7 @@ parameters:
     - [emg, '10'] # 5
     - [emg, '11'] # 6
     - [emg, '12'] # 7
-#    - [emg, '13']
-#    - [emg, '14']
-#    - [emg, '15']
+
 
   early_stopping_patience:
     value: 15
@@ -40,7 +44,7 @@ parameters:
     value: 0.001
 
   n_epochs:
-    value: 100
+    value: 40
 
   seq_len:
     value: 128
@@ -75,7 +79,7 @@ parameters:
     value: online
 
   wandb_project:
-    value: A_1-online-testing_2
+    value: H_1-online-testing
 
   model_type:
     value: GRU

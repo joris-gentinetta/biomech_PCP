@@ -13,7 +13,10 @@ import math
 def load_data(data_dir, intact_hand, features):
     angles = pd.read_parquet(join(data_dir, 'cropped_smooth_angles.parquet'))
     angles.index = range(len(angles))
-    emg = np.load(join(data_dir, 'cropped_aligned_emg.npy'))
+    try:
+        emg = np.load(join(data_dir, 'cropped_aligned_emg.npy'))
+    except:
+        emg = np.load(join(data_dir, 'cropped_emg.npy'))
 
     data = angles.copy()
     data.loc[:, (intact_hand, 'thumbInPlaneAng')] = data.loc[:,

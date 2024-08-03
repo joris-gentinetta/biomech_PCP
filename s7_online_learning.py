@@ -43,11 +43,10 @@ if __name__ == '__main__':
     args = parser.parse_args()
 
     save_path = join('data', args.person_dir, 'recordings', args.experiment_name)
-    if os.path.exists(save_path): # todo
+    if os.path.exists(save_path) and args.save_input: # todo
         print('Experiment already exists!')
         exit()
-    else:
-        os.makedirs(save_path, exist_ok=True)
+    os.makedirs(save_path, exist_ok=True)
 
     processManager = ProcessManager()
     signal.signal(signal.SIGINT, processManager.signal_handler)
@@ -119,6 +118,7 @@ if __name__ == '__main__':
             model = TimeSeriesRegressorWrapper(device=device, input_size=len(config.features),
                                                output_size=len(config.targets),
                                                **config)
+            model.load(join('data', args.person_dir, 'models', f'{config.name}.pt'))
             model.to(device)
             model.train()
             # if config.model_type == 'ActivationAndBiophys':  # todo
@@ -207,6 +207,7 @@ if __name__ == '__main__':
         model = TimeSeriesRegressorWrapper(device=device, input_size=len(config.features),
                                            output_size=len(config.targets),
                                            **config)
+        model.load(join('data', args.person_dir, 'models', f'{config.name}.pt'))
         model.to(device)
         model.train()
         # if config.model_type == 'ActivationAndBiophys':  # todo
