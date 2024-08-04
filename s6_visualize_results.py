@@ -179,9 +179,9 @@ if __name__ == "__main__":
         #     p.stepSimulation()
 
 
-        # while (1 / (time.time() - t)) > 60:
-        #     print(i, 1 / (time.time() - t))
-        p.stepSimulation()
+        while (1 / (time.time() - t)) > 20:
+            print(i, 1 / (time.time() - t))
+            p.stepSimulation()
         print(1 / (time.time() - t))
         t = time.time()
 

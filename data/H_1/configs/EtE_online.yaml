@@ -20,8 +20,6 @@ parameters:
   test_recordings:
     value:
 
-
-
   features:
     value:
     - [emg, '0'] # 0
@@ -58,7 +56,7 @@ parameters:
     - [Right, thumbInPlaneAng]
     - [Right, thumbOutPlaneAng]
 #    - [Right, wristRot]
-#    - [Right, wristFlex]
+    - [Right, wristFlex]
 
 #    - [Left, indexAng]
 #    - [Left, midAng]
@@ -73,7 +71,7 @@ parameters:
     value: 10
 
   batch_size:
-    value: 1
+    value: 8
 
   wandb_mode:
     value: online
