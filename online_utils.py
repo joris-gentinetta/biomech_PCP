@@ -42,6 +42,7 @@ import cv2
 from threading import Thread
 from queue import Queue
 import platform
+from helpers.predict_utils import scale_data, rescale_data
 
 FRAME_RATE = 60
 frame_id = 0
@@ -450,23 +451,11 @@ class AnglesProcess(Process):
             angles_df.loc[steps, :] = anglesHelper.getArmAngles(joints_df, sides).loc[frame_id, :]
             interpolated = angles_df.interpolate(method='index', limit_area='inside')
             angles_df.loc[0, :] = angles_df.loc[steps, :]
-            interpolated = self.scale(interpolated)
+            interpolated = scale_data(interpolated, self.intact_hand)
             for i in range(0, steps):
                 self.write((interpolated.loc[i+1, :], emg_buffer[i]))
             emg_buffer = []
             self.fps.value = 3 / (time() - start_time)
-
-    def scale(self, angles_df):
-        angles_df.loc[:, (self.intact_hand, 'thumbInPlaneAng')] = angles_df.loc[:,
-                                                                  (self.intact_hand, 'thumbInPlaneAng')] + math.pi
-        angles_df.loc[:, (self.intact_hand, 'wristRot')] = (angles_df.loc[:,
-                                                            (self.intact_hand, 'wristRot')] + math.pi) / 2
-        angles_df.loc[:, (self.intact_hand, 'wristFlex')] = (
-                angles_df.loc[:, (self.intact_hand, 'wristFlex')] + math.pi / 2)
-
-        angles_df = (2 * angles_df - math.pi) / math.pi
-        angles_df = np.clip(angles_df, -1, 1)
-        return angles_df
 
     def write(self, data):
         if not self.outputQ.full():
@@ -552,13 +541,6 @@ class VisualizeProcess(Process):
 
             return target_hand, pred_hand
 
-        def rescale(angles_df):
-            angles_df = angles_df.clip(-1, 1)
-            angles_df = (angles_df * math.pi + math.pi) / 2
-            angles_df.loc[(intact_hand, 'wristFlex')] = angles_df.loc[(intact_hand, 'wristFlex')] - math.pi / 2
-            angles_df.loc[(intact_hand, 'wristRot')] = (angles_df.loc[(intact_hand, 'wristRot')] * 2) - math.pi
-            angles_df.loc[(intact_hand, 'thumbInPlaneAng')] = angles_df.loc[(intact_hand, 'thumbInPlaneAng')] - math.pi
-            return angles_df
 
         def move_finger(hand, finger, angle):
             id0, id1 = joint_ids[finger][0], joint_ids[finger][1]
@@ -573,8 +555,8 @@ class VisualizeProcess(Process):
             target_angles, pred_angles = self.inputQ.get()
             time_start = time()
 
-            target_angles = rescale(target_angles)
-            pred_angles = rescale(pred_angles)
+            target_angles = rescale_data(target_angles, self.intact_hand)
+            pred_angles = rescale_data(pred_angles, self.intact_hand)
 
 
             move_finger(target_hand, 'index', target_angles.loc[(intact_hand, 'indexAng')])

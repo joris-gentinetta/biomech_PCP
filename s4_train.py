@@ -9,7 +9,7 @@ from os.path import join
 import wandb
 import multiprocessing
 
-from helpers.predict_utils import Config, get_data, train_model
+from helpers.predict_utils import Config, get_data, train_model, rescale_data
 
 
 def wandb_process(arguments):
@@ -82,14 +82,10 @@ if __name__ == '__main__':
 
         for set_id, test_set in enumerate(testsets):
             val_pred = model.predict(test_set, config.features, config.targets).squeeze(0).to('cpu').detach().numpy()
-
-            val_pred = np.clip(val_pred, -1, 1)
             test_set[config.targets] = val_pred
-            test_set = (test_set * math.pi + math.pi) / 2
 
-            test_set.loc[:, (args.intact_hand, 'thumbInPlaneAng')] = test_set.loc[:, (args.intact_hand, 'thumbInPlaneAng')] - math.pi
-            test_set.loc[:, (args.intact_hand, 'wristRot')] = (test_set.loc[:, (args.intact_hand, 'wristRot')] * 2) - math.pi
-            test_set.loc[:, (args.intact_hand, 'wristFlex')] = (test_set.loc[:, (args.intact_hand, 'wristFlex')] - math.pi / 2)
+            test_set = rescale_data(test_set, args.intact_hand)
+
             test_set.to_parquet(join((data_dirs + test_dirs)[set_id], f'pred_angles-{config.name}.parquet'))
 
 

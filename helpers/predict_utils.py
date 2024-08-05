@@ -10,6 +10,22 @@ import pandas as pd
 import matplotlib.pyplot as plt
 import math
 
+def scale_data(data, intact_hand):
+    data.loc[:, (intact_hand, 'thumbInPlaneAng')] = data.loc[:,(intact_hand, 'thumbInPlaneAng')] + math.pi
+    data.loc[:, (intact_hand, 'wristRot')] = (data.loc[:, (intact_hand, 'wristRot')] + math.pi) / 2
+    data.loc[:, (intact_hand, 'wristFlex')] = (data.loc[:, (intact_hand, 'wristFlex')] + math.pi / 2)
+    data = (2 * data - math.pi) / math.pi
+    data = np.clip(data, -1, 1)
+    return data
+
+def rescale_data(angles_df, intact_hand):
+    angles_df = angles_df.clip(-1, 1)
+    angles_df = (angles_df * math.pi + math.pi) / 2
+    angles_df.loc[(intact_hand, 'wristFlex')] = angles_df.loc[(intact_hand, 'wristFlex')] - math.pi / 2
+    angles_df.loc[(intact_hand, 'wristRot')] = (angles_df.loc[(intact_hand, 'wristRot')] * 2) - math.pi
+    angles_df.loc[(intact_hand, 'thumbInPlaneAng')] = angles_df.loc[(intact_hand, 'thumbInPlaneAng')] - math.pi
+    return angles_df
+
 def load_data(data_dir, intact_hand, features):
     angles = pd.read_parquet(join(data_dir, 'cropped_smooth_angles.parquet'))
     angles.index = range(len(angles))
@@ -19,13 +35,7 @@ def load_data(data_dir, intact_hand, features):
         emg = np.load(join(data_dir, 'cropped_emg.npy'))
 
     data = angles.copy()
-    data.loc[:, (intact_hand, 'thumbInPlaneAng')] = data.loc[:,
-                                                    (intact_hand, 'thumbInPlaneAng')] + math.pi
-    data.loc[:, (intact_hand, 'wristRot')] = (data.loc[:, (intact_hand, 'wristRot')] + math.pi) / 2
-    data.loc[:, (intact_hand, 'wristFlex')] = (data.loc[:, (intact_hand, 'wristFlex')] + math.pi / 2)
-
-    data = (2 * data - math.pi) / math.pi
-    data = np.clip(data, -1, 1)
+    data = scale_data(data, intact_hand)
 
     for feature in features:
         data[feature] = emg[:, int(feature[1])]
@@ -104,7 +114,6 @@ def train_model(trainsets, testsets, device, wandb_mode, wandb_project, wandb_na
                     wandb.run.summary['best_epoch'] = epoch
                     wandb.run.summary['best_val_loss'] = best_val_loss
                 wandb.run.summary['used_epochs'] = epoch
-
 
                 lr = model.scheduler.get_last_lr()[0]
                 model.scheduler.step(val_loss)  # Update the learning rate after each epoch #todo train or val loss
