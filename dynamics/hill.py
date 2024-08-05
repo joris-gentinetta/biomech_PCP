@@ -14,7 +14,7 @@ from torch.nn.functional import relu
 fMax = math.log(100)
 lM_opt = math.log(0.05)
 lT_s = math.log(0.05)
-l_ref = math.log(0.01)
+l_ref = math.log(0.1)
 c = 1
 A = 1
 c_PE = math.log(10)
@@ -72,9 +72,9 @@ class Muscles_Hill(nn.Module):
         del_lMT = muscle_SS[:, :, 0, :]
         # vMT = muscle_SS[:, :, 1, :]
 
-        epsMT = del_lMT/self.lM_opt
+        epsMT = del_lMT/self.l_ref #.lM_opt
         epsM = del_lM#/self.lM_opt
-        epsT = (epsMT - epsM)*self.lM_opt/self.lT_s - 1
+        epsT = self.l_ref/self.lT_s*(epsMT + 1) - self.lM_opt/self.lT_s*(epsM + 1) - 1 # (epsMT - epsM)*self.lM_opt/self.lT_s - 1
 
         f_PE = self.fMax*torch.exp(self.c_PE*(epsM - 0.5))
         f_L = self.fMax*torch.exp(-self.c_AL*epsM**2)
@@ -132,10 +132,10 @@ class Muscles_Hill(nn.Module):
         del_lMT = muscle_SS[:, :, 0, :].unsqueeze(3).repeat(1, 1, 1, steps)
         vMT = muscle_SS[:, :, 1, :].unsqueeze(3).repeat(1, 1, 1, steps)
 
-        epsMT = del_lMT#/l_ref
+        epsMT = del_lMT/l_ref
         epsM = del_lM#/lM_opt
         # epsT = (epsMT - epsM)*lM_opt/lT_s - 1
-        epsT = l_ref/lT_s*(epsMT + 1) - lM_opt*(epsM + 1) - 1
+        epsT = l_ref/lT_s*(epsMT + 1) - lM_opt/lT_s*(epsM + 1) - 1
 
         f_PE = torch.exp(c_PE*(epsM - 0.5))
         f_L = torch.exp(-c_AL*epsM**2)
@@ -152,7 +152,8 @@ class Muscles_Hill(nn.Module):
         # normalize the velocity and plug into the force velocity relationship
         # have m/s, want to get to unitless, as a fraction of the vMax value
         # m/s -> lopt/s -> unitless
-        vM = -vM/lM_opt/vMax # negate for the relationship?
+        # vM = -vM/lM_opt/vMax # negate for the relationship?
+        vM = -vM # the ratio of the compliances should give velocity in m/s proper
 
         f_V = torch.where(vM >= 0, (b_con - a_con*vM)/(b_con + vM), fEcc - (fEcc - 1)*(b_ecc + a_ecc*vM)/(b_ecc - vM))
 
@@ -164,8 +165,8 @@ class Muscles_Hill(nn.Module):
 
         # calculate force components for validation
         epsM_V = initial_del_lM#/self.lM_opt
-        epsMT_V = muscle_SS[:, :, 0, :]/self.lM_opt
-        epsT_V = (epsMT_V - epsM_V)*self.lM_opt/self.lT_s - 1
+        epsMT_V = muscle_SS[:, :, 0, :]/self.l_ref
+        epsT_V = self.l_ref/self.lT_s*(epsMT_V + 1) - self.lM_opt/self.lT_s*(epsM_V + 1) - 1 #(epsMT_V - epsM_V)*self.lM_opt/self.lT_s - 1
 
         f_PE_V = self.fMax*torch.exp(self.c_PE*(epsM_V - 0.5))
         f_L_V = self.fMax*torch.exp(-self.c_AL*epsM_V**2)
@@ -182,7 +183,7 @@ class Muscles_Hill(nn.Module):
         # normalize the velocity and plug into the force velocity relationship
         # have m/s, want to get to unitless, as a fraction of the vMax value
         # m/s -> lopt/s -> unitless
-        vM_V = -vM_V / self.lM_opt / self.vMax  # negate for the relationship?
+        vM_V = -vM_V# / self.lM_opt / self.vMax  # negate for the relationship?
         f_V_V = torch.where(vM_V >= 0, (self.b_con - self.a_con * vM_V) / (self.b_con + vM_V), self.fEcc - (self.fEcc - 1) * (self.b_ecc + self.a_ecc*vM_V) / (self.b_ecc - vM_V))
 
         F_V = alphas_raw[:, 0, :].view(-1, self.n_joints, 2)*f_L_V*f_V_V + f_PE_V
