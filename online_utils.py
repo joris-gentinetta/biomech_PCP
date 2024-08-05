@@ -317,12 +317,13 @@ class JointsProcess(Process):
             y_start = 0
             y_end = int(scales[1])
 
-            # cropped_frame = frame[:, x_start:x_end]
-            cropped_frame = frame
-            if system_name == 'Darwin':
-                cropped_frame = cv2.cvtColor(cropped_frame, cv2.COLOR_BGR2RGB)
-            mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=cropped_frame)
+            frame = frame[:, x_start:x_end]
 
+            frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+            if system_name != 'Darwin':
+                frame = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
+
+            mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=frame)
 
             hands_results = hand_models[side].detect_for_video(mp_image, frame_time).hand_landmarks
             t3 = time()
@@ -426,7 +427,7 @@ class AnglesProcess(Process):
 
 
     def run(self):
-        max_interpolation_steps = 10
+        max_interpolation_steps = 30
         anglesHelper = AnglesHelper()
         sides = [self.intact_hand]
         emg_buffer = []
@@ -630,7 +631,7 @@ if __name__ == '__main__':
         VisionRunningMode = mp.tasks.vision.RunningMode
 
         options = mp.tasks.vision.HandLandmarkerOptions(base_options=BaseOptions(model_asset_path=hands_model_path)
-                                                        , num_hands=1,
+                                                        , num_hands=2,
                                                         running_mode=VisionRunningMode.VIDEO)
         hand_models = {'Right': mp.tasks.vision.HandLandmarker.create_from_options(options),
                        'Left': mp.tasks.vision.HandLandmarker.create_from_options(options)}
@@ -694,9 +695,14 @@ if __name__ == '__main__':
         while True:
             # Capture frame-by-frame
             ret, frame = cap.read()
-            if system_name == 'Darwin':
-                frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+
+            frame = frame[:, :frame.shape[1]//2, :]  # right hand
+            frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+            if system_name != 'Darwin':
+                frame = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
+
             image = mp.Image(image_format=mp.ImageFormat.SRGB, data=frame)
+
             detection_result = detector.detect_for_video(image, int(time() * 1000))
             annotated_image = draw_landmarks_on_image(image.numpy_view(), detection_result)
             # if system_name == 'Darwin':
@@ -716,3 +722,4 @@ if __name__ == '__main__':
         # Release the capture object and close all OpenCV windows
         cap.release()
         cv2.destroyAllWindows()
+
