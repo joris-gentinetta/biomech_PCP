@@ -1,4 +1,4 @@
-name: modular-dense_GRU_GRU-LR_0.01-big
+name: modular_input_sweep
 method: grid
 
 metric:
@@ -58,7 +58,7 @@ parameters:
     - [Left, thumbInPlaneAng]
     - [Left, thumbOutPlaneAng]
 #    - [Left, wristRot]
-    - [Left, wristFlex]
+#    - [Left, wristFlex]
 
   warmup_steps:
     value: 10
@@ -76,11 +76,24 @@ parameters:
     value: ModularModel
 
   activation_model:
-    value: {model_type: DenseNet,
-            hidden_size: 100,
-            n_layers: 4,
-            n_freeze_epochs: 0,
-            }
+    parameters:
+      model_type:
+        value: DenseNet
+      hidden_size:
+        value: 128
+      n_layers:
+        values:
+            - 1
+            - 2
+            - 3
+            - 4
+      n_freeze_epochs:
+       value: 0
+#    value: {model_type: DenseNet,
+#            hidden_size: 100,
+#            n_layers: 4,
+#            n_freeze_epochs: 0,
+#            }
 
   muscle_model:
     value: {
@@ -89,7 +102,7 @@ parameters:
 #      model_type: GRU,
 #            hidden_size: 100,
 #            n_layers: 4,
-      n_freeze_epochs: 5,
+      n_freeze_epochs: 2,
       }
 
   joint_model:
@@ -98,5 +111,5 @@ parameters:
 #            hidden_size: 100,
 #            n_layers: 4,
              model_type: PhysJointModel,
-      n_freeze_epochs: 5,
+      n_freeze_epochs: 2,
       }

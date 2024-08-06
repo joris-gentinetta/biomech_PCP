@@ -48,6 +48,7 @@ FRAME_RATE = 60
 frame_id = 0
 system_name = platform.system()
 PRINT = False
+PERTURB = False
 
 
 class InputThread(Thread):
@@ -64,11 +65,12 @@ class InputThread(Thread):
             self.sampler = 1
         else:
             self.sampler = 3
-
+        self.perturber = np.eye(8) + np.abs(np.random.normal(0, .1, (8, 8)))
         self.width = self.stream.get(cv2.CAP_PROP_FRAME_WIDTH)
         self.height = self.stream.get(cv2.CAP_PROP_FRAME_HEIGHT)
         self.input_fps = self.stream.get(cv2.CAP_PROP_FPS)
         self.killEvent = Event()
+
 
     def run(self):
         self.initialized.set()
@@ -76,6 +78,8 @@ class InputThread(Thread):
             start_time = time()
             (self.grabbed, frame) = self.stream.read()
             emg_timestep = np.asarray(self.emg.normedEMG)
+            if PERTURB:
+                emg_timestep = self.perturber @ emg_timestep
             if self.counter % self.sampler != 0:
                 frame = None
             self.write_to_output((frame, emg_timestep))
@@ -621,7 +625,7 @@ if __name__ == '__main__':
     mediapipe_test = True
     if mediapipe_test:
         print(system_name)
-        cap = cv2.VideoCapture(2)  # 0 for the default camera, or provide a video file path
+        cap = cv2.VideoCapture(0)  # 0 for the default camera, or provide a video file path
 
 
         body_model_path = 'models/mediapipe/pose_landmarker_lite.task'

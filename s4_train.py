@@ -38,13 +38,13 @@ if __name__ == '__main__':
     if torch.cuda.is_available():
         device = torch.device("cuda")
         print('Using CUDA')
-
-        # List available GPUs
-        if args.multi_gpu:
-            n_gpus = torch.cuda.device_count()
-            print(f'Number of available GPUs: {n_gpus}')
-            for i in range(n_gpus):
-                print(f'GPU{i}: {torch.cuda.get_device_name(i)}')
+    #
+    #     # List available GPUs
+    #     if args.multi_gpu:
+    #         n_gpus = torch.cuda.device_count()
+    #         print(f'Number of available GPUs: {n_gpus}')
+    #         for i in range(n_gpus):
+    #             print(f'GPU{i}: {torch.cuda.get_device_name(i)}')
 
     # elif torch.backends.mps.is_available():
     #     device = torch.device("mps")
@@ -78,7 +78,9 @@ if __name__ == '__main__':
 
 
     if args.test:  # trains on the training set and saves the test set predictions
-        model = train_model(trainsets, testsets, device, config.wandb_mode, config.wandb_project, config.name, config)
+        os.makedirs(join('data', args.person_dir, 'models'), exist_ok=True)
+
+        model = train_model(trainsets, testsets, device, config.wandb_mode, config.wandb_project, config.name, config, args.person_dir)
 
         for set_id, test_set in enumerate(testsets):
             val_pred = model.predict(test_set, config.features, config.targets).squeeze(0).to('cpu').detach().numpy()

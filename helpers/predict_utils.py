@@ -92,7 +92,7 @@ def get_data(config, data_dirs, intact_hand, visualize=False, test_dirs=None):
     return trainsets, testsets, combined_sets
 
 
-def train_model(trainsets, testsets, device, wandb_mode, wandb_project, wandb_name, config=None):
+def train_model(trainsets, testsets, device, wandb_mode, wandb_project, wandb_name, config=None, person_dir='test'):
     with wandb.init(mode=wandb_mode, project=wandb_project, name=wandb_name, config=config):
         config = wandb.config
 
@@ -127,7 +127,8 @@ def train_model(trainsets, testsets, device, wandb_mode, wandb_project, wandb_na
                 wandb.run.summary['used_epochs'] = epoch
 
                 lr = model.scheduler.get_last_lr()[0]
-                model.scheduler.step(val_loss)  # Update the learning rate after each epoch #todo train or val loss
+                if epoch > 15: # todo
+                    model.scheduler.step(val_loss)  # Update the learning rate after each epoch #todo train or val loss
                 pbar.set_postfix({'lr': lr, 'train_loss': train_loss, 'val_loss': val_loss})
 
                 # print('Total val loss:', val_loss)
@@ -137,6 +138,10 @@ def train_model(trainsets, testsets, device, wandb_mode, wandb_project, wandb_na
                 log['train_loss'] = train_loss
                 log['lr'] = lr
                 wandb.log(log, step=epoch)
+
+                model.to('cpu')
+                model.save(join('data', person_dir, 'models', f'{config.name}_{epoch}.pt'))
+                model.to(device)
 
                 if early_stopper.early_stop(val_loss):
                     break

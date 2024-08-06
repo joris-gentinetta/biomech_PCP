@@ -15,6 +15,9 @@ import os
 from tqdm import tqdm
 from helpers.utils import AnglesHelper
 from helpers.visualization import Visualization
+import platform
+
+system_name = platform.system()
 
 import matplotlib.pyplot as plt
 
@@ -54,7 +57,11 @@ def run_mediapipe(cap, frames, video_timestamps, sides, scales, hand_roi_size, p
         if not success:
             print(f"Finished MediaPipe processing at frame {frame_id}.")
             break
-        rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+        if system_name == 'Darwin':
+            rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+        else:
+            rgb_frame = frame
+
         mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=rgb_frame)
         body_results = body_model.detect_for_video(mp_image, video_timestamps[frame_id]).pose_landmarks # todo check
         if len(body_results) == 0:
@@ -77,7 +84,7 @@ def run_mediapipe(cap, frames, video_timestamps, sides, scales, hand_roi_size, p
                 y_start = max(0, wrist[1] - roi_half_size)
                 y_end = min(scales[1], wrist[1] + roi_half_size)
                 cropped_frame = frame[y_start:y_end, x_start:x_end]
-                rgb_cropped_frame = cv2.cvtColor(cropped_frame, cv2.COLOR_BGR2RGB)
+                rgb_cropped_frame = cv2.cvtColor(cropped_frame, cv2.COLOR_BGR2RGB) # todo
                 if frame_id == 1 and not process:
                     plt.imshow(rgb_cropped_frame)
                     plt.gca().set_xticks([0, roi_half_size * 2])
@@ -179,6 +186,7 @@ if __name__ == "__main__":
 
     joints_df = update_left_right(joints_df)
     joints_df.to_parquet(join(experiment_dir, "mediapipe_output.parquet"))
+    joints_df = pd.read_parquet(join(experiment_dir, "mediapipe_output.parquet"))
 
     print('Correcting Z values...')
     for side in sides:

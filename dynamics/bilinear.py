@@ -15,8 +15,8 @@ K0 = math.log(100)
 K1 = math.log(2000)
 L0 = math.log(0.06)
 L1 = math.log(0.006)
-B0 = math.log(math.e)
-B1 = math.log(math.e)
+B0 = math.log(1)
+B1 = math.log(1)
 
 ## Joint parameters
 M = 0.05

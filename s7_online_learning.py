@@ -41,6 +41,7 @@ if __name__ == '__main__':
     parser.add_argument('-c', '--camera', type=int, required=False, help='Camera id')
     parser.add_argument('-si', '--save_input', action='store_true', help='Save input data')
     parser.add_argument('-cf', '--calibration_frames', type=int, default=20, help='Number of calibration frames')
+    parser.add_argument('--load_epoch', type=int, default=None, help='Load epoch')
     args = parser.parse_args()
 
     save_path = join('data', args.person_dir, 'recordings', args.experiment_name)
@@ -86,14 +87,7 @@ if __name__ == '__main__':
         wandb_config = yaml.safe_load(file)
         config = Config(wandb_config)
 
-    data_dirs = [join('data', args.person_dir, 'recordings', recording, 'experiments', '1') for recording in
-                 config.recordings]
 
-    test_dirs = [join('data', args.person_dir, 'recordings', recording, 'experiments', '1') for recording in
-                 config.test_recordings] if config.test_recordings is not None else None
-
-    trainsets, testsets, combined_sets = get_data(config, data_dirs, args.intact_hand, visualize=False,
-                                                      test_dirs=test_dirs)
 
     if args.save_input:
         temp_vc = cv2.VideoCapture(args.camera)
@@ -103,11 +97,21 @@ if __name__ == '__main__':
 
         vc = InputThread(src=args.camera, queueSize=queue_size, save=True)
         processManager.manage_process(vc)
+        while not vc.outputQ.empty():
+            vc.outputQ.get()
         st = SaveThread(vc.outputQ, frame_size=(int(width), int(height)), save_path=save_path)
         processManager.manage_process(st)
 
 
     elif args.offline:
+        data_dirs = [join('data', args.person_dir, 'recordings', recording, 'experiments', '1') for recording in
+                     config.recordings]
+
+        test_dirs = [join('data', args.person_dir, 'recordings', recording, 'experiments', '1') for recording in
+                     config.test_recordings] if config.test_recordings is not None else None
+
+        trainsets, testsets, combined_sets = get_data(config, data_dirs, args.intact_hand, visualize=False,
+                                                      test_dirs=test_dirs)
 
 
         if args.visualize:
@@ -219,6 +223,14 @@ if __name__ == '__main__':
                         break
 
     else:
+        data_dirs = [join('data', args.person_dir, 'recordings', recording, 'experiments', '1') for recording in
+                     config.recordings]
+
+        test_dirs = [join('data', args.person_dir, 'recordings', recording, 'experiments', '1') for recording in
+                     config.test_recordings] if config.test_recordings is not None else None
+
+        trainsets, testsets, combined_sets = get_data(config, data_dirs, args.intact_hand, visualize=False,
+                                                      test_dirs=test_dirs)
 
         wandb.init(mode=config.wandb_mode, project=config.wandb_project, name=config.name, config=config)
         config = wandb.config
@@ -226,9 +238,17 @@ if __name__ == '__main__':
         model = TimeSeriesRegressorWrapper(device=device, input_size=len(config.features),
                                            output_size=len(config.targets),
                                            **config)
-        model.load(join('data', args.person_dir, 'models', f'{config.name}.pt'))
+        model.load(join('data', args.person_dir, 'models', f'{config.name}_{args.load_epoch}.pt'))
         model.to(device)
         model.train()
+        if config.model_type == 'ModularModel':  # todo
+            epoch = -1
+            # for param in model.model.activation_model.parameters():
+            #     param.requires_grad = False if epoch < config.activation_model['n_freeze_epochs'] else True
+            for param in model.model.muscle_model.parameters():
+                param.requires_grad = False if epoch < config.muscle_model['n_freeze_epochs'] else True
+            for param in model.model.joint_model.parameters():
+                param.requires_grad = False if epoch < config.joint_model['n_freeze_epochs'] else True
         # if config.model_type == 'ActivationAndBiophys':  # todo
         #     for param in model.model.biophys_model.parameters():
         #         param.requires_grad = False if epoch < config.biophys_config['n_freeze_epochs'] else True
@@ -261,14 +281,15 @@ if __name__ == '__main__':
         emg_history = []
         states_history = []
 
-        states = model.model.get_starting_states(1, None)
         angles_df, emg_timestep = anglesProcess.outputQ.get(timeout=2)
 
         angles_history.append(angles_df.loc[config.targets].values)
         emg_history.append(emg_timestep[emg_channels])
-        states_history.append(states.detach())
+        # states = model.model.get_starting_states(1, torch.tensor(angles_history[0], dtype=torch.float32).unsqueeze(0).unsqueeze(1).to(device))
 
-        states_history.append(states.detach())
+        # states_history.append(states.detach())
+
+        # states_history.append(states.detach())
 
         with tqdm(range(config.n_epochs)) as pbar:
             for epoch in pbar:
@@ -280,7 +301,9 @@ if __name__ == '__main__':
                 for i in range(epoch_len):
                     history_samples = np.random.randint(0, len(angles_history), size=config.batch_size-1)
                     history_samples = np.array([history_sample for history_sample in history_samples] + [len(angles_history) - 1])
-                    states = torch.concat([states_history[history_sample] for history_sample in history_samples], dim=1)
+                    # states = torch.concat([states_history[history_sample] for history_sample in history_samples], dim=1)
+                    states = model.model.get_starting_states(config.batch_size, torch.tensor(angles_history[-1], dtype=torch.float32).unsqueeze(
+                        0).unsqueeze(1).to(device))
 
                     # states = states
                     for s in range(config.seq_len):
@@ -314,13 +337,11 @@ if __name__ == '__main__':
 
                         history_samples = history_samples + 1
 
-                        history_states = states.detach()
-                        states_history.append(history_states[:, -1, :].unsqueeze(1))
+                        # history_states = states.detach()
+                        # states_history.append(history_states[:, -1, :].unsqueeze(1))
 
-                        for hs in range(len(history_samples)-1):
-                            states_history[history_samples[hs]] = history_states[:, hs, :].unsqueeze(1)
-
-
+                        # for hs in range(len(history_samples)-1):
+                        #     states_history[history_samples[hs]] = history_states[:, hs, :].unsqueeze(1)
 
 
                     model.optimizer.zero_grad(set_to_none=True)
@@ -328,7 +349,7 @@ if __name__ == '__main__':
                     seq_loss.backward()
                     torch.nn.utils.clip_grad_norm_(model.model.parameters(), 4)
                     model.optimizer.step()
-                    # states = states.detach()
+                    states = states.detach()
                     wandb.log({'seq_loss': seq_loss.item()})
                     trunctuator = 0
                     seq_loss = 0
