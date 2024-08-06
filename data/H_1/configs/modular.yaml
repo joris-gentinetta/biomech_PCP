@@ -1,4 +1,4 @@
-name: GRU
+name: standard-modular
 method: grid
 
 metric:
@@ -15,10 +15,11 @@ parameters:
     - thumbOut
     - indexFlEx
     - thumbIn
-    - indexFlDigitsEx
 
   test_recordings:
     value:
+    - indexFlDigitsEx
+
 
   features:
     value:
@@ -39,10 +40,10 @@ parameters:
     value: 0.0
 
   learning_rate:
-    value: 0.001
+    value: 0.0001
 
   n_epochs:
-    value: 40
+    value: 100
 
   seq_len:
     value: 128
@@ -58,15 +59,6 @@ parameters:
 #    - [Right, wristRot]
     - [Right, wristFlex]
 
-#    - [Left, indexAng]
-#    - [Left, midAng]
-#    - [Left, ringAng]
-#    - [Left, pinkyAng]
-#    - [Left, thumbInPlaneAng]
-#    - [Left, thumbOutPlaneAng]
-#    - [Left, wristRot]
-#    - [Left, wristFlex]
-
   warmup_steps:
     value: 10
 
@@ -77,19 +69,30 @@ parameters:
     value: online
 
   wandb_project:
-    value: H_1-online-testing
+    value: online_GRU
 
   model_type:
-    value: GRU
+    value: ModularModel
 
-  state_mode:
-    value: stateless
+  activation_model:
+    value: {model_type: DenseNet,
+            hidden_size: 100,
+            n_layers: 4,}
 
-  hidden_size:
-    value: 128
+  muscle_model:
+    value: {
+             model_type: PhysMuscleModel,
+#      model_type: GRU,
+#            hidden_size: 100,
+#            n_layers: 4,
+#      n_freeze_epochs: 5,
+      }
 
-  n_layers:
-    values: 2
-
-  tanh:
-    value: False
+  joint_model:
+    value: {
+#      model_type: GRU,
+#            hidden_size: 100,
+#            n_layers: 4,
+             model_type: PhysJointModel,
+#      n_freeze_epochs: 5,
+      }

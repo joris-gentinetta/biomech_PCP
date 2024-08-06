@@ -89,9 +89,9 @@ if __name__ == '__main__':
             test_set.to_parquet(join((data_dirs + test_dirs)[set_id], f'pred_angles-{config.name}.parquet'))
 
 
-    if args.save_model:  # trains on the whole dataset and saves the model
-        model = train_model(combined_sets, testsets, device, config.wandb_mode, config.wandb_project, config.name, config) # todo move into -t as additional option
+        if args.save_model:  # trains on the whole dataset and saves the model
+            # model = train_model(combined_sets, testsets, device, config.wandb_mode, config.wandb_project, config.name, config)
 
-        model.to(torch.device('cpu'))
-        os.makedirs(join('data', args.person_dir, 'models'), exist_ok=True)
-        model.save(join('data', args.person_dir, 'models', f'{config.name}.pt'))
+            model.to(torch.device('cpu'))
+            os.makedirs(join('data', args.person_dir, 'models'), exist_ok=True)
+            model.save(join('data', args.person_dir, 'models', f'{config.name}.pt'))
