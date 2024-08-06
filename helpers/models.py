@@ -239,9 +239,9 @@ class PhysMuscleModel(TimeSeriesRegressor):
                 F, K, v = self.model(activations[:, i, :, :], states) # todo JORIS note some changes here
                 out[:, i, :] = torch.cat([F, K], dim=2).reshape(out.shape[0], out.shape[2])
 
-                # states[0] = torch.clamp(states[0] - v/SR, 0.01*self.model.lM_opt, 1.99*self.model.lM_opt)
-                states[0] = torch.where(states[0] - v/SR <= 0.01*self.model.lM_opt, states[0], states[0] - v/SR)
-                states[0] = torch.where(states[0] - v/SR >= 1.99*self.model.lM_opt, states[0], states[0] - v/SR)
+                states[0] = torch.clamp(states[0] - v/SR, -0.99, 0.99)
+                # states[0] = torch.where(states[0] - v/SR <= -.99, states[0], states[0] - v/SR)
+                # states[0] = torch.where(states[0] - v/SR >= 0.99*self.model.lM_opt, states[0], states[0] - v/SR)
 
         return out, states[0]
 
