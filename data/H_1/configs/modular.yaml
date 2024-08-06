@@ -40,7 +40,7 @@ parameters:
     value: 0.0
 
   learning_rate:
-    value: 0.0001
+    value: 0.001
 
   n_epochs:
     value: 100

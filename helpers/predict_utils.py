@@ -109,9 +109,13 @@ def train_model(trainsets, testsets, device, wandb_mode, wandb_project, wandb_na
             for epoch in pbar:
                 pbar.set_description(f'Epoch {epoch}')
 
-                if config.model_type == 'ActivationAndBiophys': # todo
-                    for param in model.model.biophys_model.parameters():
-                        param.requires_grad = False if epoch < config.biophys_config['n_freeze_epochs'] else True
+                if config.model_type == 'ModularModel': # todo
+                    for param in model.model.activation_model.parameters():
+                        param.requires_grad = False if epoch < config.activation_model['n_freeze_epochs'] else True
+                    for param in model.model.muscle_model.parameters():
+                        param.requires_grad = False if epoch < config.muscle_model['n_freeze_epochs'] else True
+                    for param in model.model.joint_model.parameters():
+                        param.requires_grad = False if epoch < config.joint_model['n_freeze_epochs'] else True
 
                 train_loss = model.train_one_epoch(dataloader)
 
