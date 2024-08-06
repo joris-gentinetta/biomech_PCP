@@ -129,7 +129,10 @@ def update_left_right(joints_df):
         for landmark_name in ['SHOULDER', 'ELBOW', 'HIP']:
             joints_df.loc[:, idx[key, landmark_name, slice(None)]] = joints_df.loc[:, idx['Body', f'{value}_{landmark_name}', slice(None)]].values
 
-        joints_df.loc[:, idx[key, 'BODY_WRIST', ['x', 'y']]] = joints_df.loc[:, idx[key, 'WRIST', ['x', 'y']]].values
+        # joints_df.loc[:, idx[key, 'BODY_WRIST', ['x', 'y']]] = joints_df.loc[:, idx[key, 'WRIST', ['x', 'y']]].values
+        joints_df.loc[:, idx[key, 'BODY_WRIST', ['x', 'y']]] = joints_df.loc[:,
+                                                               idx['Body', f'{value}_WRIST', ['x', 'y']]].values
+
         joints_df.loc[:, idx[key, 'BODY_WRIST', 'z']] = joints_df.loc[:, idx['Body', f'{value}_WRIST', 'z']].values
     return joints_df
 
@@ -200,7 +203,7 @@ if __name__ == "__main__":
         forearm = forearm.astype(np.float64)
 
         missing_len_upper_arm = average_upper_arm_length ** 2 - upper_arm[:, 0] ** 2 - upper_arm[:, 1] ** 2
-        missing_len_forearm = average_forearm_length ** 2 - forearm[:, 0] ** 2 - forearm[:, 0] ** 2
+        missing_len_forearm = average_forearm_length ** 2 - forearm[:, 0] ** 2 - forearm[:, 1] ** 2
 
         missing_len_upper_arm = np.where(missing_len_upper_arm > 0, missing_len_upper_arm, 0)
         missing_len_forearm = np.where(missing_len_forearm > 0, missing_len_forearm, 0)

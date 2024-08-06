@@ -148,9 +148,13 @@ class JointsProcess(Process):
                                                                                           [
                                                                                               'Body', f'{value}_{landmark_name}', slice
                                                                                               (None)]].values
+            # if key == 'Right':
+            #     print('body wrist: ', joints_df.loc[:, idx['Body', f'{value}_WRIST', slice(None)]].values)
+            #     print('wrist: ', joints_df.loc[:, idx[key, 'WRIST', slice(None)]].values)
+            # joints_df.loc[:, idx[key, 'BODY_WRIST', ['x', 'y']]] = joints_df.loc[:,
+            #                                                        idx[key, 'WRIST', ['x', 'y']]].values
+            joints_df.loc[:, idx[key, 'BODY_WRIST', ['x', 'y']]] = joints_df.loc[:, idx['Body', f'{value}_WRIST', ['x', 'y']]].values
 
-            joints_df.loc[:, idx[key, 'BODY_WRIST', ['x', 'y']]] = joints_df.loc[:,
-                                                                   idx[key, 'WRIST', ['x', 'y']]].values
             joints_df.loc[:, idx[key, 'BODY_WRIST', 'z']] = joints_df.loc[:, idx['Body', f'{value}_WRIST', 'z']].values
         return joints_df
 
@@ -195,6 +199,10 @@ class JointsProcess(Process):
         print('Calibrating...')
         joints_df = pd.DataFrame(columns=columns)
         indexer = 0
+        # empty the queue:
+        while not vc.outputQ.empty():
+            vc.outputQ.get()
+
         with tqdm(total=self.calibration_frames) as pbar:
             while indexer < self.calibration_frames:
                 frame = vc.outputQ.get()[0]
@@ -376,9 +384,8 @@ class JointsProcess(Process):
             upper_arm = upper_arm.astype(np.float64)
             forearm = forearm.astype(np.float64)
 
-            missing_len_upper_arm = average_upper_arm_length[side] ** 2 - upper_arm[:, 0] ** 2 - upper_arm[:,
-                                                                                                 1] ** 2
-            missing_len_forearm = average_forearm_length[side] ** 2 - forearm[:, 0] ** 2 - forearm[:, 0] ** 2
+            missing_len_upper_arm = average_upper_arm_length[side] ** 2 - upper_arm[:, 0] ** 2 - upper_arm[:, 1] ** 2
+            missing_len_forearm = average_forearm_length[side] ** 2 - forearm[:, 0] ** 2 - forearm[:, 1] ** 2
 
             missing_len_upper_arm = np.where(missing_len_upper_arm > 0, missing_len_upper_arm, 0)
             missing_len_forearm = np.where(missing_len_forearm > 0, missing_len_forearm, 0)
@@ -386,14 +393,8 @@ class JointsProcess(Process):
             upper_arm[:, 2] = np.sqrt(missing_len_upper_arm)
             forearm[:, 2] = np.sqrt(missing_len_forearm)
 
-            joints_df.loc[:, idx['Body', f'{side.upper()}_ELBOW', 'z']] = joints_df.loc[:, idx[
-                                                                                               'Body', f'{side.upper()}_SHOULDER', 'z']].values + upper_arm[
-                                                                                                                                                  :,
-                                                                                                                                                  2] * -1
-            joints_df.loc[:, idx['Body', f'{side.upper()}_WRIST', 'z']] = joints_df.loc[:, idx[
-                                                                                               'Body', f'{side.upper()}_ELBOW', 'z']].values + forearm[
-                                                                                                                                               :,
-                                                                                                                                               2] * -1
+            joints_df.loc[:, idx['Body', f'{side.upper()}_ELBOW', 'z']] = joints_df.loc[:, idx['Body', f'{side.upper()}_SHOULDER', 'z']].values + upper_arm[:, 2] * -1
+            joints_df.loc[:, idx['Body', f'{side.upper()}_WRIST', 'z']] = joints_df.loc[:, idx['Body', f'{side.upper()}_ELBOW', 'z']].values + forearm[:, 2] * -1
             t5 = time()
             if PRINT:
                 print('correction: ', t5 - t4)
