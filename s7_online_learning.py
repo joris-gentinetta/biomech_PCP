@@ -86,6 +86,15 @@ if __name__ == '__main__':
         wandb_config = yaml.safe_load(file)
         config = Config(wandb_config)
 
+    data_dirs = [join('data', args.person_dir, 'recordings', recording, 'experiments', '1') for recording in
+                 config.recordings]
+
+    test_dirs = [join('data', args.person_dir, 'recordings', recording, 'experiments', '1') for recording in
+                 config.test_recordings] if config.test_recordings is not None else None
+
+    trainsets, testsets, combined_sets = get_data(config, data_dirs, args.intact_hand, visualize=False,
+                                                      test_dirs=test_dirs)
+
     if args.save_input:
         temp_vc = cv2.VideoCapture(args.camera)
         width = temp_vc.get(cv2.CAP_PROP_FRAME_WIDTH)
@@ -97,15 +106,9 @@ if __name__ == '__main__':
         st = SaveThread(vc.outputQ, frame_size=(int(width), int(height)), save_path=save_path)
         processManager.manage_process(st)
 
+
     elif args.offline:
-        data_dirs = [join('data', args.person_dir, 'recordings', recording, 'experiments', '1') for recording in
-                     config.recordings]
 
-        test_dirs = [join('data', args.person_dir, 'recordings', recording, 'experiments', '1') for recording in
-                     config.test_recordings] if config.test_recordings is not None else None
-
-        trainsets, testsets, combined_sets = get_data(config, data_dirs, args.intact_hand, visualize=False,
-                                                      test_dirs=test_dirs)
 
         if args.visualize:
             visualizeQueue = MPQueue(queue_size)
@@ -359,7 +362,7 @@ if __name__ == '__main__':
                 # wandb.run.summary['used_epochs'] = epoch
                 #
                 # lr = model.scheduler.get_last_lr()[0]
-                # model.scheduler.step(val_loss)  # Update the learning rate after each epoch
+                # # model.scheduler.step(val_loss)  # Update the learning rate after each epoch
                 # epoch_loss = epoch_loss / epoch_len
                 # pbar.set_postfix({'lr': lr, 'train_loss': epoch_loss, 'val_loss': val_loss})
                 #
@@ -370,4 +373,7 @@ if __name__ == '__main__':
                 # log['total_val_loss'] = val_loss
                 # log['train_loss'] = epoch_loss
                 # log['lr'] = lr
-                # wandb.log(log, step=epoch)
+                # log['epoch'] = epoch
+                # wandb.log(log)
+                # model.train()
+                model.save(join('data', args.person_dir, 'models', f'{config.name}_online.pt'))

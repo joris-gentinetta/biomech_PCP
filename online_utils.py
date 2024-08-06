@@ -270,7 +270,7 @@ class JointsProcess(Process):
         for i in range(self.calibration_frames):
             shoulder = joints_df.loc[i, (side, 'SHOULDER', ['x', 'y'])].values
             elbow = joints_df.loc[i, (side, 'ELBOW', ['x', 'y'])].values
-            wrist = joints_df.loc[i, (side, 'WRIST', ['x', 'y'])].values
+            wrist = joints_df.loc[i, (side, 'BODY_WRIST', ['x', 'y'])].values
 
             upper_arm_lengths.append(np.linalg.norm(shoulder - elbow))
             forearm_lengths.append(np.linalg.norm(elbow - wrist))
