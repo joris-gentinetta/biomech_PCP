@@ -114,9 +114,9 @@ class DenseNet(TimeSeriesRegressor):
 
 
 class upperExtremityModel(TimeSeriesRegressor):
-    def __init__(self, input_size, output_size, device, muscleType='bilinear', nn_ratio=0.2, **kwargs):
+    def __init__(self, input_size, output_size, device, nn_ratio=0.2):
         super().__init__(input_size, output_size, device)
-
+        muscleType = 'bilinear'
         self.muscleType = muscleType
 
         jointModels = {'bilinear': self.bilinearInit}
@@ -184,7 +184,7 @@ class ActivationAndBiophysModel(TimeSeriesRegressor):
         else:
             raise ValueError(f'Unknown model type {activation_config["model_type"]}')
 
-        self.biophys_model = upperExtremityModel(output_size * 2, output_size, device, **biophys_config)
+        self.biophys_model = upperExtremityModel(output_size * 2, output_size, device)
         self.sigmoid = nn.Sigmoid()
 
     def get_starting_states(self, batch_size):

@@ -49,7 +49,10 @@ combined_sets = []
 for recording_id, data_dir in enumerate(data_dirs):
     angles = pd.read_parquet(join(data_dir, 'cropped_smooth_angles.parquet'))
     angles.index = range(len(angles))
-    emg = np.load(join(data_dir, 'cropped_aligned_emg.npy'))
+    try:
+        emg = np.load(join(data_dir, 'cropped_aligned_emg.npy'))
+    except FileNotFoundError:
+        emg = np.load(join(data_dir, 'cropped_emg.npy'))
 
     data = angles.copy()
     data.loc[:, (args.intact_hand, 'thumbInPlaneAng')] = data.loc[:, (args.intact_hand, 'thumbInPlaneAng')] + math.pi
@@ -60,7 +63,7 @@ for recording_id, data_dir in enumerate(data_dirs):
     data = np.clip(data, 0, 1)
 
     for feature in config.features:
-        data[feature] = emg[:, feature[1]]
+        data[feature] = emg[:, int(feature[1])]
 
     if args.visualize:
         data[config.features].plot(subplots=True)
@@ -84,7 +87,13 @@ if args.hyperparameter_search:
 
 
 if args.test:
-    model = TimeSeriesRegressorWrapper(device=device, input_size=len(config.features), output_size=len(config.targets), **(config.to_dict()))
+    uconf = config.to_dict()
+    uconf['activation_config'] = {'model_type': 'DenseNet',
+    'hidden_size': 100,
+    'n_layers': 4,
+    'n_freeze_epochs': 0}
+
+    model = TimeSeriesRegressorWrapper(device=device, input_size=len(config.features), output_size=len(config.targets), **(uconf))
 
     model.to(device)
     dataset = TSDataset(trainsets, config.features, config.targets, sequence_len=125, device=device)
@@ -92,9 +101,9 @@ if args.test:
 
     print('Training model...')
     for epoch in tqdm(range(model.n_epochs)):
-        if config.model_type == 'ActivationAndBiophys':
-            for param in model.model.biophys_model.parameters():
-                param.requires_grad = False if epoch < config.biophys_config['n_freeze_epochs'] else True
+        # if config.model_type == 'ActivationAndBiophys':
+        #     for param in model.model.biophys_model.parameters():
+        #         param.requires_grad = False if epoch < config.biophys_config['n_freeze_epochs'] else True
         epoch_loss = model.train_one_epoch(dataloader)
         print(f'Epoch {epoch}, loss: {epoch_loss}')
 
