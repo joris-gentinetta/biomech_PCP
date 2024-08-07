@@ -43,27 +43,15 @@ class Muscles(nn.Module):
             register_parametrization(self, parameter, parameterization)
 
     def forward(self, alphas, muscle_SS):
-        if torch.any(torch.isnan(alphas)) or torch.any(torch.isnan(muscle_SS)):
-            print('Input NaN')
-            temp = 0
-
         alphas = torch.clamp(alphas, 0, 1)
 
         F = ((self.K0.unsqueeze(0) + self.K1.unsqueeze(0) * alphas)
                * (self.L0.unsqueeze(0) + self.L1.unsqueeze(0) * alphas - muscle_SS[:, :, 0, :])
-             )# + self.B0.unsqueeze(0) * torch.abs(muscle_SS[:, :, 1, :]) ** self.B1.unsqueeze(0) * torch.sign(muscle_SS[:, :, 1, :]))
+              + self.B0.unsqueeze(0) * torch.abs(muscle_SS[:, :, 1, :]) ** self.B1.unsqueeze(0) * torch.sign(muscle_SS[:, :, 1, :]))
 
         F = nn.functional.relu(F) # wash out negative force!
 
         K = self.K0.unsqueeze(0) + self.K1.unsqueeze(0) * alphas
-
-        if torch.any(torch.isnan(F)) or torch.any(torch.isnan(K)):
-            print('Output NaN')
-            temp = 0
-
-        if torch.any(torch.isnan(self.K0)) or torch.any(torch.isnan(self.K1)) or torch.any(torch.isnan(self.L0)) or torch.any(torch.isnan(self.L1)) or torch.any(torch.isnan(self.B0)) or torch.any(torch.isnan(self.B1)):
-            print('Parameter NaN')
-            temp = 0
 
         return F, K
 
@@ -95,10 +83,6 @@ class Joints(nn.Module):
         register_parametrization(self, 'B', parameterization)
 
     def forward(self, F, K_musc, SS):
-        if torch.any(torch.isnan(F)) or torch.any(torch.isnan(K_musc)) or torch.any(torch.isnan(SS)):
-            print('Input NaN')
-            temp = 0
-
         """Calculate the joint dynamic for one step and output the new system state
 
             Args:
@@ -185,17 +169,5 @@ class Joints(nn.Module):
             SSout = ((torch.matmul(A, SS.unsqueeze(3)) + B) * self.dt + SS.unsqueeze(3)).squeeze(3)
 
         muscle_SSs = SSout.unsqueeze(3) * self.M.unsqueeze(0).unsqueeze(2) # [batch_size, n_joints, state_num (2), muscle_num (2)]
-
-        if torch.any(torch.isnan(SSout)) or torch.any(torch.isnan(muscle_SSs)):
-            print('Output NaN')
-            temp = 0
-
-        if torch.any(torch.isnan(self.I)) or torch.any(torch.isnan(self.B)) or torch.any(torch.isnan(self.K)) or torch.any(torch.isnan(self.M)):
-            print('Parameter NaN')
-            temp = 0
-
-        if torch.any(torch.isnan(A)) or torch.any(torch.isnan(B)) or torch.any(torch.isnan(expAt)) or torch.any(torch.isnan(torch.linalg.solve(A, expAt - eye))):
-            print('Matrix NaN')
-            temp = 0
 
         return SSout[:, :, 0], muscle_SSs, SSout # position, muscle state, [position, velocity]

@@ -436,25 +436,10 @@ class ModularModel(TimeSeriesRegressor):
     def forward(self, x, states):
         out = torch.zeros((x.shape[0], x.shape[1], self.output_size), dtype=torch.float, device=self.device)
         for i in range(x.shape[1]):
-            if torch.any(torch.isnan(x[:, i:i+1, :])):# or torch.any(torch.isnan(states[0])):
-                print('Activation input NaN')
-                temp = 0
             activation_out, states[0] = self.activation_model(x[:, i:i+1, :], states[0])
-            if torch.any(torch.isnan(activation_out)):# or torch.any(torch.isnan(states[0])):
-                print('Activation output NaN')
-                temp = 0
             activation_out = self.sigmoid(activation_out)
-            # if self.muscle_model_config['model_type'] == 'PhysMuscleModel':
             muscle_out, states[1] = self.muscle_model(activation_out, [states[1], states[2][0]])
-            if torch.any(torch.isnan(muscle_out)):# or torch.any(torch.isnan(states[1])):
-                print('Muscle output NaN')
-                temp = 0
-            # else:
-            #     muscle_out, states[1][0] = self.muscle_model(activation_out, states[1][0])
             out[:, i:i+1, :], states[2] = self.joint_model(muscle_out, states[2])
-            if torch.any(torch.isnan(out[:, i:i+1, :])) or torch.any(torch.isnan(states[2][0])) or torch.any(torch.isnan(states[2][1])) or torch.any(torch.isnan(states[2][2])):
-                print('Joint output NaN')
-                temp = 0
 
         return out, states
 
