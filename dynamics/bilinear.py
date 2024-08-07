@@ -7,7 +7,7 @@ import math
 import torch
 from torch import nn
 from torch.nn.utils.parametrize import register_parametrization
-from dynamics.utils import Exponential
+from dynamics.utils import Exponential, Sigmoid
 
 
 ## Muscle parameters
@@ -15,15 +15,14 @@ K0 = math.log(100)
 K1 = math.log(2000)
 L0 = math.log(0.06)
 L1 = math.log(0.006)
-B0 = math.log(1)
-B1 = math.log(1)
+B0 = math.log(math.e)
+B1 = math.log(math.e)
 
 ## Joint parameters
 M = 0.05
 I = math.log(0.004)
-B = math.log(.3)
-K = math.log(5)
-
+B = math.log(math.e)
+K = math.log(1)
 
 class Muscles(nn.Module):
     def __init__(self, device, n_joints):
@@ -44,21 +43,27 @@ class Muscles(nn.Module):
             register_parametrization(self, parameter, parameterization)
 
     def forward(self, alphas, muscle_SS):
+        if torch.any(torch.isnan(alphas)) or torch.any(torch.isnan(muscle_SS)):
+            print('Input NaN')
+            temp = 0
+
         alphas = torch.clamp(alphas, 0, 1)
 
         F = ((self.K0.unsqueeze(0) + self.K1.unsqueeze(0) * alphas)
                * (self.L0.unsqueeze(0) + self.L1.unsqueeze(0) * alphas - muscle_SS[:, :, 0, :])
-             + self.B0.unsqueeze(0) * torch.abs(muscle_SS[:, :, 1, :]) ** self.B1.unsqueeze(0) * torch.sign(muscle_SS[:, :, 1, :]))
+             )# + self.B0.unsqueeze(0) * torch.abs(muscle_SS[:, :, 1, :]) ** self.B1.unsqueeze(0) * torch.sign(muscle_SS[:, :, 1, :]))
 
         F = nn.functional.relu(F) # wash out negative force!
 
         K = self.K0.unsqueeze(0) + self.K1.unsqueeze(0) * alphas
 
-        if torch.any(torch.isnan(F)):
-            print('nan in F')
-            print(F)
-            print('nan in K')
-            print(K)
+        if torch.any(torch.isnan(F)) or torch.any(torch.isnan(K)):
+            print('Output NaN')
+            temp = 0
+
+        if torch.any(torch.isnan(self.K0)) or torch.any(torch.isnan(self.K1)) or torch.any(torch.isnan(self.L0)) or torch.any(torch.isnan(self.L1)) or torch.any(torch.isnan(self.B0)) or torch.any(torch.isnan(self.B1)):
+            print('Parameter NaN')
+            temp = 0
 
         return F, K
 
@@ -82,10 +87,18 @@ class Joints(nn.Module):
         self.M = nn.Parameter(data=moment_arms)
 
         parameterization = Exponential()
-        for parameter in ['I', 'B', 'K']:
+        # for parameter in ['I', 'B', 'K']:
+        for parameter in ['I', 'K']:
             register_parametrization(self, parameter, parameterization)
 
+        parameterization = Sigmoid()
+        register_parametrization(self, 'B', parameterization)
+
     def forward(self, F, K_musc, SS):
+        if torch.any(torch.isnan(F)) or torch.any(torch.isnan(K_musc)) or torch.any(torch.isnan(SS)):
+            print('Input NaN')
+            temp = 0
+
         """Calculate the joint dynamic for one step and output the new system state
 
             Args:
@@ -147,7 +160,7 @@ class Joints(nn.Module):
         B_F = F
 
         # The following K is respect to w(angle)
-        B1 = B_F * self.M.unsqueeze(0) / self.I.unsqueeze(0).unsqueeze(2).expand(batch_size, -1, -1)
+        B1 = -B_F * self.M.unsqueeze(0) / self.I.unsqueeze(0).unsqueeze(2).expand(batch_size, -1, -1)
         B1 = B1.sum(dim=2).unsqueeze(2)  # sum over muscles - > [batch_size, n_joints]
 
         B = torch.stack([B0, B1], dim=2)
@@ -173,10 +186,16 @@ class Joints(nn.Module):
 
         muscle_SSs = SSout.unsqueeze(3) * self.M.unsqueeze(0).unsqueeze(2) # [batch_size, n_joints, state_num (2), muscle_num (2)]
 
-        if torch.any(torch.isnan(SSout)):
-            print('nan in SSout')
-            print(SSout)
-            print('nan in muscle_SSs')
-            print(muscle_SSs)
+        if torch.any(torch.isnan(SSout)) or torch.any(torch.isnan(muscle_SSs)):
+            print('Output NaN')
+            temp = 0
+
+        if torch.any(torch.isnan(self.I)) or torch.any(torch.isnan(self.B)) or torch.any(torch.isnan(self.K)) or torch.any(torch.isnan(self.M)):
+            print('Parameter NaN')
+            temp = 0
+
+        if torch.any(torch.isnan(A)) or torch.any(torch.isnan(B)) or torch.any(torch.isnan(expAt)) or torch.any(torch.isnan(torch.linalg.solve(A, expAt - eye))):
+            print('Matrix NaN')
+            temp = 0
 
         return SSout[:, :, 0], muscle_SSs, SSout # position, muscle state, [position, velocity]

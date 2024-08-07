@@ -137,12 +137,12 @@ class DenseNet(TimeSeriesRegressor):
         layers = []
         layers.append(nn.Linear(self.input_size, hidden_size))
         layers.append(nn.LeakyReLU())
-        layers.append(nn.Dropout(p=0.4))
+        layers.append(nn.Dropout(p=0.2))
 
         for _ in range(n_layers - 1):
             layers.append(nn.Linear(hidden_size, hidden_size))
             layers.append(nn.LeakyReLU())
-            layers.append(nn.Dropout(p=0.4))
+            layers.append(nn.Dropout(p=0.2))
 
         layers.append(nn.Linear(hidden_size, self.output_size))
 
@@ -226,6 +226,16 @@ class BlockDenseNet(TimeSeriesRegressor):
 
         return out, states
 
+class MatMul(TimeSeriesRegressor):
+    def __init__(self, input_size, output_size, device, **kwargs):
+        super().__init__(input_size, output_size, device)
+        self.weight = nn.Parameter(torch.randn(input_size, output_size, device=device))
+
+    def get_starting_states(self, batch_size, y=None):
+        return None
+
+    def forward(self, x, states=None):
+        return torch.matmul(x, self.weight), states
 
 class PhysMuscleModel(TimeSeriesRegressor):
     def __init__(self, input_size, output_size, device, **kwargs):
@@ -410,6 +420,8 @@ class ModularModel(TimeSeriesRegressor):
             modelclass = CNN
         elif config['model_type'] in ['RNN', 'LSTM', 'GRU']:
             modelclass = RNN
+        elif config['model_type'] == 'MatMul':
+            modelclass = MatMul
         elif config['model_type'] == 'PhysMuscleModel':
             modelclass = PhysMuscleModel
         elif config['model_type'] == 'PhysJointModel':
@@ -424,13 +436,25 @@ class ModularModel(TimeSeriesRegressor):
     def forward(self, x, states):
         out = torch.zeros((x.shape[0], x.shape[1], self.output_size), dtype=torch.float, device=self.device)
         for i in range(x.shape[1]):
+            if torch.any(torch.isnan(x[:, i:i+1, :])):# or torch.any(torch.isnan(states[0])):
+                print('Activation input NaN')
+                temp = 0
             activation_out, states[0] = self.activation_model(x[:, i:i+1, :], states[0])
+            if torch.any(torch.isnan(activation_out)):# or torch.any(torch.isnan(states[0])):
+                print('Activation output NaN')
+                temp = 0
             activation_out = self.sigmoid(activation_out)
             # if self.muscle_model_config['model_type'] == 'PhysMuscleModel':
             muscle_out, states[1] = self.muscle_model(activation_out, [states[1], states[2][0]])
+            if torch.any(torch.isnan(muscle_out)):# or torch.any(torch.isnan(states[1])):
+                print('Muscle output NaN')
+                temp = 0
             # else:
             #     muscle_out, states[1][0] = self.muscle_model(activation_out, states[1][0])
             out[:, i:i+1, :], states[2] = self.joint_model(muscle_out, states[2])
+            if torch.any(torch.isnan(out[:, i:i+1, :])) or torch.any(torch.isnan(states[2][0])) or torch.any(torch.isnan(states[2][1])) or torch.any(torch.isnan(states[2][2])):
+                print('Joint output NaN')
+                temp = 0
 
         return out, states
 
@@ -515,7 +539,8 @@ class TimeSeriesRegressorWrapper:
             raise ValueError(f'Unknown model type {model_type}')
 
         self.criterion = nn.MSELoss(reduction='mean')
-        self.optimizer = optim.Adam(self.model.parameters(), lr=learning_rate)
+        # self.optimizer = optim.Adam(self.model.parameters(), lr=learning_rate)
+        self.optimizer = optim.AdamW(self.model.parameters(), lr=learning_rate, amsgrad=True)
         self.scheduler = optim.lr_scheduler.ReduceLROnPlateau(self.optimizer, mode='min', factor=0.5, patience=3, threshold_mode='rel', threshold=0.01)
 
 
