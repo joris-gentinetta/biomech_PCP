@@ -33,7 +33,7 @@ def rescale_data(angles_df, intact_hand):
     else:
         return angles_df
 
-def load_data(data_dir, intact_hand, features):
+def load_data(data_dir, intact_hand, features, perturb=False):
     angles = pd.read_parquet(join(data_dir, 'cropped_smooth_angles.parquet'))
     angles.index = range(len(angles))
     try:
@@ -44,19 +44,26 @@ def load_data(data_dir, intact_hand, features):
     data = angles.copy()
     data = scale_data(data, intact_hand)
 
+    int_features = [int(feature[1]) for feature in features]
+    emg = emg[:, int_features]
+    if perturb:
+        perturber = np.abs(np.eye(len(int_features)) + np.random.normal(0, .25, (len(int_features), len(int_features))))
+
+
+
     for feature in features:
-        data[feature] = emg[:, int(feature[1])]
+        data[feature] = emg[:, int_features.index(int(feature[1]))]
 
     return data
 
 
-def get_data(config, data_dirs, intact_hand, visualize=False, test_dirs=None):
+def get_data(config, data_dirs, intact_hand, visualize=False, test_dirs=None, perturb=False):
 
     trainsets = []
     testsets = []
     combined_sets = []
     for recording_id, data_dir in enumerate(data_dirs):
-        data = load_data(data_dir, intact_hand, config.features)
+        data = load_data(data_dir, intact_hand, config.features, perturb)
 
         if visualize:
             axs = data[config.features].plot(subplots=True)

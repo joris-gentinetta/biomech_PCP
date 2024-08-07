@@ -9,8 +9,8 @@ from os.path import join
 import wandb
 import multiprocessing
 
-from helpers.predict_utils import Config, get_data, train_model, rescale_data
-
+from helpers.predict_utils import Config, get_data, train_model, rescale_data, evaluate_model
+from helpers.models import TimeSeriesRegressorWrapper
 
 def wandb_process(arguments):
     config = arguments['config']
@@ -31,6 +31,9 @@ if __name__ == '__main__':
     parser.add_argument('-hs', '--hyperparameter_search', action='store_true', help='Perform hyperparameter search')
     parser.add_argument('-t', '--test', action='store_true', help='Test the model')
     parser.add_argument('-s', '--save_model', action='store_true', help='Save a model')
+    parser.add_argument('-e', '--evaluate', action='store_true', help='Evaluate the model')
+    parser.add_argument('--experiment_name', type=str, default=None, help='Experiment name')
+    parser.add_argument('--perturb', action='store_true', help='Perturb the data')
     args = parser.parse_args()
 
     sampling_frequency = 60
@@ -67,7 +70,7 @@ if __name__ == '__main__':
     test_dirs = [join('data', args.person_dir, 'recordings', recording, 'experiments', '1') for recording in
                  config.test_recordings] if config.test_recordings is not None else []
 
-    trainsets, testsets, combined_sets = get_data(config, data_dirs, args.intact_hand, visualize=args.visualize, test_dirs=test_dirs)
+    trainsets, testsets, combined_sets = get_data(config, data_dirs, args.intact_hand, visualize=args.visualize, test_dirs=test_dirs, perturb=args.perturb)
 
     if args.hyperparameter_search:  # training on training set, evaluation on test set
         sweep_id = wandb.sweep(wandb_config, project=config.wandb_project)
@@ -100,3 +103,37 @@ if __name__ == '__main__':
             model.to(torch.device('cpu'))
             os.makedirs(join('data', args.person_dir, 'models'), exist_ok=True)
             model.save(join('data', args.person_dir, 'models', f'{config.name}.pt'))
+
+    elif args.evaluate:
+        wandb.init(mode=config.wandb_mode, project=config.wandb_project, name=config.name, config=config)
+        config = wandb.config
+
+        model = TimeSeriesRegressorWrapper(device=device, input_size=len(config.features),
+                                           output_size=len(config.targets),
+                                           **config)
+        model.to('cpu')
+        model.eval()
+        epoch = 0
+        best_val_loss = math.inf
+        while True:
+            try:
+                model.load(join('data', args.person_dir, 'models', f'{config.name}_online-{args.experiment_name}-{epoch}.pt'))
+            except:
+                break
+            model.to(device)
+            val_loss, val_losses = evaluate_model(model, testsets, device, config)
+            if val_loss < best_val_loss:
+                best_val_loss = val_loss
+                wandb.run.summary['best_epoch'] = epoch
+                wandb.run.summary['best_val_loss'] = best_val_loss
+            wandb.run.summary['used_epochs'] = epoch
+
+            test_recording_names = config.test_recordings if config.test_recordings is not None else []
+            log = {f'val_loss/{(config.recordings + test_recording_names)[set_id]}': loss for set_id, loss in
+                   enumerate(val_losses)}
+            log['total_val_loss'] = val_loss
+            log['epoch'] = epoch
+            wandb.log(log)
+            print(val_loss)
+
+            epoch += 1

@@ -26,8 +26,7 @@ from multiprocessing import Queue as MPQueue
 
 from helpers.predict_utils import Config, OLDataset, evaluate_model, EarlyStopper, get_data
 from online_utils import JointsProcess, AnglesProcess, VisualizeProcess, ProcessManager, InputThread, SaveThread
-PERTURB = True
-perturber = np.abs(np.eye(8) + np.random.normal(0, .25, (8, 8)))
+
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='Timeseries data analysis')
@@ -241,6 +240,7 @@ if __name__ == '__main__':
         model.load(join('data', args.person_dir, 'models', f'{config.name}.pt'))
         model.to(device)
         model.train()
+
         if config.model_type == 'ModularModel':  # todo
             epoch = -1
             # for param in model.model.activation_model.parameters():
@@ -249,9 +249,6 @@ if __name__ == '__main__':
                 param.requires_grad = False if epoch < config.muscle_model['n_freeze_epochs'] else True
             for param in model.model.joint_model.parameters():
                 param.requires_grad = False if epoch < config.joint_model['n_freeze_epochs'] else True
-        # if config.model_type == 'ActivationAndBiophys':  # todo
-        #     for param in model.model.biophys_model.parameters():
-        #         param.requires_grad = False if epoch < config.biophys_config['n_freeze_epochs'] else True
 
         if args.visualize:
             visualizeQueue = MPQueue(queue_size)
