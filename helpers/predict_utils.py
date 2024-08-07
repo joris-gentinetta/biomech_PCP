@@ -139,8 +139,8 @@ def train_model(trainsets, testsets, device, wandb_mode, wandb_project, wandb_na
                 log['lr'] = lr
                 wandb.log(log, step=epoch)
 
-                model.to('cpu')
-                model.save(join('data', person_dir, 'models', f'{config.name}_{epoch}.pt'))
+                # model.to('cpu')
+                # model.save(join('data', person_dir, 'models', f'{wandb_name}_{epoch}.pt'))
                 model.to(device)
 
                 if early_stopper.early_stop(val_loss):
@@ -174,7 +174,8 @@ class EarlyStopper:
         if validation_loss < self.min_validation_loss:
             self.min_validation_loss = validation_loss
             self.counter = 0
-        elif validation_loss > (self.min_validation_loss + self.min_delta):
+        # elif validation_loss > (self.min_validation_loss + self.min_delta):
+        elif validation_loss > (self.min_validation_loss*(1 + self.min_delta)):
             self.counter += 1
             if self.counter >= self.patience:
                 return True

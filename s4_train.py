@@ -73,8 +73,11 @@ if __name__ == '__main__':
         sweep_id = wandb.sweep(wandb_config, project=config.wandb_project)
         # wandb.agent(sweep_id, lambda: train_model(trainsets, testsets, device, config.wandb_mode, config.wandb_project, config.name))
 
-        pool = multiprocessing.Pool(processes=4)
-        pool.map(wandb_process, [{'id': i, 'config': config, 'sweep_id': sweep_id, 'trainsets': trainsets, 'testsets': testsets, 'device': device} for i in range(4)])
+        # pool = multiprocessing.Pool(processes=4)
+        # pool.map(wandb_process, [{'id': i, 'config': config, 'sweep_id': sweep_id, 'trainsets': trainsets, 'testsets': testsets, 'device': device} for i in range(4)])
+        wandb.agent(sweep_id,
+                    lambda: train_model(trainsets, testsets, device,
+                                        config.wandb_mode, config.wandb_project, config.name))
 
 
     if args.test:  # trains on the training set and saves the test set predictions

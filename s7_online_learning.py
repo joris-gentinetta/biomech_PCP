@@ -26,7 +26,8 @@ from multiprocessing import Queue as MPQueue
 
 from helpers.predict_utils import Config, OLDataset, evaluate_model, EarlyStopper, get_data
 from online_utils import JointsProcess, AnglesProcess, VisualizeProcess, ProcessManager, InputThread, SaveThread
-
+PERTURB = True
+perturber = np.abs(np.eye(8) + np.random.normal(0, .25, (8, 8)))
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='Timeseries data analysis')
@@ -41,7 +42,6 @@ if __name__ == '__main__':
     parser.add_argument('-c', '--camera', type=int, required=False, help='Camera id')
     parser.add_argument('-si', '--save_input', action='store_true', help='Save input data')
     parser.add_argument('-cf', '--calibration_frames', type=int, default=20, help='Number of calibration frames')
-    parser.add_argument('--load_epoch', type=int, default=None, help='Load epoch')
     args = parser.parse_args()
 
     save_path = join('data', args.person_dir, 'recordings', args.experiment_name)
@@ -238,7 +238,7 @@ if __name__ == '__main__':
         model = TimeSeriesRegressorWrapper(device=device, input_size=len(config.features),
                                            output_size=len(config.targets),
                                            **config)
-        model.load(join('data', args.person_dir, 'models', f'{config.name}_{args.load_epoch}.pt'))
+        model.load(join('data', args.person_dir, 'models', f'{config.name}.pt'))
         model.to(device)
         model.train()
         if config.model_type == 'ModularModel':  # todo
@@ -285,11 +285,12 @@ if __name__ == '__main__':
 
         angles_history.append(angles_df.loc[config.targets].values)
         emg_history.append(emg_timestep[emg_channels])
-        # states = model.model.get_starting_states(1, torch.tensor(angles_history[0], dtype=torch.float32).unsqueeze(0).unsqueeze(1).to(device))
+        states = model.model.get_starting_states(1, torch.tensor(angles_history[0], dtype=torch.float32).unsqueeze(0).unsqueeze(1).to(device))
 
-        # states_history.append(states.detach())
+        states_history.append(states.detach())
 
-        # states_history.append(states.detach())
+        states_history.append(states.detach())
+        seq_loss = 0
 
         with tqdm(range(config.n_epochs)) as pbar:
             for epoch in pbar:
@@ -301,18 +302,21 @@ if __name__ == '__main__':
                 for i in range(epoch_len):
                     history_samples = np.random.randint(0, len(angles_history), size=config.batch_size-1)
                     history_samples = np.array([history_sample for history_sample in history_samples] + [len(angles_history) - 1])
-                    # states = torch.concat([states_history[history_sample] for history_sample in history_samples], dim=1)
-                    states = model.model.get_starting_states(config.batch_size, torch.tensor(angles_history[-1], dtype=torch.float32).unsqueeze(
-                        0).unsqueeze(1).to(device))
+                    states = torch.concat([states_history[history_sample] for history_sample in history_samples], dim=1)
+                    # states = model.model.get_starting_states(config.batch_size, torch.tensor(angles_history[-1], dtype=torch.float32).unsqueeze(
+                    #     0).unsqueeze(1).to(device))
 
                     # states = states
                     for s in range(config.seq_len):
-                        seq_loss = 0
 
                         angles_df, emg_timestep = anglesProcess.outputQ.get(timeout=2)
                         start_time = time()
                         angles_history.append(angles_df.loc[config.targets].values)
-                        emg_history.append(emg_timestep[emg_channels])
+                        if PERTURB:
+                            perturbed = perturber @ emg_timestep[emg_channels]
+                        else:
+                            perturbed = emg_timestep[emg_channels]
+                        emg_history.append(perturbed)
 
                         y = torch.stack([torch.tensor(angles_history[history_sample], dtype=torch.float32) for history_sample in history_samples], dim=0).unsqueeze(1).to(device)
                         x = torch.stack([torch.tensor(emg_history[history_sample], dtype=torch.float32) for history_sample in history_samples], dim=0).unsqueeze(1).to(device)
@@ -337,11 +341,11 @@ if __name__ == '__main__':
 
                         history_samples = history_samples + 1
 
-                        # history_states = states.detach()
-                        # states_history.append(history_states[:, -1, :].unsqueeze(1))
+                        history_states = states.detach()
+                        states_history.append(history_states[:, -1, :].unsqueeze(1))
 
-                        # for hs in range(len(history_samples)-1):
-                        #     states_history[history_samples[hs]] = history_states[:, hs, :].unsqueeze(1)
+                        for hs in range(len(history_samples)-1):
+                            states_history[history_samples[hs]] = history_states[:, hs, :].unsqueeze(1)
 
 
                     model.optimizer.zero_grad(set_to_none=True)
@@ -397,4 +401,4 @@ if __name__ == '__main__':
                 # log['epoch'] = epoch
                 # wandb.log(log)
                 # model.train()
-                model.save(join('data', args.person_dir, 'models', f'{config.name}_online.pt'))
+                model.save(join('data', args.person_dir, 'models', f'{config.name}_online-{args.experiment_name}-{epoch}.pt'))

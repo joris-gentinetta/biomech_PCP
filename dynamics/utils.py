@@ -9,6 +9,10 @@ class Exponential(torch.nn.Module):
     def forward(self, X):
         return torch.exp(X)
 
+class Sigmoid(torch.nn.Module):
+    def forward(self, X):
+        return torch.sigmoid(X)
+
 if __name__ == '__main__':
     shifted_relu = ShiftedReLU()
     exponential = Exponential()

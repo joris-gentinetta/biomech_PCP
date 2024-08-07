@@ -48,7 +48,6 @@ FRAME_RATE = 60
 frame_id = 0
 system_name = platform.system()
 PRINT = False
-PERTURB = False
 
 
 class InputThread(Thread):
@@ -65,7 +64,6 @@ class InputThread(Thread):
             self.sampler = 1
         else:
             self.sampler = 3
-        self.perturber = np.eye(8) + np.abs(np.random.normal(0, .1, (8, 8)))
         self.width = self.stream.get(cv2.CAP_PROP_FRAME_WIDTH)
         self.height = self.stream.get(cv2.CAP_PROP_FRAME_HEIGHT)
         self.input_fps = self.stream.get(cv2.CAP_PROP_FPS)
@@ -78,8 +76,7 @@ class InputThread(Thread):
             start_time = time()
             (self.grabbed, frame) = self.stream.read()
             emg_timestep = np.asarray(self.emg.normedEMG)
-            if PERTURB:
-                emg_timestep = self.perturber @ emg_timestep
+
             if self.counter % self.sampler != 0:
                 frame = None
             self.write_to_output((frame, emg_timestep))
