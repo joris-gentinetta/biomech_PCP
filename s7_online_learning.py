@@ -41,13 +41,15 @@ if __name__ == '__main__':
     parser.add_argument('-c', '--camera', type=int, required=False, help='Camera id')
     parser.add_argument('-si', '--save_input', action='store_true', help='Save input data')
     parser.add_argument('-cf', '--calibration_frames', type=int, default=20, help='Number of calibration frames')
+    parser.add_argument('-p', '--perturb', action='store_true', help='Perturb the data')
+    parser.add_argument('--keep_states', action='store_true', help='Keep states in history')
     args = parser.parse_args()
 
     save_path = join('data', args.person_dir, 'recordings', args.experiment_name)
-    if os.path.exists(save_path) and args.save_input: # todo
+    if os.path.exists(save_path):
         print('Experiment already exists!')
         exit()
-    os.makedirs(save_path, exist_ok=True)
+    os.makedirs(save_path)
 
     processManager = ProcessManager()
     signal.signal(signal.SIGINT, processManager.signal_handler)
@@ -80,7 +82,12 @@ if __name__ == '__main__':
 
     emg_channels = [int(feature[1]) for feature in config.features]
 
-
+    if args.perturb:
+        perturber = np.abs(np.eye(8) + np.random.normal(0, .25, (len(emg_channels), len(emg_channels))))
+    else:
+        perturber = np.eye(8)
+    np.save(join('data', args.person_dir, 'recordings', args.experiment_name, 'perturber.npy'), perturber)
+    perturber = torch.tensor(perturber, device=device, dtype=torch.float32)
 
     with open(join('data', args.person_dir, 'configs', f'{args.config_name}.yaml'), 'r') as file:
         wandb_config = yaml.safe_load(file)
@@ -282,14 +289,15 @@ if __name__ == '__main__':
 
         angles_history.append(angles_df.loc[config.targets].values)
         emg_history.append(emg_timestep[emg_channels])
-        states = model.model.get_starting_states(1, torch.tensor(angles_history[0], dtype=torch.float32).unsqueeze(0).unsqueeze(1).to(device))
 
-        states_history.append(states.detach())
+        if args.keep_states:
+            states = model.model.get_starting_states(1, torch.tensor(angles_history[0], dtype=torch.float32).unsqueeze(0).unsqueeze(1).to(device))
+            states_history.append(states.detach())
+            states_history.append(states.detach())
 
-        states_history.append(states.detach())
-        seq_loss = 0
+        model.save(join('data', args.person_dir, args.experiment_name, 'models', f'{config.name}-{0}.pt'))
 
-        with tqdm(range(config.n_epochs)) as pbar:
+        with tqdm(range(1, config.n_epochs + 1)) as pbar:
             for epoch in pbar:
                 epoch_loss = 0
 
@@ -299,20 +307,21 @@ if __name__ == '__main__':
                 for i in range(epoch_len):
                     history_samples = np.random.randint(0, len(angles_history), size=config.batch_size-1)
                     history_samples = np.array([history_sample for history_sample in history_samples] + [len(angles_history) - 1])
-                    states = torch.concat([states_history[history_sample] for history_sample in history_samples], dim=1)
-                    # states = model.model.get_starting_states(config.batch_size, torch.tensor(angles_history[-1], dtype=torch.float32).unsqueeze(
-                    #     0).unsqueeze(1).to(device))
+                    if args.keep_states:
+                        states = torch.concat([states_history[history_sample] for history_sample in history_samples], dim=1)
+                    else:
+                        states = model.model.get_starting_states(config.batch_size, torch.tensor(angles_history[-1], dtype=torch.float32).unsqueeze(
+                            0).unsqueeze(1).to(device))
 
-                    # states = states
+                    seq_loss = 0
                     for s in range(config.seq_len):
 
                         angles_df, emg_timestep = anglesProcess.outputQ.get(timeout=2)
                         start_time = time()
                         angles_history.append(angles_df.loc[config.targets].values)
-                        if PERTURB:
-                            perturbed = perturber @ emg_timestep[emg_channels]
-                        else:
-                            perturbed = emg_timestep[emg_channels]
+
+                        perturbed = perturber @ emg_timestep[emg_channels]
+
                         emg_history.append(perturbed)
 
                         y = torch.stack([torch.tensor(angles_history[history_sample], dtype=torch.float32) for history_sample in history_samples], dim=0).unsqueeze(1).to(device)
@@ -338,11 +347,12 @@ if __name__ == '__main__':
 
                         history_samples = history_samples + 1
 
-                        history_states = states.detach()
-                        states_history.append(history_states[:, -1, :].unsqueeze(1))
+                        if args.keep_states:
+                            history_states = states.detach()
+                            states_history.append(history_states[:, -1, :].unsqueeze(1))
 
-                        for hs in range(len(history_samples)-1):
-                            states_history[history_samples[hs]] = history_states[:, hs, :].unsqueeze(1)
+                            for hs in range(len(history_samples)-1):
+                                states_history[history_samples[hs]] = history_states[:, hs, :].unsqueeze(1)
 
 
                     model.optimizer.zero_grad(set_to_none=True)
@@ -376,26 +386,4 @@ if __name__ == '__main__':
                 epoch_end_time = time()
                 print('average epoch fps: ', counter / (epoch_end_time - epoch_start_time))
 
-                # val_loss, val_losses = evaluate_model(model, testsets, device, config)
-                # if val_loss < best_val_loss:
-                #     best_val_loss = val_loss
-                #     wandb.run.summary['best_epoch'] = epoch
-                #     wandb.run.summary['best_val_loss'] = best_val_loss
-                # wandb.run.summary['used_epochs'] = epoch
-                #
-                # lr = model.scheduler.get_last_lr()[0]
-                # # model.scheduler.step(val_loss)  # Update the learning rate after each epoch
-                # epoch_loss = epoch_loss / epoch_len
-                # pbar.set_postfix({'lr': lr, 'train_loss': epoch_loss, 'val_loss': val_loss})
-                #
-                # # print('Total val loss:', val_loss)
-                # test_recording_names = config.test_recordings if config.test_recordings is not None else []
-                # log = {f'val_loss/{(config.recordings + test_recording_names)[set_id]}': loss for set_id, loss in
-                #        enumerate(val_losses)}
-                # log['total_val_loss'] = val_loss
-                # log['train_loss'] = epoch_loss
-                # log['lr'] = lr
-                # log['epoch'] = epoch
-                # wandb.log(log)
-                # model.train()
-                model.save(join('data', args.person_dir, 'models', f'{config.name}_online-{args.experiment_name}-{epoch}.pt'))
+                model.save(join('data', args.person_dir, args.experiment_name, 'models', f'{config.name}-{epoch}.pt'))

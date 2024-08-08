@@ -84,7 +84,9 @@ def run_mediapipe(cap, frames, video_timestamps, sides, scales, hand_roi_size, p
                 y_start = max(0, wrist[1] - roi_half_size)
                 y_end = min(scales[1], wrist[1] + roi_half_size)
                 cropped_frame = frame[y_start:y_end, x_start:x_end]
-                rgb_cropped_frame = cv2.cvtColor(cropped_frame, cv2.COLOR_BGR2RGB) # todo
+                rgb_cropped_frame = cv2.cvtColor(cropped_frame, cv2.COLOR_BGR2RGB)
+                if system_name != 'Darwin':
+                    rgb_cropped_frame = cv2.cvtColor(cropped_frame, cv2.COLOR_RGB2BGR)
                 if frame_id == 1 and not process:
                     plt.imshow(rgb_cropped_frame)
                     plt.gca().set_xticks([0, roi_half_size * 2])
@@ -101,7 +103,7 @@ def run_mediapipe(cap, frames, video_timestamps, sides, scales, hand_roi_size, p
                 y_start = 0
                 y_end = scales[1]
 
-            hands_results = hand_models[side].detect_for_video(mp_image, video_timestamps[frame_id]).hand_landmarks # todo check
+            hands_results = hand_models[side].detect_for_video(mp_image, video_timestamps[frame_id]).hand_landmarks
             if len(hands_results) == 0:
                 continue
             elif len(hands_results) == 1:

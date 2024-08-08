@@ -33,7 +33,7 @@ def rescale_data(angles_df, intact_hand):
     else:
         return angles_df
 
-def load_data(data_dir, intact_hand, features, perturb=False):
+def load_data(data_dir, intact_hand, features, perturber=None):
     angles = pd.read_parquet(join(data_dir, 'cropped_smooth_angles.parquet'))
     angles.index = range(len(angles))
     try:
@@ -46,10 +46,9 @@ def load_data(data_dir, intact_hand, features, perturb=False):
 
     int_features = [int(feature[1]) for feature in features]
     emg = emg[:, int_features]
-    if perturb:
-        perturber = np.abs(np.eye(len(int_features)) + np.random.normal(0, .25, (len(int_features), len(int_features))))
-
-
+    if perturber is not None:
+        emg = perturber @ emg
+        raise Exception('predict utils, line 51: perturber not implemented')
 
     for feature in features:
         data[feature] = emg[:, int_features.index(int(feature[1]))]
@@ -57,13 +56,14 @@ def load_data(data_dir, intact_hand, features, perturb=False):
     return data
 
 
-def get_data(config, data_dirs, intact_hand, visualize=False, test_dirs=None, perturb=False):
+def get_data(config, data_dirs, intact_hand, visualize=False, test_dirs=None, perturb_file=None):
 
     trainsets = []
     testsets = []
     combined_sets = []
+    perturber = np.load(perturb_file) if perturb_file is not None else None
     for recording_id, data_dir in enumerate(data_dirs):
-        data = load_data(data_dir, intact_hand, config.features, perturb)
+        data = load_data(data_dir, intact_hand, config.features, perturber)
 
         if visualize:
             axs = data[config.features].plot(subplots=True)

@@ -70,17 +70,16 @@ if __name__ == '__main__':
     test_dirs = [join('data', args.person_dir, 'recordings', recording, 'experiments', '1') for recording in
                  config.test_recordings] if config.test_recordings is not None else []
 
-    trainsets, testsets, combined_sets = get_data(config, data_dirs, args.intact_hand, visualize=args.visualize, test_dirs=test_dirs, perturb=args.perturb)
+    perturb_file = join('data', args.person_dir, 'recordings', args.experiment_name, 'perturber.npy') if args.perturb else None
+
+    trainsets, testsets, combined_sets = get_data(config, data_dirs, args.intact_hand, visualize=args.visualize, test_dirs=test_dirs, perturb_file=perturb_file)
 
     if args.hyperparameter_search:  # training on training set, evaluation on test set
         sweep_id = wandb.sweep(wandb_config, project=config.wandb_project)
         # wandb.agent(sweep_id, lambda: train_model(trainsets, testsets, device, config.wandb_mode, config.wandb_project, config.name))
+        pool = multiprocessing.Pool(processes=4)
+        pool.map(wandb_process, [{'id': i, 'config': config, 'sweep_id': sweep_id, 'trainsets': trainsets, 'testsets': testsets, 'device': device} for i in range(4)])
 
-        # pool = multiprocessing.Pool(processes=4)
-        # pool.map(wandb_process, [{'id': i, 'config': config, 'sweep_id': sweep_id, 'trainsets': trainsets, 'testsets': testsets, 'device': device} for i in range(4)])
-        wandb.agent(sweep_id,
-                    lambda: train_model(trainsets, testsets, device,
-                                        config.wandb_mode, config.wandb_project, config.name))
 
 
     if args.test:  # trains on the training set and saves the test set predictions
@@ -117,7 +116,7 @@ if __name__ == '__main__':
         best_val_loss = math.inf
         while True:
             try:
-                model.load(join('data', args.person_dir, 'models', f'{config.name}_online-{args.experiment_name}-{epoch}.pt'))
+                model.load(join('data', args.person_dir, 'models', f'{config.name}-{epoch}.pt'))
             except:
                 break
             model.to(device)
