@@ -47,8 +47,7 @@ def load_data(data_dir, intact_hand, features, perturber=None):
     int_features = [int(feature[1]) for feature in features]
     emg = emg[:, int_features]
     if perturber is not None:
-        emg = perturber @ emg
-        raise Exception('predict utils, line 51: perturber not implemented')
+        emg = (perturber @ emg.T).T
 
     for feature in features:
         data[feature] = emg[:, int_features.index(int(feature[1]))]
@@ -260,8 +259,8 @@ class OLDataset(Dataset):
         return len(self.data) - 1
 
     def __getitem__(self, idx):
-        x = torch.tensor(self.data.loc[idx, self.features].values, dtype=torch.float32, device=self.device).unsqueeze(0)
-        y = torch.tensor(self.data.loc[idx, self.targets].values, dtype=torch.float32, device=self.device).unsqueeze(0)
+        x = torch.tensor(self.data.loc[idx, self.features].values, dtype=torch.float32, device=self.device)
+        y = torch.tensor(self.data.loc[idx, self.targets].values, dtype=torch.float32, device=self.device)
 
         return x, y, self.data.loc[idx, :].values
 

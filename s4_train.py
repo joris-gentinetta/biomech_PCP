@@ -116,7 +116,7 @@ if __name__ == '__main__':
         best_val_loss = math.inf
         while True:
             try:
-                model.load(join('data', args.person_dir, 'models', f'{config.name}-{epoch}.pt'))
+                model.load(join('data', args.person_dir, 'online_trials', args.experiment_name, 'models', f'{config.name}-online_{epoch}.pt'))
             except:
                 break
             model.to(device)

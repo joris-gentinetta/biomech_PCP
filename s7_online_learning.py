@@ -1,3 +1,5 @@
+import itertools
+
 import pandas as pd
 
 pd.options.mode.copy_on_write = True
@@ -45,11 +47,15 @@ if __name__ == '__main__':
     parser.add_argument('--keep_states', action='store_true', help='Keep states in history')
     args = parser.parse_args()
 
-    save_path = join('data', args.person_dir, 'recordings', args.experiment_name)
+    if args.save_input:
+        save_path = join('data', args.person_dir, 'recordings', args.experiment_name)
+    else:
+        save_path = join('data', args.person_dir, 'online_trials', args.experiment_name, 'models')
+
     if os.path.exists(save_path):
-        print('Experiment already exists!')
-        exit()
-    os.makedirs(save_path)
+        raise Exception('Experiment already exists!')
+    else:
+        os.makedirs(save_path)
 
     processManager = ProcessManager()
     signal.signal(signal.SIGINT, processManager.signal_handler)
@@ -86,7 +92,8 @@ if __name__ == '__main__':
         perturber = np.abs(np.eye(8) + np.random.normal(0, .25, (len(emg_channels), len(emg_channels))))
     else:
         perturber = np.eye(8)
-    np.save(join('data', args.person_dir, 'recordings', args.experiment_name, 'perturber.npy'), perturber)
+    perturb_file = join('data', args.person_dir, 'online_trials', args.experiment_name, 'perturber.npy')
+    np.save(perturb_file, perturber)
     perturber = torch.tensor(perturber, device=device, dtype=torch.float32)
 
     with open(join('data', args.person_dir, 'configs', f'{args.config_name}.yaml'), 'r') as file:
@@ -117,116 +124,170 @@ if __name__ == '__main__':
                      config.test_recordings] if config.test_recordings is not None else None
 
         trainsets, testsets, combined_sets = get_data(config, data_dirs, args.intact_hand, visualize=False,
-                                                      test_dirs=test_dirs)
+                                                      test_dirs=test_dirs, perturb_file=perturb_file)
 
+        wandb.init(mode=config.wandb_mode, project=config.wandb_project, name=config.name, config=config)
+        config = wandb.config
+
+        model = TimeSeriesRegressorWrapper(device=device, input_size=len(config.features),
+                                           output_size=len(config.targets),
+                                           **config)
+        model.load(join('data', args.person_dir, 'models', f'{config.name}.pt'))
+        model.to(device)
+        model.train()
+
+        if config.model_type == 'ModularModel':  # todo
+            epoch = 0
+            # for param in model.model.activation_model.parameters():
+            #     param.requires_grad = False if epoch < config.activation_model['n_freeze_epochs'] else True
+            for param in model.model.muscle_model.parameters():
+                param.requires_grad = False if epoch < config.muscle_model['n_freeze_epochs'] else True
+            for param in model.model.joint_model.parameters():
+                param.requires_grad = False if epoch < config.joint_model['n_freeze_epochs'] else True
 
         if args.visualize:
             visualizeQueue = MPQueue(queue_size)
             visualizeProcess = VisualizeProcess(args.intact_hand, visualizeQueue)
             processManager.manage_process(visualizeProcess)
 
+        frame_id = 0
 
-        with wandb.init(mode=config.wandb_mode, project=config.wandb_project, name=config.name, config=config):
-            config = wandb.config
+        angles_df = trainsets[0].loc[0, :].copy()
+        train_dataset = OLDataset(trainsets, config.features, config.targets, device=device)
+        train_dataloader = DataLoader(train_dataset, batch_size=1, shuffle=False, drop_last=False)
+        # train_dataloader = itertools.cycle(train_dataloader)
+        train_dataloader = iter(train_dataloader)
+        # early_stopper = EarlyStopper(patience=config.early_stopping_patience, min_delta=config.early_stopping_delta)
 
-            model = TimeSeriesRegressorWrapper(device=device, input_size=len(config.features),
-                                               output_size=len(config.targets),
-                                               **config)
-            model.load(join('data', args.person_dir, 'models', f'{config.name}.pt'))
-            model.to(device)
-            model.train()
-            # if config.model_type == 'ActivationAndBiophys':  # todo
-            #     for param in model.model.biophys_model.parameters():
-            #         param.requires_grad = False if epoch < config.biophys_config['n_freeze_epochs'] else True
-            angles_df = trainsets[0].loc[0, :].copy()
-            train_dataset = OLDataset(trainsets, config.features, config.targets, device=device)
-            train_dataloader = DataLoader(train_dataset, batch_size=1, shuffle=False, drop_last=False)
-            best_val_loss = float('inf')
-            early_stopper = EarlyStopper(patience=config.early_stopping_patience, min_delta=config.early_stopping_delta)
-            print('Training model...')
-            with tqdm(range(1, config.n_epochs + 1)) as pbar:
-                epoch = 0
+        best_val_loss = float('inf')
+
+        angles_history = []
+        emg_history = []
+        states_history = []
+
+        x, y, all_y = next(train_dataloader)
+        angles_df.loc[:] = all_y.squeeze(0).numpy()
+
+        angles_history.append(y.squeeze(0).numpy())
+        emg_history.append(x.squeeze(0).numpy())
+
+        if args.keep_states:
+            states = model.model.get_starting_states(1, torch.tensor(angles_history[0], dtype=torch.float32).unsqueeze(0).unsqueeze(1).to(device))
+            states_history.append(states.detach())
+            states_history.append(states.detach())
+
+        print('Training model...')
+        with tqdm(range(1, config.n_epochs + 1)) as pbar:
+            epoch = 0
+            val_loss, val_losses = evaluate_model(model, testsets, device, config)
+            if val_loss < best_val_loss:
+                best_val_loss = val_loss
+                wandb.run.summary['best_epoch'] = epoch
+                wandb.run.summary['best_val_loss'] = best_val_loss
+            wandb.run.summary['used_epochs'] = epoch
+            test_recording_names = config.test_recordings if config.test_recordings is not None else []
+            log = {f'val_loss/{(config.recordings + test_recording_names)[set_id]}': loss for set_id, loss in
+                   enumerate(val_losses)}
+            log['total_val_loss'] = val_loss
+            wandb.log(log, step=epoch)
+
+            for epoch in pbar:
+                epoch_loss = 0
+
+                pbar.set_description(f'Epoch {epoch}')
+                epoch_start_time = time()
+                counter = 0
+                for i in range(epoch_len):
+                    history_samples = np.random.randint(0, len(angles_history), size=config.batch_size-1)
+                    history_samples = np.array([history_sample for history_sample in history_samples] + [len(angles_history) - 1])
+                    if args.keep_states:
+                        states = torch.concat([states_history[history_sample] for history_sample in history_samples], dim=1)
+                    else:
+                        states = model.model.get_starting_states(config.batch_size, torch.tensor(angles_history[-1], dtype=torch.float32).unsqueeze(
+                            0).unsqueeze(1).to(device))
+
+                    seq_loss = 0
+                    #for x, y, all_y in train_dataloader:
+                    for s in range(config.seq_len):
+                        x, y, all_y = next(train_dataloader)
+
+
+                        start_time = time()
+                        angles_history.append(y.squeeze(0).numpy())
+
+                        # perturbed = perturber @ x.squeeze(0).numpy() # already done in load_data
+                        perturbed = x.squeeze(0).numpy()
+
+                        emg_history.append(perturbed)
+
+                        y = torch.stack([torch.tensor(angles_history[history_sample], dtype=torch.float32) for history_sample in history_samples], dim=0).unsqueeze(1).to(device)
+                        x = torch.stack([torch.tensor(emg_history[history_sample], dtype=torch.float32) for history_sample in history_samples], dim=0).unsqueeze(1).to(device)
+
+
+                        outputs, states = model.model(x, states)
+                        # print('y: ', y)
+                        # print('outputs: ', outputs)
+                        loss = model.criterion(outputs, y)
+                        seq_loss = seq_loss + loss
+
+
+                        if args.visualize and not visualizeQueue.full():
+                            pred_angels_df = angles_df.copy()
+                            pred_angels_df.loc[config.targets] = outputs[-1].squeeze().to('cpu').detach().numpy()
+                            visualizeQueue.put((angles_df, pred_angels_df))
+                            counter += 1
+                        elif args.visualize:
+                            print('VisualizeProcess input queue full')
+                            print('VisualizeProcess fps: ', visualizeProcess.fps.value)
+                            pass
+
+                        history_samples = history_samples + 1
+
+                        if args.keep_states:
+                            history_states = states.detach()
+                            states_history.append(history_states[:, -1, :].unsqueeze(1))
+
+                            for hs in range(len(history_samples)-1):
+                                states_history[history_samples[hs]] = history_states[:, hs, :].unsqueeze(1)
+
+
+                    model.optimizer.zero_grad(set_to_none=True)
+                    seq_loss = seq_loss / config.seq_len
+                    seq_loss.backward()
+                    torch.nn.utils.clip_grad_norm_(model.model.parameters(), 4)
+                    model.optimizer.step()
+                    states = states.detach()
+                    wandb.log({'seq_loss': seq_loss.item()})
+                    epoch_loss = epoch_loss + seq_loss.item()
+                    trunctuator = 0
+                    seq_loss = 0
+
+                    if torch.any(torch.isnan(loss)):
+                        print('NAN Loss!')
+
                 val_loss, val_losses = evaluate_model(model, testsets, device, config)
                 if val_loss < best_val_loss:
                     best_val_loss = val_loss
                     wandb.run.summary['best_epoch'] = epoch
                     wandb.run.summary['best_val_loss'] = best_val_loss
                 wandb.run.summary['used_epochs'] = epoch
+
+                lr = model.scheduler.get_last_lr()[0]
+                # model.scheduler.step(val_loss)  # Update the learning rate after each epoch
+                epoch_loss = epoch_loss / epoch_len
+
+                pbar.set_postfix({'lr': lr, 'train_loss': epoch_loss, 'val_loss': val_loss})
+
                 test_recording_names = config.test_recordings if config.test_recordings is not None else []
                 log = {f'val_loss/{(config.recordings + test_recording_names)[set_id]}': loss for set_id, loss in
                        enumerate(val_losses)}
                 log['total_val_loss'] = val_loss
-                wandb.log(log, step=epoch)
+                log['train_loss'] = epoch_loss
+                log['lr'] = lr
+                wandb.log(log)
 
-                for epoch in pbar:
-                    pbar.set_description(f'Epoch {epoch}')
-                    epoch_loss = 0
-                    trunctuator = 0
-                    states = model.model.get_starting_states(1, None)  # train_dataset[0][1].unsqueeze(0)
-                    seq_loss = 0
-                    time_1 = time()
-                    model.train()
-
-                    for x, y, all_y in train_dataloader:
-                        # print(1 / (time() - time_1))
-                        time_1 = time()
-
-
-                        outputs, states = model.model(x, states)
-                        angles_df.loc[:] = all_y.squeeze(0).numpy()
-                        pred_angels_df = angles_df.copy()
-                        pred_angels_df.loc[config.targets] = outputs.squeeze().to('cpu').detach().numpy()
-
-                        if args.visualize and not visualizeQueue.full():
-                            visualizeQueue.put((angles_df, pred_angels_df))
-                        elif args.visualize:
-                            print('VisualizeProcess input queue full')
-                            print('VisualizeProcess fps: ', visualizeProcess.fps.value)
-                            pass
-
-
-                        loss = model.criterion(outputs, y)
-                        seq_loss = seq_loss + loss
-
-                        epoch_loss += loss.item()
-
-                        trunctuator += 1
-                        if trunctuator == config.seq_len:
-                            model.optimizer.zero_grad(set_to_none=True)
-                            seq_loss = seq_loss / config.seq_len
-                            seq_loss.backward()
-                            torch.nn.utils.clip_grad_norm_(model.model.parameters(), 4)
-                            model.optimizer.step()
-                            states = states.detach()
-                            trunctuator = 0
-                            seq_loss = 0
-
-                        if torch.any(torch.isnan(loss)):
-                            print('NAN Loss!')
-
-                    val_loss, val_losses = evaluate_model(model, testsets, device, config)
-                    if val_loss < best_val_loss:
-                        best_val_loss = val_loss
-                        wandb.run.summary['best_epoch'] = epoch
-                        wandb.run.summary['best_val_loss'] = best_val_loss
-                    wandb.run.summary['used_epochs'] = epoch
-
-                    lr = model.scheduler.get_last_lr()[0]
-                    model.scheduler.step(val_loss)  # Update the learning rate after each epoch
-                    epoch_loss = epoch_loss / len(train_dataset)
-
-                    pbar.set_postfix({'lr': lr, 'train_loss': epoch_loss, 'val_loss': val_loss})
-
-                    test_recording_names = config.test_recordings if config.test_recordings is not None else []
-                    log = {f'val_loss/{(config.recordings + test_recording_names)[set_id]}': loss for set_id, loss in
-                           enumerate(val_losses)}
-                    log['total_val_loss'] = val_loss
-                    log['train_loss'] = epoch_loss
-                    log['lr'] = lr
-                    wandb.log(log, step=epoch)
-
-                    if early_stopper.early_stop(val_loss):
-                        break
+                # if early_stopper.early_stop(val_loss):
+                #     break
 
     else:
         data_dirs = [join('data', args.person_dir, 'recordings', recording, 'experiments', '1') for recording in
@@ -386,4 +447,4 @@ if __name__ == '__main__':
                 epoch_end_time = time()
                 print('average epoch fps: ', counter / (epoch_end_time - epoch_start_time))
 
-                model.save(join('data', args.person_dir, args.experiment_name, 'models', f'{config.name}-{epoch}.pt'))
+                model.save(join(save_path, f'{config.name}-online_{epoch}.pt'))
