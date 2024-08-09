@@ -1,4 +1,4 @@
-name: online_offline_trial-pert
+name: online_offline_trial
 method: grid
 
 metric:
@@ -77,7 +77,7 @@ parameters:
     value: online
 
   wandb_project:
-    value: fixed_modular
+    value: OF-pert
 
   model_type:
     value: GRU

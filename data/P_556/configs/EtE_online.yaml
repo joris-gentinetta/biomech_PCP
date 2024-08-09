@@ -68,13 +68,13 @@ parameters:
     value: 10
 
   batch_size:
-    value: 8
+    value: 16
 
   wandb_mode:
     value: online
 
   wandb_project:
-    value: fixed_modular
+    value: OF
 
   model_type:
     value: GRU
