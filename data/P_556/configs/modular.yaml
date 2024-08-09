@@ -1,4 +1,4 @@
-name: GRU-modular-P_556
+name: modular_baseline
 method: grid
 
 metric:
@@ -47,19 +47,13 @@ parameters:
     value: 0.0
 
   learning_rate:
-    values:
-      - 0.001
+    value: 0.001
 
   n_epochs:
     value: 60
 
   seq_len:
-    values:
-      - 8
-      - 16
-      - 32
-      - 64
-
+    value: 128
 
   targets:
     value:
@@ -88,31 +82,13 @@ parameters:
     value: ModularModel
 
   activation_model:
-    parameters:
-      model_type:
-        values:
-          - DenseNet
+    value: {
+      model_type: DenseNet,
+      hidden_size:  64,
+      n_layers:  3,
+      n_freeze_epochs: 0,
+    }
 
-      hidden_size:
-        values:
-          - 64
-
-      n_layers:
-        values:
-          - 3
-
-      dummy:
-        values:
-          - 0
-
-
-      n_freeze_epochs:
-        value: 0
-#    value: {model_type: LSTM,
-#            hidden_size: 256,
-#            n_layers: 2,
-#            n_freeze_epochs: 0,
-#            }
 
   muscle_model:
     value: {

@@ -58,6 +58,7 @@ def load_data(data_dir, intact_hand, features, perturber=None):
 def get_data(config, data_dirs, intact_hand, visualize=False, test_dirs=None, perturb_file=None):
 
     trainsets = []
+    valsets = []
     testsets = []
     combined_sets = []
     perturber = np.load(perturb_file) if perturb_file is not None else None
@@ -81,7 +82,7 @@ def get_data(config, data_dirs, intact_hand, visualize=False, test_dirs=None, pe
         test_set = data.loc[len(data) // 5 * 4:].copy()
         train_set = data.loc[: len(data) // 5 * 4].copy()
         trainsets.append(train_set)
-        testsets.append(test_set)
+        valsets.append(test_set)
         combined_sets.append(data.copy())
         # else:
         #     train_set = data.copy()
@@ -92,13 +93,13 @@ def get_data(config, data_dirs, intact_hand, visualize=False, test_dirs=None, pe
         for test_dir in test_dirs:
             data = load_data(test_dir, intact_hand, config.features)
             testsets.append(data)
-            combined_sets.append(data)
+            # combined_sets.append(data)
 
 
-    return trainsets, testsets, combined_sets
+    return trainsets, valsets, combined_sets, testsets
 
 
-def train_model(trainsets, testsets, device, wandb_mode, wandb_project, wandb_name, config=None, person_dir='test'):
+def train_model(trainsets, valsets, testsets, device, wandb_mode, wandb_project, wandb_name, config=None, person_dir='test'):
     with wandb.init(mode=wandb_mode, project=wandb_project, name=wandb_name, config=config):
         config = wandb.config
 
@@ -115,7 +116,7 @@ def train_model(trainsets, testsets, device, wandb_mode, wandb_project, wandb_na
             for epoch in pbar:
                 pbar.set_description(f'Epoch {epoch}')
 
-                if config.model_type == 'ModularModel': # todo
+                if config.model_type == 'ModularModel':  # todo
                     for param in model.model.activation_model.parameters():
                         param.requires_grad = False if epoch < config.activation_model['n_freeze_epochs'] else True
                     for param in model.model.muscle_model.parameters():
@@ -125,29 +126,29 @@ def train_model(trainsets, testsets, device, wandb_mode, wandb_project, wandb_na
 
                 train_loss = model.train_one_epoch(dataloader)
 
-                val_loss, val_losses = evaluate_model(model, testsets, device, config)
+                val_loss, test_loss, val_losses = evaluate_model(model, valsets, testsets, device, config)
                 if val_loss < best_val_loss:
                     best_val_loss = val_loss
                     wandb.run.summary['best_epoch'] = epoch
                     wandb.run.summary['best_val_loss'] = best_val_loss
+                if test_loss < wandb.run.summary.get('best_test_loss', float('inf')):
+                    wandb.run.summary['best_test_loss'] = test_loss
+                    wandb.run.summary['best_test_epoch'] = epoch
                 wandb.run.summary['used_epochs'] = epoch
 
                 lr = model.scheduler.get_last_lr()[0]
                 if epoch > 15: # todo
                     model.scheduler.step(val_loss)  # Update the learning rate after each epoch #todo train or val loss
-                pbar.set_postfix({'lr': lr, 'train_loss': train_loss, 'val_loss': val_loss})
+                pbar.set_postfix({'lr': lr, 'train_loss': train_loss, 'val_loss': val_loss, 'test_loss': test_loss})
 
                 # print('Total val loss:', val_loss)
                 test_recording_names = config.test_recordings if config.test_recordings is not None else []
                 log = {f'val_loss/{(config.recordings + test_recording_names)[set_id]}': loss for set_id, loss in enumerate(val_losses)}
                 log['total_val_loss'] = val_loss
+                log['total_test_loss'] = test_loss
                 log['train_loss'] = train_loss
                 log['lr'] = lr
                 wandb.log(log, step=epoch)
-
-                # model.to('cpu')
-                # model.save(join('data', person_dir, 'models', f'{wandb_name}_{epoch}.pt'))
-                model.to(device)
 
                 if early_stopper.early_stop(val_loss):
                     break
@@ -155,18 +156,30 @@ def train_model(trainsets, testsets, device, wandb_mode, wandb_project, wandb_na
         return model
 
 
-def evaluate_model(model, testsets, device, config):
-    losses = []
-    for set_id, test_set in enumerate(testsets):
-        val_pred = model.predict(test_set, config.features, config.targets).squeeze(0)
-        loss = model.criterion(val_pred[config.warmup_steps:],
-                                    torch.tensor(test_set[config.targets].values, dtype=torch.float32)[
-                                    config.warmup_steps:].to(device))
+def evaluate_model(model, valsets, testsets, device, config):
+    warmup_steps = config.warmup_steps # todo
+    # warmup_steps = config.seq_len - 1
+    val_losses = []
+    for set_id, val_set in enumerate(valsets):
+        val_pred = model.predict(val_set, config.features, config.targets).squeeze(0)
+        loss = model.criterion(val_pred[warmup_steps:],
+                                    torch.tensor(val_set[config.targets].values, dtype=torch.float32)[
+                                    warmup_steps:].to(device))
         loss = float(loss.to('cpu').detach())
-        losses.append(loss)
-    total_loss = sum(losses) / len(losses)
+        val_losses.append(loss)
+    total_val_loss = sum(val_losses) / len(val_losses)
 
-    return total_loss, losses
+    test_losses = []
+    for set_id, test_set in enumerate(testsets):
+        test_pred = model.predict(test_set, config.features, config.targets).squeeze(0)
+        loss = model.criterion(test_pred[warmup_steps:],
+                                    torch.tensor(test_set[config.targets].values, dtype=torch.float32)[
+                                    warmup_steps:].to(device))
+        loss = float(loss.to('cpu').detach())
+        test_losses.append(loss)
+    total_test_loss = sum(test_losses) / len(test_losses)
+
+    return total_val_loss, total_test_loss, val_losses + test_losses
 
 
 class EarlyStopper:

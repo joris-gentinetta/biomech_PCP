@@ -530,7 +530,8 @@ class TimeSeriesRegressorWrapper:
 
 
         self.n_epochs = n_epochs
-        self.warmup_steps = warmup_steps
+        self.warmup_steps = warmup_steps # todo
+        # self.warmup_steps = kwargs.get('seq_len') - 1
 
     def save(self, path):
         torch.save(self.model.state_dict(), path)

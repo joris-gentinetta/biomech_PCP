@@ -15,7 +15,7 @@ from helpers.models import TimeSeriesRegressorWrapper
 def wandb_process(arguments):
     config = arguments['config']
     wandb.agent(arguments['sweep_id'],
-                lambda: train_model(arguments['trainsets'], arguments['testsets'], arguments['device'], config.wandb_mode, config.wandb_project, config.name))
+                lambda: train_model(arguments['trainsets'], arguments['valsets'], arguments['testsets'], arguments['device'], config.wandb_mode, config.wandb_project, config.name))
     # print(arguments['id'])
 
 
@@ -72,22 +72,22 @@ if __name__ == '__main__':
 
     perturb_file = join('data', args.person_dir, 'recordings', args.experiment_name, 'perturber.npy') if args.perturb else None
 
-    trainsets, testsets, combined_sets = get_data(config, data_dirs, args.intact_hand, visualize=args.visualize, test_dirs=test_dirs, perturb_file=perturb_file)
+    trainsets, valsets, combined_sets, testsets = get_data(config, data_dirs, args.intact_hand, visualize=args.visualize, test_dirs=test_dirs, perturb_file=perturb_file)
 
     if args.hyperparameter_search:  # training on training set, evaluation on test set
         sweep_id = wandb.sweep(wandb_config, project=config.wandb_project)
-        # wandb.agent(sweep_id, lambda: train_model(trainsets, testsets, device, config.wandb_mode, config.wandb_project, config.name))
+        # wandb.agent(sweep_id, lambda: train_model(trainsets, valsets, testsets, device, config.wandb_mode, config.wandb_project, config.name))
         pool = multiprocessing.Pool(processes=4)
-        pool.map(wandb_process, [{'id': i, 'config': config, 'sweep_id': sweep_id, 'trainsets': trainsets, 'testsets': testsets, 'device': device} for i in range(4)])
+        pool.map(wandb_process, [{'id': i, 'config': config, 'sweep_id': sweep_id, 'trainsets': trainsets, 'valsets': valsets, 'testsets': testsets, 'device': device} for i in range(4)])
 
 
 
     if args.test:  # trains on the training set and saves the test set predictions
         os.makedirs(join('data', args.person_dir, 'models'), exist_ok=True)
 
-        model = train_model(trainsets, testsets, device, config.wandb_mode, config.wandb_project, config.name, config, args.person_dir)
+        model = train_model(trainsets, valsets, testsets, device, config.wandb_mode, config.wandb_project, config.name, config, args.person_dir)
 
-        for set_id, test_set in enumerate(testsets):
+        for set_id, test_set in enumerate(valsets + testsets):
             val_pred = model.predict(test_set, config.features, config.targets).squeeze(0).to('cpu').detach().numpy()
             test_set[config.targets] = val_pred
 
@@ -97,7 +97,7 @@ if __name__ == '__main__':
 
 
         if args.save_model:  # trains on the whole dataset and saves the model
-            # model = train_model(combined_sets, testsets, device, config.wandb_mode, config.wandb_project, config.name, config)
+            # model = train_model(combined_sets, valsets, testsets, device, config.wandb_mode, config.wandb_project, config.name, config)
 
             model.to(torch.device('cpu'))
             os.makedirs(join('data', args.person_dir, 'models'), exist_ok=True)
@@ -120,17 +120,21 @@ if __name__ == '__main__':
             except:
                 break
             model.to(device)
-            val_loss, val_losses = evaluate_model(model, testsets, device, config)
+            val_loss, test_loss, all_losses = evaluate_model(model, valsets, testsets, device, config)
             if val_loss < best_val_loss:
                 best_val_loss = val_loss
                 wandb.run.summary['best_epoch'] = epoch
                 wandb.run.summary['best_val_loss'] = best_val_loss
+            if test_loss < wandb.run.summary.get('best_test_loss', math.inf):
+                wandb.run.summary['best_test_loss'] = test_loss
+                wandb.run.summary['best_test_epoch'] = epoch
             wandb.run.summary['used_epochs'] = epoch
 
             test_recording_names = config.test_recordings if config.test_recordings is not None else []
             log = {f'val_loss/{(config.recordings + test_recording_names)[set_id]}': loss for set_id, loss in
-                   enumerate(val_losses)}
+                   enumerate(all_losses)}
             log['total_val_loss'] = val_loss
+            log['total_test_loss'] = test_loss
             log['epoch'] = epoch
             wandb.log(log)
             print(val_loss)
