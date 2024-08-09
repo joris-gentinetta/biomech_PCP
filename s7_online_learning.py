@@ -173,8 +173,12 @@ if __name__ == '__main__':
 
         if args.keep_states:
             states = model.model.get_starting_states(1, torch.tensor(angles_history[0], dtype=torch.float32).unsqueeze(0).unsqueeze(1).to(device))
-            states_history.append(states.detach())
-            states_history.append(states.detach())
+            if config.model_type == 'ModularModel':
+                states_history.append([states[2][st].detach() for st in range(3)])
+                states_history.append([states[2][st].detach() for st in range(3)])
+            else:
+                states_history.append(states.detach())
+                states_history.append(states.detach())
 
         print('Training model...')
         with tqdm(range(1, config.n_epochs + 1)) as pbar:
@@ -201,7 +205,13 @@ if __name__ == '__main__':
                     history_samples = np.random.randint(0, len(angles_history), size=config.batch_size-1)
                     history_samples = np.array([history_sample for history_sample in history_samples] + [len(angles_history) - 1])
                     if args.keep_states:
-                        states = torch.concat([states_history[history_sample] for history_sample in history_samples], dim=1)
+                        if config.model_type == 'ModularModel':
+                            states = [None, None, [torch.concat([states_history[history_sample][0] for history_sample in history_samples], dim=0)],
+                                      [torch.concat([states_history[history_sample][1] for history_sample in history_samples], dim=0)],
+                                        [torch.concat([states_history[history_sample][2] for history_sample in history_samples], dim=0)]]
+
+                        else:
+                            states = torch.concat([states_history[history_sample] for history_sample in history_samples], dim=1)
                     else:
                         states = model.model.get_starting_states(config.batch_size, torch.tensor(angles_history[-1], dtype=torch.float32).unsqueeze(
                             0).unsqueeze(1).to(device))
@@ -244,11 +254,18 @@ if __name__ == '__main__':
                         history_samples = history_samples + 1
 
                         if args.keep_states:
-                            history_states = states.detach()
-                            states_history.append(history_states[:, -1, :].unsqueeze(1))
+                            if config.model_type == 'ModularModel':
+                                history_states = [states[2][st].detach() for st in range(3)]
+                                states_history.append([history_states[0][-1, :, :], history_states[1][-1, :, :], history_states[2][-1, :, :]])
+                                for hs in range(len(history_samples)-1):
+                                    states_history[history_samples[hs]] = [history_states[0][hs, :, :], history_states[1][hs, :, :], history_states[2][hs, :, :]]
 
-                            for hs in range(len(history_samples)-1):
-                                states_history[history_samples[hs]] = history_states[:, hs, :].unsqueeze(1)
+                            else:
+                                history_states = states.detach()
+                                states_history.append(history_states[:, -1, :].unsqueeze(1))
+
+                                for hs in range(len(history_samples)-1):
+                                    states_history[history_samples[hs]] = history_states[:, hs, :].unsqueeze(1)
 
 
                     model.optimizer.zero_grad(set_to_none=True)

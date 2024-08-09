@@ -54,7 +54,12 @@ parameters:
     value: 60
 
   seq_len:
-    value: 128
+    values:
+      - 8
+      - 16
+      - 32
+      - 64
+
 
   targets:
     value:
@@ -87,29 +92,19 @@ parameters:
       model_type:
         values:
           - DenseNet
-          - GRU
-          - LSTM
-          - RNN
 
       hidden_size:
         values:
-          - 32
           - 64
-          - 128
 
       n_layers:
         values:
-          - 1
-          - 2
           - 3
-          - 4
+
       dummy:
         values:
           - 0
-          - 1
-          - 2
-          - 3
-          - 4
+
 
       n_freeze_epochs:
         value: 0
