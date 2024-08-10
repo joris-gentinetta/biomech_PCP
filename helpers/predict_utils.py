@@ -91,8 +91,10 @@ def get_data(config, data_dirs, intact_hand, visualize=False, test_dirs=None, pe
 
     if test_dirs is not None:
         for test_dir in test_dirs:
-            data = load_data(test_dir, intact_hand, config.features)
-            testsets.append(data)
+            data = load_data(test_dir, intact_hand, config.features, perturber)
+            test_set = data.loc[len(data) // 5 * 4:].copy()
+            train_set = data.loc[: len(data) // 5 * 4].copy()
+            testsets.append(test_set)
             # combined_sets.append(data)
 
 

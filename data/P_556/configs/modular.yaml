@@ -76,7 +76,7 @@ parameters:
     value: online
 
   wandb_project:
-    value: P_556-acivation_testing
+    value: P_556-modular_online
 
   model_type:
     value: ModularModel

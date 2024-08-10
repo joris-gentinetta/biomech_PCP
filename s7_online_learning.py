@@ -52,10 +52,9 @@ if __name__ == '__main__':
     else:
         save_path = join('data', args.person_dir, 'online_trials', args.experiment_name, 'models')
 
-    if os.path.exists(save_path):
+    if os.path.exists(save_path) and not args.offline:
         raise Exception('Experiment already exists!')
-    else:
-        os.makedirs(save_path)
+    os.makedirs(save_path, exist_ok=True)
 
     processManager = ProcessManager()
     signal.signal(signal.SIGINT, processManager.signal_handler)
@@ -123,7 +122,7 @@ if __name__ == '__main__':
         test_dirs = [join('data', args.person_dir, 'recordings', recording, 'experiments', '1') for recording in
                      config.test_recordings] if config.test_recordings is not None else None
 
-        trainsets, testsets, combined_sets = get_data(config, data_dirs, args.intact_hand, visualize=False,
+        trainsets, valsets, combined_sets, testsets = get_data(config, data_dirs, args.intact_hand, visualize=False,
                                                       test_dirs=test_dirs, perturb_file=perturb_file)
 
         wandb.init(mode=config.wandb_mode, project=config.wandb_project, name=config.name, config=config)
@@ -165,34 +164,54 @@ if __name__ == '__main__':
         emg_history = []
         states_history = []
 
-        x, y, all_y = next(train_dataloader)
-        angles_df.loc[:] = all_y.squeeze(0).numpy()
-
+        x, y, _ = next(train_dataloader)
         angles_history.append(y.squeeze(0).numpy())
         emg_history.append(x.squeeze(0).numpy())
 
+        x, y, all_y = next(train_dataloader)
+        angles_history.append(y.squeeze(0).numpy())
+        emg_history.append(x.squeeze(0).numpy())
+
+        angles_df.loc[:] = all_y.squeeze(0).numpy()
+
+
         if args.keep_states:
-            states = model.model.get_starting_states(1, torch.tensor(angles_history[0], dtype=torch.float32).unsqueeze(0).unsqueeze(1).to(device))
+            # states = model.model.get_starting_states(1, torch.tensor(angles_history[-2:], dtype=torch.float32).unsqueeze(0).unsqueeze(1).to(device))
+            history_samples = [1 for _ in range(config.batch_size)]
+            x = np.concatenate([np.concatenate(
+                [np.expand_dims(np.expand_dims(ah, axis=0), axis=1) for ah in angles_history[hs - 1: hs + 1]], axis=1)
+                                for hs in history_samples], axis=0)
+            x = torch.tensor(x, dtype=torch.float32).to(device)
+            states = model.model.get_starting_states(config.batch_size, x)
+
             if config.model_type == 'ModularModel':
-                states_history.append([states[2][st].detach() for st in range(3)])
-                states_history.append([states[2][st].detach() for st in range(3)])
+                states_history.append([states[2][st][-1:].detach() for st in range(3)])
+                states_history.append([states[2][st][-1:].detach() for st in range(3)])
+                states_history.append([states[2][st][-1:].detach() for st in range(3)])
+
             else:
+                states_history.append(states.detach()) # todo only append last state
                 states_history.append(states.detach())
                 states_history.append(states.detach())
+
 
         print('Training model...')
         with tqdm(range(1, config.n_epochs + 1)) as pbar:
             epoch = 0
-            val_loss, val_losses = evaluate_model(model, testsets, device, config)
+            val_loss, test_loss, all_losses = evaluate_model(model, valsets, testsets, device, config)
             if val_loss < best_val_loss:
                 best_val_loss = val_loss
                 wandb.run.summary['best_epoch'] = epoch
                 wandb.run.summary['best_val_loss'] = best_val_loss
+            if test_loss < wandb.run.summary.get('best_test_loss', float('inf')):
+                wandb.run.summary['best_test_loss'] = test_loss
+                wandb.run.summary['best_test_epoch'] = epoch
             wandb.run.summary['used_epochs'] = epoch
             test_recording_names = config.test_recordings if config.test_recordings is not None else []
             log = {f'val_loss/{(config.recordings + test_recording_names)[set_id]}': loss for set_id, loss in
-                   enumerate(val_losses)}
+                   enumerate(all_losses)}
             log['total_val_loss'] = val_loss
+            log['total_test_loss'] = test_loss
             wandb.log(log, step=epoch)
 
             for epoch in pbar:
@@ -202,19 +221,20 @@ if __name__ == '__main__':
                 epoch_start_time = time()
                 counter = 0
                 for i in range(epoch_len):
-                    history_samples = np.random.randint(0, len(angles_history), size=config.batch_size-1)
+                    history_samples = np.random.randint(1, len(angles_history), size=config.batch_size-1)
                     history_samples = np.array([history_sample for history_sample in history_samples] + [len(angles_history) - 1])
                     if args.keep_states:
                         if config.model_type == 'ModularModel':
-                            states = [None, None, [torch.concat([states_history[history_sample][0] for history_sample in history_samples], dim=0)],
-                                      [torch.concat([states_history[history_sample][1] for history_sample in history_samples], dim=0)],
-                                        [torch.concat([states_history[history_sample][2] for history_sample in history_samples], dim=0)]]
+                            states = [None, None, [torch.concat([states_history[history_sample][0] for history_sample in history_samples], dim=0),
+                                      torch.concat([states_history[history_sample][1] for history_sample in history_samples], dim=0),
+                                        torch.concat([states_history[history_sample][2] for history_sample in history_samples], dim=0)]]
 
                         else:
                             states = torch.concat([states_history[history_sample] for history_sample in history_samples], dim=1)
                     else:
-                        states = model.model.get_starting_states(config.batch_size, torch.tensor(angles_history[-1], dtype=torch.float32).unsqueeze(
-                            0).unsqueeze(1).to(device))
+                        x = np.concatenate([np.concatenate([np.expand_dims(np.expand_dims(ah, axis=0), axis=1)  for ah in angles_history[hs-1: hs+1]], axis=1) for hs in history_samples], axis=0)
+                        x = torch.tensor(x, dtype=torch.float32).to(device)
+                        states = model.model.get_starting_states(config.batch_size, x)
 
                     seq_loss = 0
                     #for x, y, all_y in train_dataloader:
@@ -256,16 +276,16 @@ if __name__ == '__main__':
                         if args.keep_states:
                             if config.model_type == 'ModularModel':
                                 history_states = [states[2][st].detach() for st in range(3)]
-                                states_history.append([history_states[0][-1, :, :], history_states[1][-1, :, :], history_states[2][-1, :, :]])
+                                states_history.append([history_states[0][-1:], history_states[1][-1:], history_states[2][-1:]])
                                 for hs in range(len(history_samples)-1):
-                                    states_history[history_samples[hs]] = [history_states[0][hs, :, :], history_states[1][hs, :, :], history_states[2][hs, :, :]]
+                                    states_history[history_samples[hs]] = [history_states[0][hs:hs+1], history_states[1][hs:hs+1], history_states[2][hs:hs+1]]
 
                             else:
                                 history_states = states.detach()
-                                states_history.append(history_states[:, -1, :].unsqueeze(1))
+                                states_history.append(history_states[:, -1:, :])
 
                                 for hs in range(len(history_samples)-1):
-                                    states_history[history_samples[hs]] = history_states[:, hs, :].unsqueeze(1)
+                                    states_history[history_samples[hs]] = history_states[:, hs:hs+1, :]
 
 
                     model.optimizer.zero_grad(set_to_none=True)
@@ -273,7 +293,10 @@ if __name__ == '__main__':
                     seq_loss.backward()
                     torch.nn.utils.clip_grad_norm_(model.model.parameters(), 4)
                     model.optimizer.step()
-                    states = states.detach()
+                    if config.model_type == 'ModularModel':
+                        states = [None, None, [states[2][st].detach() for st in range(3)]]
+                    else:
+                        states = states.detach()
                     wandb.log({'seq_loss': seq_loss.item()})
                     epoch_loss = epoch_loss + seq_loss.item()
                     trunctuator = 0
@@ -282,11 +305,14 @@ if __name__ == '__main__':
                     if torch.any(torch.isnan(loss)):
                         print('NAN Loss!')
 
-                val_loss, val_losses = evaluate_model(model, testsets, device, config)
+                val_loss, test_loss, all_losses = evaluate_model(model, valsets, testsets, device, config)
                 if val_loss < best_val_loss:
                     best_val_loss = val_loss
                     wandb.run.summary['best_epoch'] = epoch
                     wandb.run.summary['best_val_loss'] = best_val_loss
+                if test_loss < wandb.run.summary.get('best_test_loss', float('inf')):
+                    wandb.run.summary['best_test_loss'] = test_loss
+                    wandb.run.summary['best_test_epoch'] = epoch
                 wandb.run.summary['used_epochs'] = epoch
 
                 lr = model.scheduler.get_last_lr()[0]
@@ -297,8 +323,9 @@ if __name__ == '__main__':
 
                 test_recording_names = config.test_recordings if config.test_recordings is not None else []
                 log = {f'val_loss/{(config.recordings + test_recording_names)[set_id]}': loss for set_id, loss in
-                       enumerate(val_losses)}
+                       enumerate(all_losses)}
                 log['total_val_loss'] = val_loss
+                log['total_test_loss'] = test_loss
                 log['train_loss'] = epoch_loss
                 log['lr'] = lr
                 wandb.log(log)
@@ -313,8 +340,8 @@ if __name__ == '__main__':
         test_dirs = [join('data', args.person_dir, 'recordings', recording, 'experiments', '1') for recording in
                      config.test_recordings] if config.test_recordings is not None else None
 
-        trainsets, testsets, combined_sets = get_data(config, data_dirs, args.intact_hand, visualize=False,
-                                                      test_dirs=test_dirs)
+        # trainsets, valsets, combined_sets, testsets = get_data(config, data_dirs, args.intact_hand, visualize=False,
+        #                                               test_dirs=test_dirs)
 
         wandb.init(mode=config.wandb_mode, project=config.wandb_project, name=config.name, config=config)
         config = wandb.config
