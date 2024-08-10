@@ -354,7 +354,7 @@ if __name__ == '__main__':
         model.train()
 
         if config.model_type == 'ModularModel':  # todo
-            epoch = -1
+            epoch = 0
             # for param in model.model.activation_model.parameters():
             #     param.requires_grad = False if epoch < config.activation_model['n_freeze_epochs'] else True
             for param in model.model.muscle_model.parameters():
@@ -391,17 +391,35 @@ if __name__ == '__main__':
         states_history = []
 
         angles_df, emg_timestep = anglesProcess.outputQ.get(timeout=2)
+        angles_history.append(angles_df.loc[config.targets].values)
+        emg_history.append(emg_timestep[emg_channels])
 
+        angles_df, emg_timestep = anglesProcess.outputQ.get(timeout=2)
         angles_history.append(angles_df.loc[config.targets].values)
         emg_history.append(emg_timestep[emg_channels])
 
         if args.keep_states:
-            states = model.model.get_starting_states(1, torch.tensor(angles_history[0], dtype=torch.float32).unsqueeze(0).unsqueeze(1).to(device))
-            states_history.append(states.detach())
-            states_history.append(states.detach())
+            # states = model.model.get_starting_states(1, torch.tensor(angles_history[-2:], dtype=torch.float32).unsqueeze(0).unsqueeze(1).to(device))
+            history_samples = [1 for _ in range(config.batch_size)]
+            x = np.concatenate([np.concatenate(
+                [np.expand_dims(np.expand_dims(ah, axis=0), axis=1) for ah in angles_history[hs - 1: hs + 1]], axis=1)
+                                for hs in history_samples], axis=0)
+            x = torch.tensor(x, dtype=torch.float32).to(device)
+            states = model.model.get_starting_states(config.batch_size, x)
 
+            if config.model_type == 'ModularModel':
+                states_history.append([states[2][st][-1:].detach() for st in range(3)])
+                states_history.append([states[2][st][-1:].detach() for st in range(3)])
+                states_history.append([states[2][st][-1:].detach() for st in range(3)])
+
+            else:
+                states_history.append(states[:, -1:, :].detach())
+                states_history.append(states[:, -1:, :].detach())
+                states_history.append(states[:, -1:, :].detach())
         model.save(join('data', args.person_dir, args.experiment_name, 'models', f'{config.name}-{0}.pt'))
 
+
+        print('Training model...')
         with tqdm(range(1, config.n_epochs + 1)) as pbar:
             for epoch in pbar:
                 epoch_loss = 0
@@ -410,13 +428,20 @@ if __name__ == '__main__':
                 epoch_start_time = time()
                 counter = 0
                 for i in range(epoch_len):
-                    history_samples = np.random.randint(0, len(angles_history), size=config.batch_size-1)
+                    history_samples = np.random.randint(1, len(angles_history), size=config.batch_size-1)
                     history_samples = np.array([history_sample for history_sample in history_samples] + [len(angles_history) - 1])
                     if args.keep_states:
-                        states = torch.concat([states_history[history_sample] for history_sample in history_samples], dim=1)
+                        if config.model_type == 'ModularModel':
+                            states = [None, None, [torch.concat([states_history[history_sample][0] for history_sample in history_samples], dim=0),
+                                      torch.concat([states_history[history_sample][1] for history_sample in history_samples], dim=0),
+                                        torch.concat([states_history[history_sample][2] for history_sample in history_samples], dim=0)]]
+
+                        else:
+                            states = torch.concat([states_history[history_sample] for history_sample in history_samples], dim=1)
                     else:
-                        states = model.model.get_starting_states(config.batch_size, torch.tensor(angles_history[-1], dtype=torch.float32).unsqueeze(
-                            0).unsqueeze(1).to(device))
+                        x = np.concatenate([np.concatenate([np.expand_dims(np.expand_dims(ah, axis=0), axis=1)  for ah in angles_history[hs-1: hs+1]], axis=1) for hs in history_samples], axis=0)
+                        x = torch.tensor(x, dtype=torch.float32).to(device)
+                        states = model.model.get_starting_states(config.batch_size, x)
 
                     seq_loss = 0
                     for s in range(config.seq_len):
@@ -439,10 +464,10 @@ if __name__ == '__main__':
                         loss = model.criterion(outputs, y)
                         seq_loss = seq_loss + loss
 
-                        epoch_loss += loss.item()
-                        pred_angels_df = angles_df.copy()
-                        pred_angels_df.loc[config.targets] = outputs[-1].squeeze().to('cpu').detach().numpy()
+
                         if args.visualize and not visualizeQueue.full():
+                            pred_angels_df = angles_df.copy()
+                            pred_angels_df.loc[config.targets] = outputs[-1].squeeze().to('cpu').detach().numpy()
                             visualizeQueue.put((angles_df, pred_angels_df))
                             counter += 1
                         elif args.visualize:
@@ -453,11 +478,18 @@ if __name__ == '__main__':
                         history_samples = history_samples + 1
 
                         if args.keep_states:
-                            history_states = states.detach()
-                            states_history.append(history_states[:, -1, :].unsqueeze(1))
+                            if config.model_type == 'ModularModel':
+                                history_states = [states[2][st].detach() for st in range(3)]
+                                states_history.append([history_states[0][-1:], history_states[1][-1:], history_states[2][-1:]])
+                                for hs in range(len(history_samples)-1):
+                                    states_history[history_samples[hs]] = [history_states[0][hs:hs+1], history_states[1][hs:hs+1], history_states[2][hs:hs+1]]
 
-                            for hs in range(len(history_samples)-1):
-                                states_history[history_samples[hs]] = history_states[:, hs, :].unsqueeze(1)
+                            else:
+                                history_states = states.detach()
+                                states_history.append(history_states[:, -1:, :])
+
+                                for hs in range(len(history_samples)-1):
+                                    states_history[history_samples[hs]] = history_states[:, hs:hs+1, :]
 
 
                     model.optimizer.zero_grad(set_to_none=True)
@@ -465,8 +497,12 @@ if __name__ == '__main__':
                     seq_loss.backward()
                     torch.nn.utils.clip_grad_norm_(model.model.parameters(), 4)
                     model.optimizer.step()
-                    states = states.detach()
+                    if config.model_type == 'ModularModel':
+                        states = [None, None, [states[2][st].detach() for st in range(3)]]
+                    else:
+                        states = states.detach()
                     wandb.log({'seq_loss': seq_loss.item()})
+                    epoch_loss = epoch_loss + seq_loss.item()
                     trunctuator = 0
                     seq_loss = 0
 
