@@ -1,0 +1,122 @@
+name: standard-modular-P_556-forceFlipped
+method: grid
+
+metric:
+  goal: minimize
+  name: best_val_loss
+
+parameters:
+  recordings:
+    value:
+    - thumbFlEx
+    - thumbAbAd
+    - indexFlEx
+    - mrpFlEx
+    - fingersFlEx
+    - wristFlEx
+    - handOpCl
+    - pinchOpCl
+    - pointOpCl
+#    - keyOpCl
+#    - wristFlHandCl
+#    - indexFlDigitsEx
+
+
+  test_recordings:
+    value:
+    - keyOpCl
+    - wristFlHandCl
+    - indexFlDigitsEx
+
+  features:
+    value:
+    - [emg, '0'] # 0
+    - [emg, '1'] # 1
+    - [emg, '2'] # 2
+    - [emg, '4'] # 3
+    - [emg, '10'] # 4
+    - [emg, '11'] # 5
+    - [emg, '12'] # 6
+    - [emg, '13'] # 7
+
+
+  early_stopping_patience:
+    value: 15
+
+  early_stopping_delta:
+    value: 0.02
+
+  learning_rate:
+    value: 0.001
+
+  n_epochs:
+    value: 100
+
+  seq_len:
+    values: [64, 128, 192]
+
+  targets:
+    value:
+    - [Left, indexAng]
+    - [Left, midAng]
+    - [Left, ringAng]
+    - [Left, pinkyAng]
+    - [Left, thumbInPlaneAng]
+    - [Left, thumbOutPlaneAng]
+#    - [Left, wristRot]
+    - [Left, wristFlex]
+
+  warmup_steps:
+    value: 10
+
+  batch_size:
+    value: 8
+
+  wandb_mode:
+    value: online
+
+  wandb_project:
+    value: participants
+
+  model_type:
+    value: ModularModel
+
+  activation_model:
+    parameters:
+      hidden_size:
+        values: [32, 64, 96]
+      model_type:
+        value: DenseNet
+      n_layers:
+        values: [2, 3, 4]
+      n_freeze_epochs:
+        value: 0
+
+#    value: {
+#             model_type: MatMul,
+#             n_freeze_epochs: 0,
+#      }
+#    values: {model_type: DenseNet,
+#            hidden_size: 96,
+#            n_layers: 4,
+#            n_freeze_epochs: 0,
+#            }
+
+  muscle_model:
+    value: {
+             model_type: PhysMuscleModel,
+#      model_type: GRU,
+#            hidden_size: 100,
+#            n_layers: 4,
+      n_freeze_epochs: 0,
+      }
+
+  joint_model:
+    value: {
+#      model_type: GRU,
+#            hidden_size: 100,
+#            n_layers: 4,
+             model_type: PhysJointModel,
+      n_freeze_epochs: 0,
+             speed_mode: False,
+      }
