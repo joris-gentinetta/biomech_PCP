@@ -47,8 +47,7 @@ class Muscles(nn.Module):
 
         F = ((self.K0.unsqueeze(0) + self.K1.unsqueeze(0) * alphas)
                * (self.L0.unsqueeze(0) + self.L1.unsqueeze(0) * alphas - muscle_SS[:, :, 0, :])
-              # + self.B0.unsqueeze(0) * torch.abs(muscle_SS[:, :, 1, :]) ** self.B1.unsqueeze(0) * torch.sign(muscle_SS[:, :, 1, :]))
-             - self.B0.unsqueeze(0) * torch.abs(muscle_SS[:, :, 1, :]) ** self.B1.unsqueeze(0))  # todo check which one
+              + self.B0.unsqueeze(0) * torch.abs(muscle_SS[:, :, 1, :]) ** self.B1.unsqueeze(0) * torch.sign(muscle_SS[:, :, 1, :]))
 
         F = nn.functional.relu(F) # wash out negative force!
 
@@ -145,7 +144,7 @@ class Joints(nn.Module):
         B_F = F
 
         # The following K is respect to w(angle)
-        B1 = B_F * self.M.unsqueeze(0) / self.I.unsqueeze(0).unsqueeze(2).expand(batch_size, -1, -1)
+        B1 = -B_F * self.M.unsqueeze(0) / self.I.unsqueeze(0).unsqueeze(2).expand(batch_size, -1, -1)
         B1 = B1.sum(dim=2).unsqueeze(2)  # sum over muscles - > [batch_size, n_joints]
 
         B = torch.stack([B0, B1], dim=2)
@@ -158,8 +157,7 @@ class Joints(nn.Module):
             expAt = torch.matrix_exp(A * self.dt)
             eye = torch.eye(2, dtype=torch.float, device=self.device).unsqueeze(0).unsqueeze(0).repeat(batch_size, self.n_joints, 1, 1)
 
-            # SSout = torch.matmul(expAt, SS.unsqueeze(3)) + torch.matmul(torch.linalg.solve(A, expAt - eye), B)
-            SSout = torch.matmul(expAt, SS.unsqueeze(3)) + torch.matmul(torch.linalg.solve(A, eye - torch.matrix_exp(-A * self.dt), left=False), B)
+            SSout = torch.matmul(expAt, SS.unsqueeze(3)) + torch.matmul(torch.linalg.solve(A, expAt - eye), B)
             SSout = SSout.squeeze(3)
 
         else:

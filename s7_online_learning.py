@@ -35,11 +35,10 @@ parser.add_argument('--allow_tf32', action='store_true', help='Allow TF32')
 parser.add_argument('-en', '--experiment_name', type=str, required=True, help='Experiment name')
 args = parser.parse_args()
 
+model_name = 'mikey_modular_online_1'
+
 def online_train_model():
-    with open(join('data', args.person_dir, 'configs', f'{args.config_name}.yaml'), 'r') as file:
-        wandb_config = yaml.safe_load(file)
-        config = Config(wandb_config)
-    wandb.init(mode=config.wandb_mode, project=config.wandb_project, name=config.name, config=config)
+    wandb.init()
     config = wandb.config
 
     save_path = join('data', args.person_dir, 'online_trials', args.experiment_name, 'models')
@@ -75,7 +74,7 @@ def online_train_model():
         perturber = np.eye(8)
     perturb_file = join('data', args.person_dir, 'online_trials', args.experiment_name, 'perturber.npy')
     np.save(perturb_file, perturber)
-    perturber = torch.tensor(perturber, device=device, dtype=torch.float32)
+    # perturber = torch.tensor(perturber, device=device, dtype=torch.float32)
 
 
     data_dirs = [join('data', args.person_dir, 'recordings', recording, 'experiments', '1') for recording in
@@ -98,7 +97,7 @@ def online_train_model():
     model = TimeSeriesRegressorWrapper(device=device, input_size=len(config.features),
                                        output_size=len(config.targets),
                                        **config)
-    model.load(join('data', args.person_dir, 'models', f'{config.name}.pt'))
+    model.load(join('data', args.person_dir, 'models', f'{model_name}.pt'))
     model.to(device)
     model.train()
 
@@ -128,14 +127,14 @@ def online_train_model():
     states_history = []
 
     x, y, _ = next(train_dataloader)
-    angles_history.append(y.squeeze(0).numpy())
-    emg_history.append(x.squeeze(0).numpy())
+    angles_history.append(y.squeeze(0).cpu().numpy())
+    emg_history.append(x.squeeze(0).cpu().numpy())
 
     x, y, all_y = next(train_dataloader)
-    angles_history.append(y.squeeze(0).numpy())
-    emg_history.append(x.squeeze(0).numpy())
+    angles_history.append(y.squeeze(0).cpu().numpy())
+    emg_history.append(x.squeeze(0).cpu().numpy())
 
-    angles_df.loc[:] = all_y.squeeze(0).numpy()
+    angles_df.loc[:] = all_y.squeeze(0).cpu().numpy()
 
 
     if config.keep_states:
@@ -206,10 +205,10 @@ def online_train_model():
 
 
                     start_time = time()
-                    angles_history.append(y.squeeze(0).numpy())
+                    angles_history.append(y.squeeze(0).cpu().numpy())
 
-                    # perturbed = perturber @ x.squeeze(0).numpy() # already done in load_data
-                    perturbed = x.squeeze(0).numpy()
+                    # perturbed = perturber @ x.squeeze(0).cpu().numpy() # already done in load_data
+                    perturbed = x.squeeze(0).cpu().numpy()
 
                     emg_history.append(perturbed)
 

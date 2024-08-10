@@ -50,7 +50,7 @@ def load_data(data_dir, intact_hand, features, perturber=None):
         emg = (perturber @ emg.T).T
 
     for feature in features:
-        data[feature] = emg[:, int_features.index(int(feature[1]))]
+        data[tuple(feature)] = emg[:, int_features.index(int(feature[1]))]
 
     return data
 
