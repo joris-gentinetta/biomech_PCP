@@ -1,4 +1,4 @@
-name: standard-modular-P_556-bestPerformance
+name: mikey_modular_online_1
 method: grid
 
 metric:
@@ -6,7 +6,7 @@ metric:
   name: best_val_loss
 
 parameters:
-  trainset:
+  train_recording:
     values: [online_cycling, online_concat]
   recordings:
     value:
