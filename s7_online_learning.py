@@ -190,9 +190,9 @@ if __name__ == '__main__':
                 states_history.append([states[2][st][-1:].detach() for st in range(3)])
 
             else:
-                states_history.append(states.detach()) # todo only append last state
-                states_history.append(states.detach())
-                states_history.append(states.detach())
+                states_history.append(states[:, -1:, :].detach())
+                states_history.append(states[:, -1:, :].detach())
+                states_history.append(states[:, -1:, :].detach())
 
 
         print('Training model...')
