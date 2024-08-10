@@ -13,6 +13,7 @@ import argparse
 import os
 import yaml
 import numpy as np
+os.environ["WANDB_AGENT_MAX_INITIAL_FAILURES"] = "1000000"
 
 os.environ['PYTORCH_ENABLE_MPS_FALLBACK'] = '1'
 import wandb
@@ -68,12 +69,13 @@ def online_train_model():
 
     emg_channels = [int(feature[1]) for feature in config.features]
 
-    if config.perturb:
-        perturber = np.abs(np.eye(8) + np.random.normal(0, .25, (len(emg_channels), len(emg_channels))))
-    else:
-        perturber = np.eye(8)
+    # if config.perturb:
+    #     perturber = np.abs(np.eye(8) + np.random.normal(0, .25, (len(emg_channels), len(emg_channels))))
+    # else:
+    #     perturber = np.eye(8)
     perturb_file = join('data', args.person_dir, 'online_trials', args.experiment_name, 'perturber.npy')
-    np.save(perturb_file, perturber)
+    # np.save(perturb_file, perturber)
+    perturber = np.load(perturb_file)
     # perturber = torch.tensor(perturber, device=device, dtype=torch.float32)
 
 
@@ -201,7 +203,10 @@ def online_train_model():
                 seq_loss = 0
                 #for x, y, all_y in train_dataloader:
                 for s in range(config.seq_len):
-                    x, y, all_y = next(train_dataloader)
+                    try:
+                        x, y, all_y = next(train_dataloader)
+                    except:
+                        exit(0)
 
 
                     start_time = time()
