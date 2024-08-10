@@ -295,12 +295,13 @@ class PhysJointModel(TimeSeriesRegressor):
         super().__init__(input_size, output_size, device)
 
         self.output_size = output_size
+        speed_mode = kwargs.get('speed_mode', False)  # todo pass from further up
 
         if input_size != output_size * 4:
             raise ValueError(
                 f'PhysJointModel: Input size must be 4 times the output size, got {input_size} and {output_size}')
 
-        self.model = Joints(device=device, n_joints=output_size, dt=1 / SR, speed_mode=False)
+        self.model = Joints(device=device, n_joints=output_size, dt=1 / SR, speed_mode=speed_mode)
 
     def get_starting_states(self, batch_size, y=None):
         """ these are the muscle states! """
@@ -524,8 +525,8 @@ class TimeSeriesRegressorWrapper:
             raise ValueError(f'Unknown model type {model_type}')
 
         self.criterion = nn.MSELoss(reduction='mean')
-        # self.optimizer = optim.Adam(self.model.parameters(), lr=learning_rate)
-        self.optimizer = optim.AdamW(self.model.parameters(), lr=learning_rate, amsgrad=True)
+        self.optimizer = optim.Adam(self.model.parameters(), lr=learning_rate)
+        # self.optimizer = optim.AdamW(self.model.parameters(), lr=learning_rate, amsgrad=True)
         self.scheduler = optim.lr_scheduler.ReduceLROnPlateau(self.optimizer, mode='min', factor=0.5, patience=3, threshold_mode='rel', threshold=0.01)
 
 
