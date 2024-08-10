@@ -10,7 +10,7 @@ offset = 0.72349796
 
 from multiprocessing import Process, Event, Queue as MPQueue, Value
 import pybullet as p
-
+import argparse
 import mediapipe as mp
 from mediapipe.python.solutions import pose, hands
 import pandas as pd
@@ -116,7 +116,6 @@ class SaveThread(Thread):
             if not self.inputQ.empty():
                 frame, emg_timestep = self.inputQ.get()
                 if frame is not None:
-                    # frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
                     out.write(frame)
                     self.emg_data.append(emg_timestep)
 
@@ -619,10 +618,12 @@ class ProcessManager:
 
 
 if __name__ == '__main__':
+    parser = argparse.ArgumentParser()
+    parser.add_argument('-c', '--camera_id', type=int, default=0, help='Camera ID')
     mediapipe_test = True
     if mediapipe_test:
         print(system_name)
-        cap = cv2.VideoCapture(0)  # 0 for the default camera, or provide a video file path
+        cap = cv2.VideoCapture(args.camera_id)  # 0 for the default camera, or provide a video file path
 
 
         body_model_path = 'models/mediapipe/pose_landmarker_lite.task'
@@ -707,15 +708,11 @@ if __name__ == '__main__':
 
             detection_result = detector.detect_for_video(image, int(time() * 1000))
             annotated_image = draw_landmarks_on_image(image.numpy_view(), detection_result)
-            # if system_name == 'Darwin':
-            #     annotated_image = cv2.cvtColor(annotated_image, cv2.COLOR_RGB2BGR) # todo
+
             cv2.imshow('show', annotated_image)
 
             if not ret:
                 break
-
-
-            # cv2.imshow('Frame', frame)
 
             # Break the loop on 'q' key press
             if cv2.waitKey(1) & 0xFF == ord('q'):

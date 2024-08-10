@@ -9,13 +9,13 @@ from os.path import join
 import wandb
 import multiprocessing
 
-from helpers.predict_utils import Config, get_data, train_model, rescale_data
-
+from helpers.predict_utils import Config, get_data, train_model, rescale_data, evaluate_model
+from helpers.models import TimeSeriesRegressorWrapper
 
 def wandb_process(arguments):
     config = arguments['config']
     wandb.agent(arguments['sweep_id'],
-                lambda: train_model(arguments['trainsets'], arguments['testsets'], arguments['device'], config.wandb_mode, config.wandb_project, config.name))
+                lambda: train_model(arguments['trainsets'], arguments['valsets'], arguments['testsets'], arguments['device'], config.wandb_mode, config.wandb_project, config.name))
     # print(arguments['id'])
 
 
@@ -31,6 +31,9 @@ if __name__ == '__main__':
     parser.add_argument('-hs', '--hyperparameter_search', action='store_true', help='Perform hyperparameter search')
     parser.add_argument('-t', '--test', action='store_true', help='Test the model')
     parser.add_argument('-s', '--save_model', action='store_true', help='Save a model')
+    parser.add_argument('-e', '--evaluate', action='store_true', help='Evaluate the model')
+    parser.add_argument('--experiment_name', type=str, default=None, help='Experiment name')
+    parser.add_argument('--perturb', action='store_true', help='Perturb the data')
     args = parser.parse_args()
 
     sampling_frequency = 60
@@ -67,25 +70,24 @@ if __name__ == '__main__':
     test_dirs = [join('data', args.person_dir, 'recordings', recording, 'experiments', '1') for recording in
                  config.test_recordings] if config.test_recordings is not None else []
 
-    trainsets, testsets, combined_sets = get_data(config, data_dirs, args.intact_hand, visualize=args.visualize, test_dirs=test_dirs)
+    perturb_file = join('data', args.person_dir, 'recordings', args.experiment_name, 'perturber.npy') if args.perturb else None
+
+    trainsets, valsets, combined_sets, testsets = get_data(config, data_dirs, args.intact_hand, visualize=args.visualize, test_dirs=test_dirs, perturb_file=perturb_file)
 
     if args.hyperparameter_search:  # training on training set, evaluation on test set
         sweep_id = wandb.sweep(wandb_config, project=config.wandb_project)
-        # wandb.agent(sweep_id, lambda: train_model(trainsets, testsets, device, config.wandb_mode, config.wandb_project, config.name))
+        # wandb.agent(sweep_id, lambda: train_model(trainsets, valsets, testsets, device, config.wandb_mode, config.wandb_project, config.name))
+        pool = multiprocessing.Pool(processes=4)
+        pool.map(wandb_process, [{'id': i, 'config': config, 'sweep_id': sweep_id, 'trainsets': trainsets, 'valsets': valsets, 'testsets': testsets, 'device': device} for i in range(4)])
 
-        # pool = multiprocessing.Pool(processes=4)
-        # pool.map(wandb_process, [{'id': i, 'config': config, 'sweep_id': sweep_id, 'trainsets': trainsets, 'testsets': testsets, 'device': device} for i in range(4)])
-        wandb.agent(sweep_id,
-                    lambda: train_model(trainsets, testsets, device,
-                                        config.wandb_mode, config.wandb_project, config.name))
 
 
     if args.test:  # trains on the training set and saves the test set predictions
         os.makedirs(join('data', args.person_dir, 'models'), exist_ok=True)
 
-        model = train_model(trainsets, testsets, device, config.wandb_mode, config.wandb_project, config.name, config, args.person_dir)
+        model = train_model(trainsets, valsets, testsets, device, config.wandb_mode, config.wandb_project, config.name, config, args.person_dir)
 
-        for set_id, test_set in enumerate(testsets):
+        for set_id, test_set in enumerate(valsets + testsets):
             val_pred = model.predict(test_set, config.features, config.targets).squeeze(0).to('cpu').detach().numpy()
             test_set[config.targets] = val_pred
 
@@ -95,8 +97,46 @@ if __name__ == '__main__':
 
 
         if args.save_model:  # trains on the whole dataset and saves the model
-            # model = train_model(combined_sets, testsets, device, config.wandb_mode, config.wandb_project, config.name, config)
+            # model = train_model(combined_sets, valsets, testsets, device, config.wandb_mode, config.wandb_project, config.name, config)
 
             model.to(torch.device('cpu'))
             os.makedirs(join('data', args.person_dir, 'models'), exist_ok=True)
             model.save(join('data', args.person_dir, 'models', f'{config.name}.pt'))
+
+    elif args.evaluate:
+        wandb.init(mode=config.wandb_mode, project=config.wandb_project, name=config.name, config=config)
+        config = wandb.config
+
+        model = TimeSeriesRegressorWrapper(device=device, input_size=len(config.features),
+                                           output_size=len(config.targets),
+                                           **config)
+        model.to('cpu')
+        model.eval()
+        epoch = 0
+        best_val_loss = math.inf
+        while True:
+            try:
+                model.load(join('data', args.person_dir, 'online_trials', args.experiment_name, 'models', f'{config.name}-online_{epoch}.pt'))
+            except:
+                break
+            model.to(device)
+            val_loss, test_loss, all_losses = evaluate_model(model, valsets, testsets, device, config)
+            if val_loss < best_val_loss:
+                best_val_loss = val_loss
+                wandb.run.summary['best_epoch'] = epoch
+                wandb.run.summary['best_val_loss'] = best_val_loss
+            if test_loss < wandb.run.summary.get('best_test_loss', math.inf):
+                wandb.run.summary['best_test_loss'] = test_loss
+                wandb.run.summary['best_test_epoch'] = epoch
+            wandb.run.summary['used_epochs'] = epoch
+
+            test_recording_names = config.test_recordings if config.test_recordings is not None else []
+            log = {f'val_loss/{(config.recordings + test_recording_names)[set_id]}': loss for set_id, loss in
+                   enumerate(all_losses)}
+            log['total_val_loss'] = val_loss
+            log['total_test_loss'] = test_loss
+            log['epoch'] = epoch
+            wandb.log(log)
+            print(val_loss)
+
+            epoch += 1

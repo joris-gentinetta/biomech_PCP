@@ -1,0 +1,20 @@
+python s7_online_learning.py --person_dir P_556 --intact_hand Left --config_name EtE_online-pert --offline --experiment_name OF
+python s7_online_learning.py --person_dir P_556 --intact_hand Left --config_name EtE_online-pert --offline --experiment_name OF-states --keep_states
+
+python s7_online_learning.py --person_dir P_556 --intact_hand Left --config_name EtE_online-pert --offline --experiment_name OF-pert --perturb
+python s7_online_learning.py --person_dir P_556 --intact_hand Left --config_name EtE_online-pert --offline --experiment_name OF-pert-states --keep_states --perturb
+
+
+
+python s7_online_learning.py --person_dir P_556 --intact_hand Left --config_name EtE_online --offline --experiment_name all-OF-inf
+python s7_online_learning.py --person_dir P_556 --intact_hand Left --config_name EtE_online --offline --experiment_name all-OF-inf-states --keep_states
+
+python s7_online_learning.py --person_dir P_556 --intact_hand Left --config_name EtE_online --offline --experiment_name all-OF-inf-pert --perturb
+python s7_online_learning.py --person_dir P_556 --intact_hand Left --config_name EtE_online --offline --experiment_name all-OF-inf-pert-states --keep_states --perturb
+
+
+python s7_online_learning.py --person_dir P_556 --intact_hand Left --config_name EtE_online --offline --experiment_name all-OF-inf-bs16
+python s7_online_learning.py --person_dir P_556 --intact_hand Left --config_name EtE_online --offline --experiment_name all-OF-inf-states-bs16 --keep_states
+
+python s7_online_learning.py --person_dir P_556 --intact_hand Left --config_name EtE_online --offline --experiment_name all-OF-inf-pert-bs16 --perturb
+python s7_online_learning.py --person_dir P_556 --intact_hand Left --config_name EtE_online --offline --experiment_name all-OF-inf-pert-states-bs16 --keep_states --perturb

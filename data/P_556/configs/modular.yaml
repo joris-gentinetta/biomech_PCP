@@ -1,0 +1,109 @@
+name: modular_baseline
+method: grid
+
+metric:
+  goal: minimize
+  name: best_val_loss
+
+parameters:
+  recordings:
+    value:
+    - thumbFlEx
+    - thumbAbAd
+    - indexFlEx
+    - mrpFlEx
+    - fingersFlEx
+    - wristFlEx
+    - handOpCl
+    - pinchOpCl
+    - pointOpCl
+#    - keyOpCl
+#    - wristFlHandCl
+#    - indexFlDigitsEx
+
+
+  test_recordings:
+    value:
+    - keyOpCl
+    - wristFlHandCl
+    - indexFlDigitsEx
+
+  features:
+    value:
+    - [emg, '0'] # 0
+    - [emg, '1'] # 1
+    - [emg, '2'] # 2
+    - [emg, '4'] # 3
+    - [emg, '10'] # 4
+    - [emg, '11'] # 5
+    - [emg, '12'] # 6
+    - [emg, '13'] # 7
+
+
+  early_stopping_patience:
+    value: 1000
+
+  early_stopping_delta:
+    value: 0.0
+
+  learning_rate:
+    value: 0.001
+
+  n_epochs:
+    value: 60
+
+  seq_len:
+    value: 128
+
+  targets:
+    value:
+    - [Left, indexAng]
+    - [Left, midAng]
+    - [Left, ringAng]
+    - [Left, pinkyAng]
+    - [Left, thumbInPlaneAng]
+    - [Left, thumbOutPlaneAng]
+#    - [Left, wristRot]
+    - [Left, wristFlex]
+
+  warmup_steps:
+    value: 10
+
+  batch_size:
+    value: 8
+
+  wandb_mode:
+    value: online
+
+  wandb_project:
+    value: P_556-modular_online
+
+  model_type:
+    value: ModularModel
+
+  activation_model:
+    value: {
+      model_type: DenseNet,
+      hidden_size:  64,
+      n_layers:  3,
+      n_freeze_epochs: 0,
+    }
+
+
+  muscle_model:
+    value: {
+             model_type: PhysMuscleModel,
+#      model_type: GRU,
+#            hidden_size: 100,
+#            n_layers: 4,
+      n_freeze_epochs: 0,
+      }
+
+  joint_model:
+    value: {
+#      model_type: GRU,
+#            hidden_size: 100,
+#            n_layers: 4,
+             model_type: PhysJointModel,
+      n_freeze_epochs: 0,
+      }
