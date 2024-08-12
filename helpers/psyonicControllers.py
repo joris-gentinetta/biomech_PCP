@@ -6,9 +6,9 @@
 # need to add the location of Junqing's model + functions to the path
 import sys
 
-sys.path.append('/home/haptix/haptix/Upper Extremity Models/Upper Extremity Shadmehr')
+# sys.path.append('/home/haptix/haptix/Upper Extremity Models/Upper Extremity Shadmehr')
 # from Dynamics2.upperLimbModel import upperExtremityModel
-from Dynamics2.upperLimbModel_copy import upperExtremityModel
+# from Dynamics2.upperLimbModel_copy import upperExtremityModel
 
 import torch
 import numpy as np
@@ -21,8 +21,8 @@ import math
 import os
 
 import torch
-sys.path.append('/home/haptix/haptix/biomech_datagen/')
-from helpers.models import TorchTimeSeriesClassifier
+sys.path.append('/home/haptix/haptix/biomech_PCP/')
+from helpers.models import TimeSeriesRegressorWrapper
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -53,12 +53,13 @@ class psyonicControllers():
 
 		self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
-		self.model = TorchTimeSeriesClassifier(input_size=len(config.features), hidden_size=config.hidden_size,
-										output_size=len(config.targets), n_epochs=config.n_epochs,
-										seq_len=config.seq_len,
-										learning_rate=config.learning_rate,
-										warmup_steps=config.warmup_steps, num_layers=config.n_layers,
-										model_type=config.model_type)
+		# self.model = TimeSeriesRegressorWrapper(input_size=len(config.features), hidden_size=config.hidden_size,
+		# 								output_size=len(config.targets), n_epochs=config.n_epochs,
+		# 								seq_len=config.seq_len,
+		# 								learning_rate=config.learning_rate,
+		# 								warmup_steps=config.warmup_steps, num_layers=config.n_layers,
+		# 								model_type=config.model_type)
+		self.model = TimeSeriesRegressorWrapper(device=self.device, input_size=len(config.features), output_size=len(config.targets), **(config.to_dict()))
 
 		self.model.load(model_path)
 		self.model.to(self.device)
@@ -67,10 +68,11 @@ class psyonicControllers():
 			self.states = (torch.zeros(config.n_layers, 1, config.hidden_size),
 					torch.zeros(config.n_layers, 1, config.hidden_size))
 		else:
-			self.states = torch.zeros(config.n_layers, 1, config.hidden_size)
+			self.states = self.model.model.get_starting_states(1, torch.zeros((1, 2,  len(config.targets)), device=self.device))
 
 		#NOTE todo?
-		self.targets = ['indexAng', 'midAng', 'ringAng', 'pinkyAng', 'thumbInPlaneAng', 'thumbOutPlaneAng', 'wristRot', 'wristFlex']
+		self.targets = ['indexAng', 'midAng', 'ringAng', 'pinkyAng', 'thumbInPlaneAng', 'thumbOutPlaneAng', 'wristFlex']
+
 		self.output_dict = {target: 0 for target in self.targets}
 
 	def resetModel(self):
@@ -171,7 +173,7 @@ class psyonicControllers():
 			for j, target in enumerate(self.targets):
 				self.output_dict[target] = output[j]
 			self.output_dict['thumbInPlaneAng'] = self.output_dict['thumbInPlaneAng'] - math.pi
-			self.output_dict['wristRot'] = (self.output_dict['wristRot'] * 2) - math.pi
+			# self.output_dict['wristRot'] = (self.output_dict['wristRot'] * 2) - math.pi
 			self.output_dict['wristFlex'] = (self.output_dict['wristFlex'] - math.pi / 2)
 			# todo
 			# emg.printNormedEMG()

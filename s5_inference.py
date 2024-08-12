@@ -997,7 +997,7 @@ def main(arm, emg=None):
 	# connect to EMG board
 	if emg is not None:
 		print('Connecting to EMG board...')
-		emg = EMG(usedChannels=[0, 1, 2, 4, 5, 8, 10, 12])
+		emg = EMG(usedChannels=[0, 1, 2, 4, 10, 11, 12, 13])
 		emg.startCommunication()
 		print('Connected.')
 
@@ -1155,6 +1155,7 @@ if __name__ == '__main__':
 	parser.add_argument('-s', '--stuffing', help='Using byte stuffing?', action='store_true')
 	parser.add_argument('--person_dir', type=str, required=True, help='Person directory')
 	parser.add_argument('--config_name', type=str, required=True, help='Training configuration')
+	parser.add_argument('--model_path', type=str, required=True, help='Model path')
 
 	args = parser.parse_args()
 
@@ -1168,14 +1169,15 @@ if __name__ == '__main__':
 		with open(join('data', args.person_dir, 'configs', args.config_name), 'r') as file:
 			wandb_config = yaml.safe_load(file)
 			config = Config(wandb_config)
-		channels = [feature[1] for feature in config.features]
+		channels = [int(feature[1]) for feature in config.features]
 
 		emg = EMG(usedChannels=channels)
 		emg.startCommunication()
 		print(f'Starting Psyonic Hand (EMG control{strInsert})...')
 
-		model_name = args.config_name.split('.')[0]
-		model_path = join('data', args.person_dir, 'models', f'{model_name}.pt')
+		# model_name = args.config_name.split('.')[0]
+		# model_path = join('data', args.person_dir, 'models', f'{model_name}.pt')
+		model_path = args.model_path
 
 		controller = psyonicControllers(numMotors=arm.numMotors, arm=arm, freq_n=3, emg=emg, config=config, model_path=model_path)
 		arm.runNetThread(controller)

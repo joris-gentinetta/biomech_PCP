@@ -454,6 +454,7 @@ if __name__ == '__main__':
                             angles_df, emg_timestep = anglesProcess.outputQ.get(timeout=4)
                         except:
                             model.save(join(save_path, f'{config.name}-online_last.pt'))
+                            raise Exception('Saved last model, quitting')
                         start_time = time()
                         angles_history.append(angles_df.loc[config.targets].values)
 
@@ -476,11 +477,12 @@ if __name__ == '__main__':
                             pred_angels_df = angles_df.copy()
                             pred_angels_df.loc[config.targets] = outputs[-1].squeeze().to('cpu').detach().numpy()
                             visualizeQueue.put((angles_df, pred_angels_df))
-                            counter += 1
                         elif args.visualize:
                             print('VisualizeProcess input queue full')
                             print('VisualizeProcess fps: ', visualizeProcess.fps.value)
                             pass
+                        counter += 1
+
 
                         history_samples = history_samples + 1
 
