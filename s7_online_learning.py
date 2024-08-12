@@ -67,13 +67,20 @@ def online_train_model():
             print('TF32 enabled')
 
 
-        emg_channels = [int(feature[1]) for feature in config.features]
+
 
         # if config.perturb:
         #     perturber = np.abs(np.eye(8) + np.random.normal(0, .25, (len(emg_channels), len(emg_channels))))
         # else:
         #     perturber = np.eye(8)
-        perturb_file = join('data', args.person_dir, 'online_trials', args.experiment_name, 'perturber.npy')
+
+
+
+        if config.perturb:
+            perturb_file = join('data', args.person_dir, 'online_trials', args.experiment_name, 'perturber.npy')
+        else:
+            perturb_file = join('data', args.person_dir, 'online_trials', args.experiment_name, 'eye.npy')
+
         # np.save(perturb_file, perturber)
         perturber = np.load(perturb_file)
         # perturber = torch.tensor(perturber, device=device, dtype=torch.float32)
@@ -298,6 +305,17 @@ if __name__ == '__main__':
     with open(join('data', args.person_dir, 'configs', f'{args.config_name}.yaml'), 'r') as file:
         wandb_config = yaml.safe_load(file)
         config = Config(wandb_config)
+
+    ########################### todo remove
+    emg_channels = [int(feature[1]) for feature in config.features]
+    perturber = np.abs(np.eye(8) + np.random.normal(0, .25, (len(emg_channels), len(emg_channels))))
+    np.save(join('data', args.person_dir, 'online_trials', args.experiment_name, 'perturber.npy'), perturber)
+
+    perturber = np.eye(8)
+    np.save(join('data', args.person_dir, 'online_trials', args.experiment_name, 'eye.npy'), perturber)
+    exit('Perturber saved')
+    ###########################
+
     sweep_id = wandb.sweep(wandb_config, project=config.wandb_project)
     wandb.agent(sweep_id, online_train_model)
     # pool = multiprocessing.Pool(processes=4)
