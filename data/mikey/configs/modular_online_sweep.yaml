@@ -49,13 +49,13 @@ parameters:
     value: 0.05
 
   learning_rate:
-    values: [0.01, 0.005]
+    values: [0.005]
 
   n_epochs:
     value: 1000
 
   seq_len:
-    value: 32
+    values: [11, 16, 32]
 
   targets:
     value:
@@ -72,7 +72,7 @@ parameters:
     value: 10
 
   batch_size:
-    values: [16, 32]
+    values: [16]
 
   wandb_mode:
     value: online
@@ -109,7 +109,7 @@ parameters:
       model_type:
         value: PhysMuscleModel
       n_freeze_epochs:
-        values: [0, 1]
+        values: [1]
 #    value: {
 #             model_type: PhysMuscleModel,
 ##      model_type: GRU,
@@ -123,7 +123,7 @@ parameters:
       model_type:
         value: PhysJointModel
       n_freeze_epochs:
-        values: [0, 1]
+        values: [1]
 #    value: {
 ##      model_type: GRU,
 ##            hidden_size: 100,
@@ -134,7 +134,7 @@ parameters:
 #      }
 
   perturb:
-    value: True
+    value: False
 
   keep_states:
-    values: [True, False]
+    values: [False]

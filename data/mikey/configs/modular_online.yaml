@@ -1,4 +1,4 @@
-name: mikey_modular_online_2
+name: mikey_modular_online_1
 method: grid
 
 metric:
@@ -47,13 +47,13 @@ parameters:
     value: 0.05
 
   learning_rate:
-    value: 0.001
+    value: 0.005
 
   n_epochs:
-    value: 40
+    value: 1000
 
   seq_len:
-    value: 32
+    value: 120
 
   targets:
     value:
@@ -67,7 +67,7 @@ parameters:
     - [Left, wristFlex]
 
   warmup_steps:
-    value: 0
+    value: 10
 
   batch_size:
     value: 8

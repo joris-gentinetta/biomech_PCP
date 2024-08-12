@@ -1,4 +1,4 @@
-name: standard-modular-P_556-forceFlipped
+name: mikey_sl
 method: grid
 
 metric:
@@ -53,7 +53,7 @@ parameters:
     value: 100
 
   seq_len:
-    values: [64, 128, 192]
+    values: [64]
 
   targets:
     value:
@@ -67,7 +67,7 @@ parameters:
     - [Left, wristFlex]
 
   warmup_steps:
-    value: 10
+    value: 0
 
   batch_size:
     value: 8
@@ -76,7 +76,7 @@ parameters:
     value: online
 
   wandb_project:
-    value: participants
+    value: mikey_sl
 
   model_type:
     value: ModularModel
@@ -84,11 +84,11 @@ parameters:
   activation_model:
     parameters:
       hidden_size:
-        values: [32, 64, 96]
+        values: [64]
       model_type:
         value: DenseNet
       n_layers:
-        values: [2, 3, 4]
+        values: [3]
       n_freeze_epochs:
         value: 0
 
