@@ -42,9 +42,10 @@ if __name__ == '__main__':
     parser.add_argument('-en', '--experiment_name', type=str, required=True, help='Experiment name')
     parser.add_argument('-c', '--camera', type=int, required=False, help='Camera id')
     parser.add_argument('-si', '--save_input', action='store_true', help='Save input data')
-    parser.add_argument('-cf', '--calibration_frames', type=int, default=20, help='Number of calibration frames')
+    parser.add_argument('-cf', '--calibration_frames', type=int, default=60, help='Number of calibration frames')
     parser.add_argument('-p', '--perturb', action='store_true', help='Perturb the data')
     parser.add_argument('--keep_states', action='store_true', help='Keep states in history')
+# --person_dir mikey --intact_hand Left --config_name modular_online --save_model -v --experiment_name perturbed_1 --camera 0 --calibration_frames 60 --perturbed
     args = parser.parse_args()
 
     if args.save_input:
@@ -63,7 +64,7 @@ if __name__ == '__main__':
     epoch_len = 10
     # sampling_frequency = 60
     calibration_frames = 30  # todo
-    queue_size = 50
+    queue_size = 50000
 
     if torch.cuda.is_available():
         device = torch.device("cuda")
@@ -76,6 +77,7 @@ if __name__ == '__main__':
     else:
         device = torch.device("cpu")
         print('Using CPU')
+    # device = torch.device("cpu") # todo
 
     if args.allow_tf32:
         torch.backends.cuda.matmul.allow_tf32 = True
@@ -92,8 +94,9 @@ if __name__ == '__main__':
     else:
         perturber = np.eye(8)
     perturb_file = join('data', args.person_dir, 'online_trials', args.experiment_name, 'perturber.npy')
+    os.makedirs(join('data', args.person_dir, 'online_trials', args.experiment_name), exist_ok=True)
     np.save(perturb_file, perturber)
-    perturber = torch.tensor(perturber, device=device, dtype=torch.float32)
+    # perturber = torch.tensor(perturber, device=device, dtype=torch.float32)
 
     with open(join('data', args.person_dir, 'configs', f'{args.config_name}.yaml'), 'r') as file:
         wandb_config = yaml.safe_load(file)
@@ -110,7 +113,7 @@ if __name__ == '__main__':
         vc = InputThread(src=args.camera, queueSize=queue_size, save=True)
         processManager.manage_process(vc)
         while not vc.outputQ.empty():
-            vc.outputQ.get()
+            vc.outputQ.get(timeout=4)
         st = SaveThread(vc.outputQ, frame_size=(int(width), int(height)), save_path=save_path)
         processManager.manage_process(st)
 
@@ -165,14 +168,14 @@ if __name__ == '__main__':
         states_history = []
 
         x, y, _ = next(train_dataloader)
-        angles_history.append(y.squeeze(0).numpy())
-        emg_history.append(x.squeeze(0).numpy())
+        angles_history.append(y.squeeze(0).to('cpu').numpy())
+        emg_history.append(x.squeeze(0).to('cpu').numpy())
 
         x, y, all_y = next(train_dataloader)
-        angles_history.append(y.squeeze(0).numpy())
-        emg_history.append(x.squeeze(0).numpy())
+        angles_history.append(y.squeeze(0).to('cpu').numpy())
+        emg_history.append(x.squeeze(0).to('cpu').numpy())
 
-        angles_df.loc[:] = all_y.squeeze(0).numpy()
+        angles_df.loc[:] = all_y.squeeze(0).to('cpu').numpy()
 
 
         if args.keep_states:
@@ -243,10 +246,10 @@ if __name__ == '__main__':
 
 
                         start_time = time()
-                        angles_history.append(y.squeeze(0).numpy())
+                        angles_history.append(y.squeeze(0).to('cpu').numpy())
 
-                        # perturbed = perturber @ x.squeeze(0).numpy() # already done in load_data
-                        perturbed = x.squeeze(0).numpy()
+                        # perturbed = perturber @ x.squeeze(0).to('cpu').numpy() # already done in load_data
+                        perturbed = x.squeeze(0).to('cpu').numpy()
 
                         emg_history.append(perturbed)
 
@@ -384,17 +387,17 @@ if __name__ == '__main__':
 
 
         for i in range(60):
-            _, _ = anglesProcess.outputQ.get(timeout=2)
+            _, _ = anglesProcess.outputQ.get(timeout=4)
 
         angles_history = []
         emg_history = []
         states_history = []
 
-        angles_df, emg_timestep = anglesProcess.outputQ.get(timeout=2)
+        angles_df, emg_timestep = anglesProcess.outputQ.get(timeout=4)
         angles_history.append(angles_df.loc[config.targets].values)
         emg_history.append(emg_timestep[emg_channels])
 
-        angles_df, emg_timestep = anglesProcess.outputQ.get(timeout=2)
+        angles_df, emg_timestep = anglesProcess.outputQ.get(timeout=4)
         angles_history.append(angles_df.loc[config.targets].values)
         emg_history.append(emg_timestep[emg_channels])
 
@@ -416,7 +419,9 @@ if __name__ == '__main__':
                 states_history.append(states[:, -1:, :].detach())
                 states_history.append(states[:, -1:, :].detach())
                 states_history.append(states[:, -1:, :].detach())
-        model.save(join('data', args.person_dir, args.experiment_name, 'models', f'{config.name}-{0}.pt'))
+
+        os.makedirs(join('data', args.person_dir, 'online_trials', args.experiment_name, 'models'), exist_ok=True)
+        model.save(join('data', args.person_dir, 'online_trials', args.experiment_name, 'models', f'{config.name}-online_{0}.pt'))
 
 
         print('Training model...')
@@ -445,8 +450,10 @@ if __name__ == '__main__':
 
                     seq_loss = 0
                     for s in range(config.seq_len):
-
-                        angles_df, emg_timestep = anglesProcess.outputQ.get(timeout=2)
+                        try:
+                            angles_df, emg_timestep = anglesProcess.outputQ.get(timeout=4)
+                        except:
+                            model.save(join(save_path, f'{config.name}-online_last.pt'))
                         start_time = time()
                         angles_history.append(angles_df.loc[config.targets].values)
 

@@ -53,7 +53,7 @@ parameters:
     value: 1000
 
   seq_len:
-    value: 32
+    value: 64
 
   targets:
     value:
@@ -109,7 +109,7 @@ parameters:
 #      model_type: GRU,
 #            hidden_size: 100,
 #            n_layers: 4,
-      n_freeze_epochs: 0,
+      n_freeze_epochs: 1,
       }
 
   joint_model:
@@ -123,7 +123,7 @@ parameters:
 #            hidden_size: 100,
 #            n_layers: 4,
              model_type: PhysJointModel,
-      n_freeze_epochs: 0,
+      n_freeze_epochs: 1,
              speed_mode: False,
       }
 

@@ -93,7 +93,7 @@ class InputThread(Thread):
 
     def reset(self):
         while not self.outputQ.empty():  # Clear the queue
-            self.outputQ.get()
+            self.outputQ.get(timeout=4)
 
 
 class SaveThread(Thread):
@@ -114,7 +114,7 @@ class SaveThread(Thread):
 
         while not self.killEvent.is_set():
             if not self.inputQ.empty():
-                frame, emg_timestep = self.inputQ.get()
+                frame, emg_timestep = self.inputQ.get(timeout=4)
                 if frame is not None:
                     out.write(frame)
                     self.emg_data.append(emg_timestep)
@@ -201,11 +201,11 @@ class JointsProcess(Process):
         indexer = 0
         # empty the queue:
         while not vc.outputQ.empty():
-            vc.outputQ.get()
+            vc.outputQ.get(timeout=4)
 
         with tqdm(total=self.calibration_frames) as pbar:
             while indexer < self.calibration_frames:
-                frame = vc.outputQ.get()[0]
+                frame = vc.outputQ.get(timeout=4)[0]
                 if frame is None:
                     continue
                 if system_name == 'Darwin':
@@ -284,8 +284,8 @@ class JointsProcess(Process):
         t2 = time()
         t3 = time()
         t4 = time()
-        while not self.killEvent.is_set():
-            frame, emg_timestep = vc.outputQ.get()
+        while True:  # not self.killEvent.is_set():
+            frame, emg_timestep = vc.outputQ.get(timeout=4)
             if frame is None:
                 self.write((None, emg_timestep))
                 continue
@@ -402,7 +402,8 @@ class JointsProcess(Process):
             self.write((joints_df, emg_timestep))
             self.fps.value = 1 / (time() - start_time)
             self.input_fps.value = vc.fps.value
-        vc.killEvent.set()
+            if self.killEvent.is_set():
+                vc.killEvent.set()
         vc.join()
 
     def write(self, data):
@@ -413,7 +414,7 @@ class JointsProcess(Process):
             pass
     def reset(self):
         while not self.outputQ.empty():
-            self.outputQ.get()
+            self.outputQ.get(timeout=4)
 
 
 class AnglesProcess(Process):
@@ -435,13 +436,13 @@ class AnglesProcess(Process):
 
         joints_df = None
         while joints_df is None: # make sure the first frame is not None
-            joints_df, emg_timestep = self.inputQ.get()
+            joints_df, emg_timestep = self.inputQ.get(timeout=4)
         angles_df = anglesHelper.getArmAngles(joints_df, sides)
         angles_df = angles_df.reindex(range(max_interpolation_steps))
         self.initialized.set()
 
-        while not self.killEvent.is_set():
-            joints_df, emg_timestep = self.inputQ.get()
+        while True:  # not self.killEvent.is_set():
+            joints_df, emg_timestep = self.inputQ.get(timeout=4)
             emg_buffer.append(emg_timestep)
             if joints_df is None:
                 continue
@@ -468,7 +469,7 @@ class AnglesProcess(Process):
 
     def reset(self):
         while not self.outputQ.empty():
-            self.outputQ.get()
+            self.outputQ.get(timeout=4)
 
 
 class VisualizeProcess(Process):
@@ -554,7 +555,7 @@ class VisualizeProcess(Process):
         self.initialized.set()  # Signal that the initialization is complete
 
         while not self.killEvent.is_set():
-            target_angles, pred_angles = self.inputQ.get()
+            target_angles, pred_angles = self.inputQ.get(timeout=4)
             time_start = time()
 
             target_angles = rescale_data(target_angles, self.intact_hand)
@@ -620,6 +621,7 @@ class ProcessManager:
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument('-c', '--camera_id', type=int, default=0, help='Camera ID')
+    args = parser.parse_args()
     mediapipe_test = True
     if mediapipe_test:
         print(system_name)

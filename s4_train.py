@@ -69,8 +69,11 @@ if __name__ == '__main__':
 
     test_dirs = [join('data', args.person_dir, 'recordings', recording, 'experiments', '1') for recording in
                  config.test_recordings] if config.test_recordings is not None else []
-
-    perturb_file = join('data', args.person_dir, 'recordings', args.experiment_name, 'perturber.npy') if args.perturb else None
+    if args.evaluate:
+        perturb_file = join('data', args.person_dir, 'online_trials', args.experiment_name,
+                            'perturber.npy')
+    else:
+        perturb_file = None
 
     trainsets, valsets, combined_sets, testsets = get_data(config, data_dirs, args.intact_hand, visualize=args.visualize, test_dirs=test_dirs, perturb_file=perturb_file)
 

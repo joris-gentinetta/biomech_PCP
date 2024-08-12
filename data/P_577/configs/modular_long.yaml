@@ -1,4 +1,4 @@
-name: mikey_modular_online_2
+name: P_684_long
 method: grid
 
 metric:
@@ -8,25 +8,25 @@ metric:
 parameters:
   recordings:
     value:
-    - thumbFlEx_1
-    - thumbAbAd_1
-    - indexFlEx_1
-    - mrpFlEx_1
-    - fingersFlEx_1
-    - wristFlEx_1
-    - handOpCl_1
-    - pinchOpCl_1
-    - pointOpCl_1
-#    - keyOpCl_1
-#    - wristFlHandCl_1
-#    - indexFlDigitsEx_1
+    - thumbFlEx
+    - thumbAbAd
+    - indexFlEx
+    - mrpFlEx
+    - fingersFlEx
+    - wristFlEx
+    - handOpCl
+    - pinchOpCl
+    - pointOpCl
+#    - keyOpCl
+#    - wristFlHandCl
+#    - indexFlDigitsEx
 
 
   test_recordings:
     value:
-    - keyOpCl_1
-    - wristFlHandCl_1
-    - indexFlDigitsEx_1
+    - keyOpCl
+    - wristFlHandCl
+    - indexFlDigitsEx
 
   features:
     value:
@@ -53,7 +53,7 @@ parameters:
     value: 40
 
   seq_len:
-    value: 64
+    value: 128
 
   targets:
     value:
@@ -76,7 +76,7 @@ parameters:
     value: online
 
   wandb_project:
-    value: mikey_modular_online
+    value: study_participants
 
   model_type:
     value: ModularModel

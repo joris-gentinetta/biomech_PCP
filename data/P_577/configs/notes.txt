@@ -1,0 +1,119 @@
+    - [emg, '0'] # 0
+    - [emg, '1'] # 1
+    - [emg, '2'] # 2
+    - [emg, '4'] # 3
+    - [emg, '10'] # 4
+    - [emg, '11'] # 5
+    - [emg, '12'] # 6
+    - [emg, '13'] # 7
+
+          python s7_online_learning.py --save_input --person_dir P_577 --experiment_name test2 --intact_hand Left --config_name modular --camera 0
+
+          python s3_process_video.py --data_dir data/P_577/recordings/test --experiment_name 1
+          python s3_process_video.py --data_dir data/P_577/recordings/test --experiment_name 1  --intact_hand Left --plane_frames_start 370 --plane_frames_end 480 --video_start 550 --video_end 3750 --process
+
+
+
+
+  python s7_online_learning.py --save_input --person_dir P_577 --experiment_name thumbFlEx --intact_hand Left --config_name modular --camera 0
+  python s3_process_video.py --data_dir data/P_577/recordings/thumbFlEx --experiment_name 1
+  python s3_process_video.py --data_dir data/P_577/recordings/thumbFlEx --experiment_name 1  --intact_hand Left --plane_frames_start 10 --plane_frames_end 110 --video_start 10 --video_end 1810 --process
+
+  python s7_online_learning.py --save_input --person_dir P_577 --experiment_name thumbAbAd --intact_hand Left --config_name modular --camera 0
+  python s3_process_video.py --data_dir data/P_577/recordings/thumbAbAd --experiment_name 1
+  python s3_process_video.py --data_dir data/P_577/recordings/thumbAbAd --experiment_name 1  --intact_hand Left --plane_frames_start 10 --plane_frames_end 110 --video_start 10 --video_end 1810 --process
+
+  python s7_online_learning.py --save_input --person_dir P_577 --experiment_name indexFlEx --intact_hand Left --config_name modular --camera 0
+  python s3_process_video.py --data_dir data/P_577/recordings/indexFlEx --experiment_name 1
+  python s3_process_video.py --data_dir data/P_577/recordings/indexFlEx --experiment_name 1  --intact_hand Left --plane_frames_start 10 --plane_frames_end 110 --video_start 10 --video_end 1810 --process
+
+  python s7_online_learning.py --save_input --person_dir P_577 --experiment_name mrpFlEx --intact_hand Left --config_name modular --camera 0
+  python s3_process_video.py --data_dir data/P_577/recordings/mrpFlEx --experiment_name 1
+  python s3_process_video.py --data_dir data/P_577/recordings/mrpFlEx --experiment_name 1  --intact_hand Left --plane_frames_start 10 --plane_frames_end 110 --video_start 10 --video_end 1810 --process
+
+  python s7_online_learning.py --save_input --person_dir P_577 --experiment_name fingersFlEx --intact_hand Left --config_name modular --camera 0
+  python s3_process_video.py --data_dir data/P_577/recordings/fingersFlEx --experiment_name 1
+  python s3_process_video.py --data_dir data/P_577/recordings/fingersFlEx --experiment_name 1  --intact_hand Left --plane_frames_start 10 --plane_frames_end 110 --video_start 10 --video_end 1810 --process
+
+  python s7_online_learning.py --save_input --person_dir P_577 --experiment_name handOpCl --intact_hand Left --config_name modular --camera 0
+  python s3_process_video.py --data_dir data/P_577/recordings/handOpCl --experiment_name 1
+  python s3_process_video.py --data_dir data/P_577/recordings/handOpCl --experiment_name 1  --intact_hand Left --plane_frames_start 10 --plane_frames_end 110 --video_start 10 --video_end 1810 --process
+
+  python s7_online_learning.py --save_input --person_dir P_577 --experiment_name pinchOpCl --intact_hand Left --config_name modular --camera 0
+  python s3_process_video.py --data_dir data/P_577/recordings/pinchOpCl --experiment_name 1
+  python s3_process_video.py --data_dir data/P_577/recordings/pinchOpCl --experiment_name 1  --intact_hand Left --plane_frames_start 10 --plane_frames_end 110 --video_start 10 --video_end 1810 --process
+
+  python s7_online_learning.py --save_input --person_dir P_577 --experiment_name pointOpCl --intact_hand Left --config_name modular --camera 0
+  python s3_process_video.py --data_dir data/P_577/recordings/pointOpCl --experiment_name 1
+  python s3_process_video.py --data_dir data/P_577/recordings/pointOpCl --experiment_name 1  --intact_hand Left --plane_frames_start 10 --plane_frames_end 110 --video_start 10 --video_end 1810 --process
+
+  python s7_online_learning.py --save_input --person_dir P_577 --experiment_name keyOpCl --intact_hand Left --config_name modular --camera 0
+  python s3_process_video.py --data_dir data/P_577/recordings/keyOpCl --experiment_name 1
+  python s3_process_video.py --data_dir data/P_577/recordings/keyOpCl --experiment_name 1  --intact_hand Left --plane_frames_start 10 --plane_frames_end 110 --video_start 10 --video_end 1810 --process
+
+  python s7_online_learning.py --save_input --person_dir P_577 --experiment_name indexFlDigitsEx --intact_hand Left --config_name modular --camera 0
+  python s3_process_video.py --data_dir data/P_577/recordings/indexFlDigitsEx --experiment_name 1
+  python s3_process_video.py --data_dir data/P_577/recordings/indexFlDigitsEx --experiment_name 1  --intact_hand Left --plane_frames_start 10 --plane_frames_end 110 --video_start 10 --video_end 1810 --process
+
+
+  python s7_online_learning.py --save_input --person_dir P_577 --experiment_name wristFlEx --intact_hand Left --config_name modular --camera 0
+  python s3_process_video.py --data_dir data/P_577/recordings/wristFlEx --experiment_name 1
+  python s3_process_video.py --data_dir data/P_577/recordings/wristFlEx --experiment_name 1  --intact_hand Left --plane_frames_start 10 --plane_frames_end 110 --video_start 400 --video_end 2200 --process
+
+  python s7_online_learning.py --save_input --person_dir P_577 --experiment_name wristFlHandCl --intact_hand Left --config_name modular --camera 0
+  python s3_process_video.py --data_dir data/P_577/recordings/wristFlHandCl --experiment_name 1
+  python s3_process_video.py --data_dir data/P_577/recordings/wristFlHandCl --experiment_name 1  --intact_hand Left --plane_frames_start 10 --plane_frames_end 110 --video_start 400 --video_end 2200 --process
+
+
+
+  conda activate PCP
+
+  python s4_train.py --person_dir P_577 --intact_hand Left --config_name modular -t -s
+  python s4_train.py --person_dir P_577 --intact_hand Left --config_name EtE -t -s
+  python s4_train.py --person_dir P_577 --intact_hand Left --config_name modular -v
+
+
+
+
+  python s7_online_learning.py --person_dir P_577 --intact_hand Left --config_name modular_online --save_model --experiment_name test10 --camera 0 --calibration_frames 60 --perturb --allow_tf32
+  python s7_online_learning.py --person_dir P_577 --intact_hand Left --config_name modular_online --save_model  --experiment_name test5 --camera 0 --calibration_frames 60 --perturb
+
+
+  python s7_online_learning.py --person_dir P_577 --intact_hand Left --config_name modular_online --save_model --experiment_name perturb --camera 0 --calibration_frames 60 --perturb --allow_tf32
+
+  python s7_online_learning.py --person_dir P_577 --intact_hand Left --config_name modular_online --save_model --experiment_name non_perturb --camera 0 --calibration_frames 60 --allow_tf32
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
