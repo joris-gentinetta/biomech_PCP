@@ -75,11 +75,7 @@
 
 
 
-
-  python s7_online_learning.py --person_dir P_407 --intact_hand Left --config_name modular_online --save_model --experiment_name test2 --camera 0 --calibration_frames 60 --perturb --allow_tf32
-  python s7_online_learning.py --person_dir P_407 --intact_hand Left --config_name modular_online --save_model  --experiment_name test2 --camera 0 --calibration_frames 60 --perturb
-
-
+  python s7_online_learning.py --person_dir P_407 --intact_hand Left --config_name modular_online --save_model --experiment_name test1 --camera 0 --calibration_frames 60 --perturb --allow_tf32
 
 
   python s7_online_learning.py --person_dir P_407 --intact_hand Left --config_name modular_online --save_model --experiment_name perturb --camera 0 --calibration_frames 60 --perturb --allow_tf32

@@ -172,20 +172,31 @@ class psyonicControllers():
 			output = output.squeeze().to('cpu').detach().numpy()
 			for j, target in enumerate(self.targets):
 				self.output_dict[target] = output[j]
-			self.output_dict['thumbInPlaneAng'] = self.output_dict['thumbInPlaneAng'] - math.pi
-			# self.output_dict['wristRot'] = (self.output_dict['wristRot'] * 2) - math.pi
-			self.output_dict['wristFlex'] = (self.output_dict['wristFlex'] - math.pi / 2)
-			# todo
-			# emg.printNormedEMG()
+			# self.output_dict['thumbInPlaneAng'] = self.output_dict['thumbInPlaneAng'] - math.pi
+			# # self.output_dict['wristRot'] = (self.output_dict['wristRot'] * 2) - math.pi
+			# self.output_dict['wristFlex'] = (self.output_dict['wristFlex'] - math.pi / 2)
+			# # todo
+			# # emg.printNormedEMG()
+			#
+			# jointPos[0] = np.rad2deg(self.output_dict['indexAng'] * math.pi)
+			# jointPos[1] = np.rad2deg(self.output_dict['midAng'] * math.pi)
+			# jointPos[2] = np.rad2deg(self.output_dict['ringAng'] * math.pi)
+			# jointPos[3] = np.rad2deg(self.output_dict['pinkyAng'] * math.pi)
+			# jointPos[4] = np.rad2deg(self.output_dict['thumbOutPlaneAng'] * math.pi)
+			# jointPos[5] = np.rad2deg(self.output_dict['thumbInPlaneAng'] * math.pi)
 
-			jointPos[0] = np.rad2deg(self.output_dict['indexAng'] * math.pi)
-			jointPos[1] = np.rad2deg(self.output_dict['midAng'] * math.pi)
-			jointPos[2] = np.rad2deg(self.output_dict['ringAng'] * math.pi)
-			jointPos[3] = np.rad2deg(self.output_dict['pinkyAng'] * math.pi)
-			jointPos[4] = np.rad2deg(self.output_dict['thumbOutPlaneAng'] * math.pi)
-			jointPos[5] = np.rad2deg(self.output_dict['thumbInPlaneAng'] * math.pi)
+				self.output_dict[target] = self.output_dict[target].clip(-1, 1)
+				self.output_dict[target] = (self.output_dict[target] * math.pi + math.pi) / 2
+			# self.output_dict['wristFlex'] = self.output_dict['wristFlex'] - math.pi / 2
+			# self.output_dict['wristRot'] = (self.output_dict['wristRot'] * 2) - math.pi
+			self.output_dict['thumbInPlaneAng'] = self.output_dict['thumbInPlaneAng'] - math.pi
 
 			# for i in range(6):
 			# 	jointPos[i] = (np.rad2deg(self.output_dict['indexAng'] * math.pi) - 60) * 5
-
+			jointPos[0] = np.rad2deg(self.output_dict['indexAng'])
+			jointPos[1] = np.rad2deg(self.output_dict['midAng'])
+			jointPos[2] = np.rad2deg(self.output_dict['ringAng'])
+			jointPos[3] = np.rad2deg(self.output_dict['pinkyAng'])
+			jointPos[4] = np.rad2deg(self.output_dict['thumbOutPlaneAng'])
+			jointPos[5] = np.rad2deg(self.output_dict['thumbInPlaneAng'])
 		return jointPos
