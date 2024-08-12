@@ -4,7 +4,6 @@ import pandas as pd
 
 pd.options.mode.copy_on_write = True
 idx = pd.IndexSlice
-import multiprocessing
 
 import warnings
 
@@ -14,7 +13,6 @@ import argparse
 import os
 import yaml
 import numpy as np
-os.environ["WANDB_AGENT_MAX_INITIAL_FAILURES"] = "1000000"
 
 os.environ['PYTORCH_ENABLE_MPS_FALLBACK'] = '1'
 import wandb
@@ -23,70 +21,101 @@ from torch.utils.data import DataLoader
 from helpers.models import TimeSeriesRegressorWrapper
 from tqdm import tqdm
 from os.path import join
-
+import signal
+import cv2
 torch.autograd.set_detect_anomaly(True)
+from multiprocessing import Queue as MPQueue
 
-from helpers.predict_utils import Config, OLDataset, evaluate_model, EarlyStopper, get_data, load_data
+from helpers.predict_utils import Config, OLDataset, evaluate_model, EarlyStopper, get_data
+from online_utils import JointsProcess, AnglesProcess, VisualizeProcess, ProcessManager, InputThread, SaveThread
 
 
-parser = argparse.ArgumentParser(description='Timeseries data analysis')
-parser.add_argument('--person_dir', type=str, required=True, help='Person directory')
-parser.add_argument('--intact_hand', type=str, required=True, help='Intact hand (Right/Left)')
-parser.add_argument('--config_name', type=str, required=True, help='Training configuration')
-parser.add_argument('--allow_tf32', action='store_true', help='Allow TF32')
-parser.add_argument('-en', '--experiment_name', type=str, required=True, help='Experiment name')
-args = parser.parse_args()
+if __name__ == '__main__':
+    parser = argparse.ArgumentParser(description='Timeseries data analysis')
+    parser.add_argument('--person_dir', type=str, required=True, help='Person directory')
+    parser.add_argument('--intact_hand', type=str, required=True, help='Intact hand (Right/Left)')
+    parser.add_argument('--config_name', type=str, required=True, help='Training configuration')
+    parser.add_argument('--allow_tf32', action='store_true', help='Allow TF32')
+    parser.add_argument('-s', '--save_model', action='store_true', help='Save a model') # todo
+    parser.add_argument('--offline', action='store_true', help='Offline training')
+    parser.add_argument('-v', '--visualize', action='store_true', help='Visualize hand movements')
+    parser.add_argument('-en', '--experiment_name', type=str, required=True, help='Experiment name')
+    parser.add_argument('-c', '--camera', type=int, required=False, help='Camera id')
+    parser.add_argument('-si', '--save_input', action='store_true', help='Save input data')
+    parser.add_argument('-cf', '--calibration_frames', type=int, default=20, help='Number of calibration frames')
+    parser.add_argument('-p', '--perturb', action='store_true', help='Perturb the data')
+    parser.add_argument('--keep_states', action='store_true', help='Keep states in history')
+    args = parser.parse_args()
 
-model_name = 'mikey_modular_online_1'
-
-def online_train_model():
-    with wandb.init():
-        config = wandb.config
-
+    if args.save_input:
+        save_path = join('data', args.person_dir, 'recordings', args.experiment_name)
+    else:
         save_path = join('data', args.person_dir, 'online_trials', args.experiment_name, 'models')
 
+    if os.path.exists(save_path) and not args.offline:
+        raise Exception('Experiment already exists!')
+    os.makedirs(save_path, exist_ok=True)
 
-        os.makedirs(save_path, exist_ok=True)
-
-        epoch_len = 10
-
-
-        if torch.cuda.is_available():
-            device = torch.device("cuda")
-            print('Using CUDA')
+    processManager = ProcessManager()
+    signal.signal(signal.SIGINT, processManager.signal_handler)
 
 
-        # elif torch.backends.mps.is_available():
-        #     device = torch.device("mps")
-        #     print('Using MPS')
-        else:
-            device = torch.device("cpu")
-            print('Using CPU')
+    epoch_len = 10
+    # sampling_frequency = 60
+    calibration_frames = 30  # todo
+    queue_size = 50
 
-        if args.allow_tf32:
-            torch.backends.cuda.matmul.allow_tf32 = True
-            print('TF32 enabled')
+    if torch.cuda.is_available():
+        device = torch.device("cuda")
+        print('Using CUDA')
 
 
+    # elif torch.backends.mps.is_available():
+    #     device = torch.device("mps")
+    #     print('Using MPS')
+    else:
+        device = torch.device("cpu")
+        print('Using CPU')
+
+    if args.allow_tf32:
+        torch.backends.cuda.matmul.allow_tf32 = True
+        print('TF32 enabled')
+
+    with open(join('data', args.person_dir, 'configs', f'{args.config_name}.yaml'), 'r') as file:
+        wandb_config = yaml.safe_load(file)
+        config = Config(wandb_config)
+
+    emg_channels = [int(feature[1]) for feature in config.features]
+
+    if args.perturb:
+        perturber = np.abs(np.eye(8) + np.random.normal(0, .25, (len(emg_channels), len(emg_channels))))
+    else:
+        perturber = np.eye(8)
+    perturb_file = join('data', args.person_dir, 'online_trials', args.experiment_name, 'perturber.npy')
+    np.save(perturb_file, perturber)
+    perturber = torch.tensor(perturber, device=device, dtype=torch.float32)
+
+    with open(join('data', args.person_dir, 'configs', f'{args.config_name}.yaml'), 'r') as file:
+        wandb_config = yaml.safe_load(file)
+        config = Config(wandb_config)
 
 
-        # if config.perturb:
-        #     perturber = np.abs(np.eye(8) + np.random.normal(0, .25, (len(emg_channels), len(emg_channels))))
-        # else:
-        #     perturber = np.eye(8)
+
+    if args.save_input:
+        temp_vc = cv2.VideoCapture(args.camera)
+        width = temp_vc.get(cv2.CAP_PROP_FRAME_WIDTH)
+        height = temp_vc.get(cv2.CAP_PROP_FRAME_HEIGHT)
+        temp_vc.release()
+
+        vc = InputThread(src=args.camera, queueSize=queue_size, save=True)
+        processManager.manage_process(vc)
+        while not vc.outputQ.empty():
+            vc.outputQ.get()
+        st = SaveThread(vc.outputQ, frame_size=(int(width), int(height)), save_path=save_path)
+        processManager.manage_process(st)
 
 
-
-        if config.perturb:
-            perturb_file = join('data', args.person_dir, 'online_trials', args.experiment_name, 'perturber.npy')
-        else:
-            perturb_file = join('data', args.person_dir, 'online_trials', args.experiment_name, 'eye.npy')
-
-        # np.save(perturb_file, perturber)
-        perturber = np.load(perturb_file)
-        # perturber = torch.tensor(perturber, device=device, dtype=torch.float32)
-
-
+    elif args.offline:
         data_dirs = [join('data', args.person_dir, 'recordings', recording, 'experiments', '1') for recording in
                      config.recordings]
 
@@ -96,18 +125,13 @@ def online_train_model():
         trainsets, valsets, combined_sets, testsets = get_data(config, data_dirs, args.intact_hand, visualize=False,
                                                       test_dirs=test_dirs, perturb_file=perturb_file)
 
-
-
-        data_dir = join('data', args.person_dir, 'recordings', config.train_recording, 'experiments', '1')
-        data = load_data(data_dir, args.intact_hand, config.features, perturber)
-        trainsets = [data]
-
-
+        wandb.init(mode=config.wandb_mode, project=config.wandb_project, name=config.name, config=config)
+        config = wandb.config
 
         model = TimeSeriesRegressorWrapper(device=device, input_size=len(config.features),
                                            output_size=len(config.targets),
                                            **config)
-        model.load(join('data', args.person_dir, 'models', f'{model_name}.pt'))
+        model.load(join('data', args.person_dir, 'models', f'{config.name}.pt'))
         model.to(device)
         model.train()
 
@@ -120,6 +144,10 @@ def online_train_model():
             for param in model.model.joint_model.parameters():
                 param.requires_grad = False if epoch < config.joint_model['n_freeze_epochs'] else True
 
+        if args.visualize:
+            visualizeQueue = MPQueue(queue_size)
+            visualizeProcess = VisualizeProcess(args.intact_hand, visualizeQueue)
+            processManager.manage_process(visualizeProcess)
 
         frame_id = 0
 
@@ -137,17 +165,17 @@ def online_train_model():
         states_history = []
 
         x, y, _ = next(train_dataloader)
-        angles_history.append(y.squeeze(0).cpu().numpy())
-        emg_history.append(x.squeeze(0).cpu().numpy())
+        angles_history.append(y.squeeze(0).numpy())
+        emg_history.append(x.squeeze(0).numpy())
 
         x, y, all_y = next(train_dataloader)
-        angles_history.append(y.squeeze(0).cpu().numpy())
-        emg_history.append(x.squeeze(0).cpu().numpy())
+        angles_history.append(y.squeeze(0).numpy())
+        emg_history.append(x.squeeze(0).numpy())
 
-        angles_df.loc[:] = all_y.squeeze(0).cpu().numpy()
+        angles_df.loc[:] = all_y.squeeze(0).numpy()
 
 
-        if config.keep_states:
+        if args.keep_states:
             # states = model.model.get_starting_states(1, torch.tensor(angles_history[-2:], dtype=torch.float32).unsqueeze(0).unsqueeze(1).to(device))
             history_samples = [1 for _ in range(config.batch_size)]
             x = np.concatenate([np.concatenate(
@@ -195,7 +223,7 @@ def online_train_model():
                 for i in range(epoch_len):
                     history_samples = np.random.randint(1, len(angles_history), size=config.batch_size-1)
                     history_samples = np.array([history_sample for history_sample in history_samples] + [len(angles_history) - 1])
-                    if config.keep_states:
+                    if args.keep_states:
                         if config.model_type == 'ModularModel':
                             states = [None, None, [torch.concat([states_history[history_sample][0] for history_sample in history_samples], dim=0),
                                       torch.concat([states_history[history_sample][1] for history_sample in history_samples], dim=0),
@@ -211,18 +239,14 @@ def online_train_model():
                     seq_loss = 0
                     #for x, y, all_y in train_dataloader:
                     for s in range(config.seq_len):
-                        try:
-                            x, y, all_y = next(train_dataloader)
-                        except:
-                            wandb.finish()
-                            exit(0)
+                        x, y, all_y = next(train_dataloader)
 
 
                         start_time = time()
-                        angles_history.append(y.squeeze(0).cpu().numpy())
+                        angles_history.append(y.squeeze(0).numpy())
 
-                        # perturbed = perturber @ x.squeeze(0).cpu().numpy() # already done in load_data
-                        perturbed = x.squeeze(0).cpu().numpy()
+                        # perturbed = perturber @ x.squeeze(0).numpy() # already done in load_data
+                        perturbed = x.squeeze(0).numpy()
 
                         emg_history.append(perturbed)
 
@@ -237,10 +261,19 @@ def online_train_model():
                         seq_loss = seq_loss + loss
 
 
+                        if args.visualize and not visualizeQueue.full():
+                            pred_angels_df = angles_df.copy()
+                            pred_angels_df.loc[config.targets] = outputs[-1].squeeze().to('cpu').detach().numpy()
+                            visualizeQueue.put((angles_df, pred_angels_df))
+                            counter += 1
+                        elif args.visualize:
+                            print('VisualizeProcess input queue full')
+                            print('VisualizeProcess fps: ', visualizeProcess.fps.value)
+                            pass
 
                         history_samples = history_samples + 1
 
-                        if config.keep_states:
+                        if args.keep_states:
                             if config.model_type == 'ModularModel':
                                 history_states = [states[2][st].detach() for st in range(3)]
                                 states_history.append([history_states[0][-1:], history_states[1][-1:], history_states[2][-1:]])
@@ -296,38 +329,202 @@ def online_train_model():
                 log['train_loss'] = epoch_loss
                 log['lr'] = lr
                 wandb.log(log)
-            wandb.finish()
-            exit(0)
+
                 # if early_stopper.early_stop(val_loss):
                 #     break
 
+    else:
+        data_dirs = [join('data', args.person_dir, 'recordings', recording, 'experiments', '1') for recording in
+                     config.recordings]
+
+        test_dirs = [join('data', args.person_dir, 'recordings', recording, 'experiments', '1') for recording in
+                     config.test_recordings] if config.test_recordings is not None else None
+
+        # trainsets, valsets, combined_sets, testsets = get_data(config, data_dirs, args.intact_hand, visualize=False,
+        #                                               test_dirs=test_dirs)
+
+        wandb.init(mode=config.wandb_mode, project=config.wandb_project, name=config.name, config=config)
+        config = wandb.config
+
+        model = TimeSeriesRegressorWrapper(device=device, input_size=len(config.features),
+                                           output_size=len(config.targets),
+                                           **config)
+        model.load(join('data', args.person_dir, 'models', f'{config.name}.pt'))
+        model.to(device)
+        model.train()
+
+        if config.model_type == 'ModularModel':  # todo
+            epoch = 0
+            # for param in model.model.activation_model.parameters():
+            #     param.requires_grad = False if epoch < config.activation_model['n_freeze_epochs'] else True
+            for param in model.model.muscle_model.parameters():
+                param.requires_grad = False if epoch < config.muscle_model['n_freeze_epochs'] else True
+            for param in model.model.joint_model.parameters():
+                param.requires_grad = False if epoch < config.joint_model['n_freeze_epochs'] else True
+
+        if args.visualize:
+            visualizeQueue = MPQueue(queue_size)
+            visualizeProcess = VisualizeProcess(args.intact_hand, visualizeQueue)
+            processManager.manage_process(visualizeProcess)
+
+        joint_to_angles_Q = MPQueue(queue_size)
+        anglesProcess = AnglesProcess(args.intact_hand, queue_size, joint_to_angles_Q)
+        jointsProcess = JointsProcess(args.intact_hand, queue_size, joint_to_angles_Q, save_path, args.camera, args.save_input, args.calibration_frames)
+        processManager.manage_process(jointsProcess)
+        processManager.manage_process(anglesProcess)
 
 
-def wandb_process(sweep_id):
-    wandb.agent(sweep_id,
-                online_train_model)
-    # print(arguments['id'])
 
-if __name__ == '__main__':
+        frame_id = 0
 
-    with open(join('data', args.person_dir, 'configs', f'{args.config_name}.yaml'), 'r') as file:
-        wandb_config = yaml.safe_load(file)
-        config = Config(wandb_config)
+        print('Training model...')
+        best_val_loss = float('inf')
+        fps = 0
+        true_start_time = time()
 
-    ########################### todo remove
-    # emg_channels = [int(feature[1]) for feature in config.features]
-    # perturber = np.abs(np.eye(8) + np.random.normal(0, .25, (len(emg_channels), len(emg_channels))))
-    # os.makedirs(join('data', args.person_dir, 'online_trials', args.experiment_name), exist_ok=True)
-    # np.save(join('data', args.person_dir, 'online_trials', args.experiment_name, 'perturber.npy'), perturber)
-    #
-    # perturber = np.eye(8)
-    # np.save(join('data', args.person_dir, 'online_trials', args.experiment_name, 'eye.npy'), perturber)
-    # exit('Perturber saved')
-    ###########################
 
-    sweep_id = wandb.sweep(wandb_config, project=config.wandb_project)
-    # wandb.agent(sweep_id, online_train_model)
+        for i in range(60):
+            _, _ = anglesProcess.outputQ.get(timeout=2)
 
-    pool = multiprocessing.Pool(processes=4)
-    pool.map(wandb_process, [sweep_id for i in range(4)])
+        angles_history = []
+        emg_history = []
+        states_history = []
 
+        angles_df, emg_timestep = anglesProcess.outputQ.get(timeout=2)
+        angles_history.append(angles_df.loc[config.targets].values)
+        emg_history.append(emg_timestep[emg_channels])
+
+        angles_df, emg_timestep = anglesProcess.outputQ.get(timeout=2)
+        angles_history.append(angles_df.loc[config.targets].values)
+        emg_history.append(emg_timestep[emg_channels])
+
+        if args.keep_states:
+            # states = model.model.get_starting_states(1, torch.tensor(angles_history[-2:], dtype=torch.float32).unsqueeze(0).unsqueeze(1).to(device))
+            history_samples = [1 for _ in range(config.batch_size)]
+            x = np.concatenate([np.concatenate(
+                [np.expand_dims(np.expand_dims(ah, axis=0), axis=1) for ah in angles_history[hs - 1: hs + 1]], axis=1)
+                                for hs in history_samples], axis=0)
+            x = torch.tensor(x, dtype=torch.float32).to(device)
+            states = model.model.get_starting_states(config.batch_size, x)
+
+            if config.model_type == 'ModularModel':
+                states_history.append([states[2][st][-1:].detach() for st in range(3)])
+                states_history.append([states[2][st][-1:].detach() for st in range(3)])
+                states_history.append([states[2][st][-1:].detach() for st in range(3)])
+
+            else:
+                states_history.append(states[:, -1:, :].detach())
+                states_history.append(states[:, -1:, :].detach())
+                states_history.append(states[:, -1:, :].detach())
+        model.save(join('data', args.person_dir, args.experiment_name, 'models', f'{config.name}-{0}.pt'))
+
+
+        print('Training model...')
+        with tqdm(range(1, config.n_epochs + 1)) as pbar:
+            for epoch in pbar:
+                epoch_loss = 0
+
+                pbar.set_description(f'Epoch {epoch}')
+                epoch_start_time = time()
+                counter = 0
+                for i in range(epoch_len):
+                    history_samples = np.random.randint(1, len(angles_history), size=config.batch_size-1)
+                    history_samples = np.array([history_sample for history_sample in history_samples] + [len(angles_history) - 1])
+                    if args.keep_states:
+                        if config.model_type == 'ModularModel':
+                            states = [None, None, [torch.concat([states_history[history_sample][0] for history_sample in history_samples], dim=0),
+                                      torch.concat([states_history[history_sample][1] for history_sample in history_samples], dim=0),
+                                        torch.concat([states_history[history_sample][2] for history_sample in history_samples], dim=0)]]
+
+                        else:
+                            states = torch.concat([states_history[history_sample] for history_sample in history_samples], dim=1)
+                    else:
+                        x = np.concatenate([np.concatenate([np.expand_dims(np.expand_dims(ah, axis=0), axis=1)  for ah in angles_history[hs-1: hs+1]], axis=1) for hs in history_samples], axis=0)
+                        x = torch.tensor(x, dtype=torch.float32).to(device)
+                        states = model.model.get_starting_states(config.batch_size, x)
+
+                    seq_loss = 0
+                    for s in range(config.seq_len):
+
+                        angles_df, emg_timestep = anglesProcess.outputQ.get(timeout=2)
+                        start_time = time()
+                        angles_history.append(angles_df.loc[config.targets].values)
+
+                        perturbed = perturber @ emg_timestep[emg_channels]
+
+                        emg_history.append(perturbed)
+
+                        y = torch.stack([torch.tensor(angles_history[history_sample], dtype=torch.float32) for history_sample in history_samples], dim=0).unsqueeze(1).to(device)
+                        x = torch.stack([torch.tensor(emg_history[history_sample], dtype=torch.float32) for history_sample in history_samples], dim=0).unsqueeze(1).to(device)
+
+
+                        outputs, states = model.model(x, states)
+                        # print('y: ', y)
+                        # print('outputs: ', outputs)
+                        loss = model.criterion(outputs, y)
+                        seq_loss = seq_loss + loss
+
+
+                        if args.visualize and not visualizeQueue.full():
+                            pred_angels_df = angles_df.copy()
+                            pred_angels_df.loc[config.targets] = outputs[-1].squeeze().to('cpu').detach().numpy()
+                            visualizeQueue.put((angles_df, pred_angels_df))
+                            counter += 1
+                        elif args.visualize:
+                            print('VisualizeProcess input queue full')
+                            print('VisualizeProcess fps: ', visualizeProcess.fps.value)
+                            pass
+
+                        history_samples = history_samples + 1
+
+                        if args.keep_states:
+                            if config.model_type == 'ModularModel':
+                                history_states = [states[2][st].detach() for st in range(3)]
+                                states_history.append([history_states[0][-1:], history_states[1][-1:], history_states[2][-1:]])
+                                for hs in range(len(history_samples)-1):
+                                    states_history[history_samples[hs]] = [history_states[0][hs:hs+1], history_states[1][hs:hs+1], history_states[2][hs:hs+1]]
+
+                            else:
+                                history_states = states.detach()
+                                states_history.append(history_states[:, -1:, :])
+
+                                for hs in range(len(history_samples)-1):
+                                    states_history[history_samples[hs]] = history_states[:, hs:hs+1, :]
+
+
+                    model.optimizer.zero_grad(set_to_none=True)
+                    seq_loss = seq_loss / config.seq_len
+                    seq_loss.backward()
+                    torch.nn.utils.clip_grad_norm_(model.model.parameters(), 4)
+                    model.optimizer.step()
+                    if config.model_type == 'ModularModel':
+                        states = [None, None, [states[2][st].detach() for st in range(3)]]
+                    else:
+                        states = states.detach()
+                    wandb.log({'seq_loss': seq_loss.item()})
+                    epoch_loss = epoch_loss + seq_loss.item()
+                    trunctuator = 0
+                    seq_loss = 0
+
+                    if torch.any(torch.isnan(loss)):
+                        print('NAN Loss!')
+                    fps = 1 / (time() - start_time)
+                    true_end_time = time()
+                    true_fps = 1 / (true_end_time - true_start_time)
+                    true_start_time = true_end_time
+
+                    print_fps = False
+                    if print_fps:
+                        print(f'True fps: {true_fps}')
+                        print('InputThread fps: ', jointsProcess.input_fps.value)
+                        print('JointsProcess fps: ', jointsProcess.fps.value)
+                        print('AnglesProcess fps: ', anglesProcess.fps.value)
+                        if args.visualize:
+                            print('VisualizeProcess fps: ', visualizeProcess.fps.value)
+                        print('FPS: ', fps)
+                        if trunctuator == 0:
+                            print('#################### FPS: ', fps)
+                epoch_end_time = time()
+                print('average epoch fps: ', counter / (epoch_end_time - epoch_start_time))
+
+                model.save(join(save_path, f'{config.name}-online_{epoch}.pt'))
