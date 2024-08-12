@@ -7,7 +7,7 @@ metric:
 
 parameters:
   train_recording:
-    values: [online_cycling, online_concat]
+    value: online_concat
   recordings:
     value:
     - thumbFlEx_1
@@ -49,13 +49,13 @@ parameters:
     value: 0.05
 
   learning_rate:
-    values: [0.005, 0.001, 0.0001]
+    values: [0.01, 0.005]
 
   n_epochs:
     value: 1000
 
   seq_len:
-    values: [ 32, 64]
+    value: 32
 
   targets:
     value:
@@ -72,10 +72,10 @@ parameters:
     value: 10
 
   batch_size:
-    values: [8, 16]
+    values: [16, 32]
 
   wandb_mode:
-    value: disabled
+    value: online
 
   wandb_project:
     value: mikey_modular_online
@@ -134,7 +134,7 @@ parameters:
 #      }
 
   perturb:
-    values: [True, False]
+    value: True
 
   keep_states:
     values: [True, False]

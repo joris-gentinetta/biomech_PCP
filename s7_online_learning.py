@@ -4,6 +4,7 @@ import pandas as pd
 
 pd.options.mode.copy_on_write = True
 idx = pd.IndexSlice
+import multiprocessing
 
 import warnings
 
@@ -300,6 +301,13 @@ def online_train_model():
                 # if early_stopper.early_stop(val_loss):
                 #     break
 
+
+
+def wandb_process(sweep_id):
+    wandb.agent(sweep_id,
+                online_train_model)
+    # print(arguments['id'])
+
 if __name__ == '__main__':
 
     with open(join('data', args.person_dir, 'configs', f'{args.config_name}.yaml'), 'r') as file:
@@ -307,16 +315,19 @@ if __name__ == '__main__':
         config = Config(wandb_config)
 
     ########################### todo remove
-    emg_channels = [int(feature[1]) for feature in config.features]
-    perturber = np.abs(np.eye(8) + np.random.normal(0, .25, (len(emg_channels), len(emg_channels))))
-    np.save(join('data', args.person_dir, 'online_trials', args.experiment_name, 'perturber.npy'), perturber)
-
-    perturber = np.eye(8)
-    np.save(join('data', args.person_dir, 'online_trials', args.experiment_name, 'eye.npy'), perturber)
-    exit('Perturber saved')
+    # emg_channels = [int(feature[1]) for feature in config.features]
+    # perturber = np.abs(np.eye(8) + np.random.normal(0, .25, (len(emg_channels), len(emg_channels))))
+    # os.makedirs(join('data', args.person_dir, 'online_trials', args.experiment_name), exist_ok=True)
+    # np.save(join('data', args.person_dir, 'online_trials', args.experiment_name, 'perturber.npy'), perturber)
+    #
+    # perturber = np.eye(8)
+    # np.save(join('data', args.person_dir, 'online_trials', args.experiment_name, 'eye.npy'), perturber)
+    # exit('Perturber saved')
     ###########################
 
     sweep_id = wandb.sweep(wandb_config, project=config.wandb_project)
-    wandb.agent(sweep_id, online_train_model)
-    # pool = multiprocessing.Pool(processes=4)
-    # pool.map(wandb_process, [{'id': i, 'config': config, 'sweep_id': sweep_id, 'trainsets': trainsets, 'valsets': valsets, 'testsets': testsets, 'device': device} for i in range(4)])
+    # wandb.agent(sweep_id, online_train_model)
+
+    pool = multiprocessing.Pool(processes=4)
+    pool.map(wandb_process, [sweep_id for i in range(4)])
+
