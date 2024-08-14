@@ -199,4 +199,5 @@ class psyonicControllers():
 			jointPos[3] = np.rad2deg(self.output_dict['pinkyAng'])
 			jointPos[4] = np.rad2deg(self.output_dict['thumbOutPlaneAng'])
 			jointPos[5] = np.rad2deg(self.output_dict['thumbInPlaneAng'])
+
 		return jointPos

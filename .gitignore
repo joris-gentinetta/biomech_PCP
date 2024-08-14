@@ -4,3 +4,4 @@ __pycache__
 /model_files/
 /.idea/
 /dynamics/dynamics.egg-info/
+wandb
