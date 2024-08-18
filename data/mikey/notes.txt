@@ -83,5 +83,3 @@ conda activate PCP
 
 
   python s7_online_learning.py --person_dir mikey --intact_hand Left --config_name modular_online_sweep --experiment_name sweep_0
-
-  python s7_online_learning.py --person_dir mikey --intact_hand Left --config_name modular_online --save_model -v --experiment_name perturbed_1 --camera 0 --calibration_frames 60 --perturb

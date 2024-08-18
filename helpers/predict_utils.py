@@ -154,7 +154,7 @@ def train_model(trainsets, valsets, testsets, device, wandb_mode, wandb_project,
 
                 if early_stopper.early_stop(val_loss):
                     break
-
+        model.save(join('data', person_dir, 'models', f'{config.name}_bs{config.batch_size}_sl{config.seq_len}.pt'))
         return model
 
 

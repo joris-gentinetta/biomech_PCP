@@ -143,3 +143,29 @@ if __name__ == '__main__':
             print(val_loss)
 
             epoch += 1
+
+        # try:
+        #     model.load(join('data', args.person_dir, 'online_trials', args.experiment_name, 'models', f'{config.name}-online_last.pt'))
+        # except:
+        #     print('No last model found')
+        # model.to(device)
+        # val_loss, test_loss, all_losses = evaluate_model(model, valsets, testsets, device, config)
+        # if val_loss < best_val_loss:
+        #     best_val_loss = val_loss
+        #     wandb.run.summary['best_epoch'] = epoch
+        #     wandb.run.summary['best_val_loss'] = best_val_loss
+        # if test_loss < wandb.run.summary.get('best_test_loss', math.inf):
+        #     wandb.run.summary['best_test_loss'] = test_loss
+        #     wandb.run.summary['best_test_epoch'] = epoch
+        # wandb.run.summary['used_epochs'] = epoch
+        #
+        #
+        # test_recording_names = config.test_recordings if config.test_recordings is not None else []
+        # log = {f'val_loss/{(config.recordings + test_recording_names)[set_id]}': loss for set_id, loss in
+        #        enumerate(all_losses)}
+        # log['total_val_loss'] = val_loss
+        # log['total_test_loss'] = test_loss
+        # log['epoch'] = epoch
+        # wandb.log(log)
+        # wandb.run.summary['last'] = log
+        # print(val_loss)

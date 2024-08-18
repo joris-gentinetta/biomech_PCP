@@ -7,7 +7,7 @@ metric:
 
 parameters:
   train_recording:
-    value: online_concat
+    values: [online_cycling, online_concat]
   recordings:
     value:
     - thumbFlEx_1
@@ -49,13 +49,13 @@ parameters:
     value: 0.05
 
   learning_rate:
-    values: [0.005]
+    values: [0.005, 0.001, 0.0001]
 
   n_epochs:
     value: 1000
 
   seq_len:
-    values: [11, 16, 32]
+    values: [ 32, 64]
 
   targets:
     value:
@@ -72,10 +72,10 @@ parameters:
     value: 10
 
   batch_size:
-    values: [16]
+    values: [8, 16]
 
   wandb_mode:
-    value: online
+    value: disabled
 
   wandb_project:
     value: mikey_modular_online
@@ -109,7 +109,7 @@ parameters:
       model_type:
         value: PhysMuscleModel
       n_freeze_epochs:
-        values: [1]
+        values: [0, 1]
 #    value: {
 #             model_type: PhysMuscleModel,
 ##      model_type: GRU,
@@ -123,7 +123,7 @@ parameters:
       model_type:
         value: PhysJointModel
       n_freeze_epochs:
-        values: [1]
+        values: [0, 1]
 #    value: {
 ##      model_type: GRU,
 ##            hidden_size: 100,
@@ -134,7 +134,7 @@ parameters:
 #      }
 
   perturb:
-    value: False
+    values: [True, False]
 
   keep_states:
-    values: [False]
+    values: [True, False]
