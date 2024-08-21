@@ -17,7 +17,8 @@ from helpers.utils import AnglesHelper
 from helpers.visualization import Visualization
 import platform
 
-system_name = platform.system()
+# system_name = platform.system()
+system_name = 'not_darwin'
 
 import matplotlib.pyplot as plt
 
