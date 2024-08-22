@@ -100,7 +100,10 @@ def online_train_model():
 
 
 
-        data_dir = join('data', config.person_dir, 'recordings', 'online_concat', 'experiments', '1')
+        data_dir = join('data', config.person_dir, 'recordings', 'online_concat', 'experiments', '1') # todo
+        # data_dir = join('data', config.person_dir, 'recordings', 'online_concat_interp', 'experiments', '1')
+
+
         data = load_data(data_dir, args.intact_hand, config.features, perturber)
         trainsets = [data]
 
@@ -109,11 +112,11 @@ def online_train_model():
         model = TimeSeriesRegressorWrapper(device=device, input_size=len(config.features),
                                            output_size=len(config.targets),
                                            **config)
-        # model.load(join('data', config.person_dir, 'models', f'{config.person_dir}.pt')) # todo
+        model.load(join('data', config.person_dir, 'models', f'{config.person_dir}.pt'))
         model.to(device)
         model.train()
 
-        if config.model_type == 'ModularModel':  # todo
+        if config.model_type == 'ModularModel':
             epoch = 0
             # for param in model.model.activation_model.parameters():
             #     param.requires_grad = False if epoch < config.activation_model['n_freeze_epochs'] else True
