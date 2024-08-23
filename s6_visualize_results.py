@@ -77,6 +77,7 @@ if __name__ == "__main__":
         # pred_angles = angles_helper.mirror_angles(pred_angles, 'Right')
 
     physicsClient = p.connect(p.GUI)
+    p.configureDebugVisualizer(p.COV_ENABLE_GUI, 0)
     # p.setRealTimeSimulation(0)
     # p.setTimeStep(1 / 10000)
 
@@ -103,7 +104,7 @@ if __name__ == "__main__":
     #                              basePosition=[0, 0, 1])
 
 
-    camera_distance = 1.34  # Closer distance makes the "zoom" effect
+    camera_distance = 1.24  # Closer distance makes the "zoom" effect
     camera_yaw = 223  # Adjust as needed for best angle
     camera_pitch = -25  # Adjust as needed
     camera_target_position = [0.59, -0.65, -0.3]  # Focus on the center of your model or a specific part
@@ -179,10 +180,11 @@ if __name__ == "__main__":
         #     p.stepSimulation()
 
 
-        while (1 / (time.time() - t)) > 20:
-            print(i, 1 / (time.time() - t))
-            p.stepSimulation()
+        # while (1 / (time.time() - t)) > 20:
+        #     print(i, 1 / (time.time() - t))
+        #     p.stepSimulation()
         print(1 / (time.time() - t))
+        p.stepSimulation()
         t = time.time()
 
     if args.video:

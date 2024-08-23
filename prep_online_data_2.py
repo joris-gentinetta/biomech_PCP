@@ -4,21 +4,38 @@ import pandas as pd
 from pathlib import Path
 import matplotlib.pyplot as plt
 # Define the list of folders in the desired order
+# folders = [
+#     "indexFlDigitsEx",
+#     "wristFlHandCl",
+#     "keyOpCl",
+#     "pointOpCl",
+#     "pinchOpCl",
+#     "handOpCl",
+#     "wristFlEx",
+#     "fingersFlEx",
+#     "mrpFlEx",
+#     "indexFlEx",
+#     "thumbAbAd",
+#     "thumbFlEx"
+# ]
+# folders.reverse() # todo
+
 folders = [
-    "indexFlDigitsEx",
-    "wristFlHandCl",
-    "keyOpCl",
-    "pointOpCl",
-    "pinchOpCl",
-    "handOpCl",
-    "wristFlEx",
-    "fingersFlEx",
-    "mrpFlEx",
-    "indexFlEx",
-    "thumbAbAd",
-    "thumbFlEx"
+    'thumbFlEx',
+    'thumbAbAd',
+    'indexFlEx',
+    'mrpFlEx',
+    'fingersFlEx',
+    'handOpCl',
+    'pinchOpCl',
+    'pointOpCl',
+    'keyOpCl',
+    'indexFlDigitsEx',
+    'wristFlEx',
+    'wristFlHandCl'
 ]
 
+print()
 def load_and_split_file(file_path):
     file_path = str(file_path)
     """Load and split a file into two halves."""
@@ -67,7 +84,7 @@ def concatenate_files(data_dir, folders):
     final_angles_second_half = pd.concat(angles_data_second_half, ignore_index=True)
 
     # Save the concatenated results
-    output_dir = Path(data_dir) / 'online_concat' / 'experiments' / '1'
+    output_dir = Path(data_dir) / 'online_concat_comp' / 'experiments' / '1' # todo
     output_dir.mkdir(parents=True, exist_ok=True)
 
     final_angles_first_half = pd.concat([final_angles_first_half, final_angles_second_half], ignore_index=True)

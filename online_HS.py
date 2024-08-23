@@ -101,6 +101,7 @@ def online_train_model():
 
 
         data_dir = join('data', config.person_dir, 'recordings', 'online_concat', 'experiments', '1') # todo
+        # data_dir = join('data', config.person_dir, 'recordings', 'online_concat_comp_interp', 'experiments', '1')
         # data_dir = join('data', config.person_dir, 'recordings', 'online_concat_interp', 'experiments', '1')
 
 
@@ -277,6 +278,10 @@ def online_train_model():
                     model.optimizer.step()
                 else:
                     print('Skipping update')
+
+                if epoch == 32:
+                    for param_group in model.optimizer.param_groups: # todo
+                        param_group['lr'] = 0.005
                 if config.model_type == 'ModularModel':
                     states = [None, None, [states[2][st].detach() for st in range(3)]]
                 elif config.model_type != 'DenseNet':

@@ -35,8 +35,8 @@ def interpolate():
     # Process each person directory
     for person_dir in person_dirs:
         # Define the input file path
-        file_path = Path(f'data/{person_dir}/recordings/online_concat/experiments/1')
-        output_file_path = Path(f'data/{person_dir}/recordings/online_concat_interp/experiments/1')
+        file_path = Path(f'data/{person_dir}/recordings/online_concat_comp/experiments/1')
+        output_file_path = Path(f'data/{person_dir}/recordings/online_concat_comp_interp/experiments/1')
 
         if os.path.exists(file_path):
             # Load the parquet file

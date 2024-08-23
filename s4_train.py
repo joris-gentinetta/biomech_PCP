@@ -112,7 +112,7 @@ if __name__ == '__main__':
         config.experiment_name = experiment_name
         config.perturb = args.perturb
         config.wandb_project = 'study_participants_online'
-        config.wandb_mode = 'online'
+        config.wandb_mode = 'disabled'
         if args.perturb:
             config.name = config.name + '_perturb'
 
@@ -124,58 +124,70 @@ if __name__ == '__main__':
                                            output_size=len(config.targets),
                                            **config)
         model.to('cpu')
+        model.load(join('data', args.person_dir, 'online_trials', experiment_name, 'models',
+                        f'{args.person_dir}-online_last.pt'))
         model.eval()
-        epoch = 0
-        best_val_loss = math.inf
-        while True:
-            try:
-                model.load(join('data', args.person_dir, 'online_trials', experiment_name, 'models', f'{args.person_dir}-online_{epoch}.pt'))
-            except:
-                break
-            model.to(device)
-            val_loss, test_loss, all_losses = evaluate_model(model, valsets, testsets, device, config)
-            if val_loss < best_val_loss:
-                best_val_loss = val_loss
-                wandb.run.summary['best_epoch'] = epoch
-                wandb.run.summary['best_val_loss'] = best_val_loss
-            if test_loss < wandb.run.summary.get('best_test_loss', math.inf):
-                wandb.run.summary['best_test_loss'] = test_loss
-                wandb.run.summary['best_test_epoch'] = epoch
-            wandb.run.summary['used_epochs'] = epoch
-
-            test_recording_names = config.test_recordings if config.test_recordings is not None else []
-            log = {f'val_loss/{(config.recordings + test_recording_names)[set_id]}': loss for set_id, loss in
-                   enumerate(all_losses)}
-            log['total_val_loss'] = val_loss
-            log['total_test_loss'] = test_loss
-            log['epoch'] = epoch
-            wandb.log(log)
-            print(val_loss)
-
-            epoch += 1
-
-        try:
-            model.load(join('data', args.person_dir, 'online_trials', experiment_name, 'models', f'{args.person_dir}-online_last.pt'))
-        except:
-            print('No last model found')
-        model.to(device)
-        val_loss, test_loss, all_losses = evaluate_model(model, valsets, testsets, device, config)
-        if val_loss < best_val_loss:
-            best_val_loss = val_loss
-            wandb.run.summary['best_epoch'] = epoch
-            wandb.run.summary['best_val_loss'] = best_val_loss
-        if test_loss < wandb.run.summary.get('best_test_loss', math.inf):
-            wandb.run.summary['best_test_loss'] = test_loss
-            wandb.run.summary['best_test_epoch'] = epoch
-        wandb.run.summary['used_epochs'] = epoch
+        for set_id, test_set in enumerate(valsets + testsets):
+            val_pred = model.predict(test_set, config.features, config.targets).squeeze(0).to('cpu').detach().numpy()
+            test_set.loc[:, config.targets] = val_pred
 
 
-        test_recording_names = config.test_recordings if config.test_recordings is not None else []
-        log = {f'val_loss/{(config.recordings + test_recording_names)[set_id]}': loss for set_id, loss in
-               enumerate(all_losses)}
-        log['total_val_loss'] = val_loss
-        log['total_test_loss'] = test_loss
-        log['epoch'] = epoch
-        wandb.log(log)
-        wandb.run.summary['last'] = log
-        print(val_loss)
+            test_set = rescale_data(test_set, args.intact_hand)
+
+            test_set.to_parquet(join((data_dirs + test_dirs)[set_id], f'pred_angles-{config.name}_last.parquet'))
+
+        #
+        # epoch = 0
+        # best_val_loss = math.inf
+        # while True:
+        #     try:
+        #         model.load(join('data', args.person_dir, 'online_trials', experiment_name, 'models', f'{args.person_dir}-online_{epoch}.pt'))
+        #     except:
+        #         break
+        #     model.to(device)
+        #     val_loss, test_loss, all_losses = evaluate_model(model, valsets, testsets, device, config)
+        #     if val_loss < best_val_loss:
+        #         best_val_loss = val_loss
+        #         wandb.run.summary['best_epoch'] = epoch
+        #         wandb.run.summary['best_val_loss'] = best_val_loss
+        #     if test_loss < wandb.run.summary.get('best_test_loss', math.inf):
+        #         wandb.run.summary['best_test_loss'] = test_loss
+        #         wandb.run.summary['best_test_epoch'] = epoch
+        #     wandb.run.summary['used_epochs'] = epoch
+        #
+        #     test_recording_names = config.test_recordings if config.test_recordings is not None else []
+        #     log = {f'val_loss/{(config.recordings + test_recording_names)[set_id]}': loss for set_id, loss in
+        #            enumerate(all_losses)}
+        #     log['total_val_loss'] = val_loss
+        #     log['total_test_loss'] = test_loss
+        #     log['epoch'] = epoch
+        #     wandb.log(log)
+        #     print(val_loss)
+        #
+        #     epoch += 1
+        #
+        # try:
+        #     model.load(join('data', args.person_dir, 'online_trials', experiment_name, 'models', f'{args.person_dir}-online_last.pt'))
+        # except:
+        #     print('No last model found')
+        # model.to(device)
+        # val_loss, test_loss, all_losses = evaluate_model(model, valsets, testsets, device, config)
+        # if val_loss < best_val_loss:
+        #     best_val_loss = val_loss
+        #     wandb.run.summary['best_epoch'] = epoch
+        #     wandb.run.summary['best_val_loss'] = best_val_loss
+        # if test_loss < wandb.run.summary.get('best_test_loss', math.inf):
+        #     wandb.run.summary['best_test_loss'] = test_loss
+        #     wandb.run.summary['best_test_epoch'] = epoch
+        # wandb.run.summary['used_epochs'] = epoch
+        #
+        #
+        # test_recording_names = config.test_recordings if config.test_recordings is not None else []
+        # log = {f'val_loss/{(config.recordings + test_recording_names)[set_id]}': loss for set_id, loss in
+        #        enumerate(all_losses)}
+        # log['total_val_loss'] = val_loss
+        # log['total_test_loss'] = test_loss
+        # log['epoch'] = epoch
+        # wandb.log(log)
+        # wandb.run.summary['last'] = log
+        # print(val_loss)
