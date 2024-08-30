@@ -4,6 +4,7 @@ os.environ['PYTORCH_ENABLE_MPS_FALLBACK'] = '1'
 import torch
 import torch.nn as nn
 import torch.optim as optim
+from sklearn.decomposition import FastICA
 
 # torch.autograd.set_detect_anomaly(True)
 from abc import ABC, abstractmethod
@@ -148,7 +149,7 @@ class StatefulDenseNet(TimeSeriesRegressor):
         # out = self.model(x)
         # states = states + out
         # return states, states
-
+        
         out = torch.zeros((x.shape[0], x.shape[1], self.output_size), dtype=torch.float, device=self.device)
         for i in range(x.shape[1]):
             update = self.model(x[:, i:i+1, :])
@@ -250,8 +251,59 @@ class ModularModel(TimeSeriesRegressor):
 
         return out, states
 
+class Attention(nn.Module):
+    def __init__(self, input_dim):
+        super(Attention, self).__init__()
+        self.att_weight = nn.Parameter(torch.randn(input_dim, 1))
+        self.att_bias = nn.Parameter(torch.zeros(input_dim, 1))
+
+    def forward(self, x):
+        e = torch.tanh(torch.matmul(x, self.att_weight) + self.att_bias)
+        a = torch.softmax(e, dim=1)
+        output = x * a
+        #return torch.sum(output, dim=1)
+        return output
 
 
+class myModel(TimeSeriesRegressor):
+    def __init__(self, input_size, output_size, device, **kwargs):
+        super().__init__(input_size, output_size, device)
+        #self.hidden_size = 10
+        #self.n_layers = 1
+        #batch_size = 8
+
+        self.hidden_size = kwargs.get('hidden_size')
+        self.n_layers = kwargs.get('n_layers')
+        self.batch_size = kwargs.get('batch_size')
+
+        self.lstm1 = nn.LSTM(self.input_size, self.hidden_size, self.n_layers, batch_first=True, bidirectional = True)
+        self.lstm2 = nn.LSTM(2*self.hidden_size, self.hidden_size, self.n_layers, batch_first=True, bidirectional = True)
+        #self.attention = Attention(2*self.hidden_size)
+        self.fc = nn.Linear(2*self.hidden_size, self.output_size)
+        self.dropout = nn.Dropout(p = 0.4) #may not be necessary 
+
+    def get_starting_states(self, batch_size, y=None):
+        states1 = (torch.zeros(2*self.n_layers, self.batch_size, self.hidden_size, dtype=torch.float, device=self.device),
+        torch.zeros(2*self.n_layers, self.batch_size, self.hidden_size, dtype=torch.float, device=self.device))
+
+        states2 = (torch.zeros(2*self.n_layers, self.batch_size, self.hidden_size, dtype=torch.float, device=self.device),
+        torch.zeros(2*self.n_layers, self.batch_size, self.hidden_size, dtype=torch.float, device=self.device))
+
+        position_states = y[:, 0:1, :] 
+        return [states1, states2, position_states]
+
+    def forward(self, x, states):   
+        states1, states2, position_states = states[0], states[1], states[2]
+        x, states1 = self.lstm1(x, states1)
+        x = self.dropout(x)
+        x, states2 = self.lstm2(x, states2)
+        #x = self.attention(x)
+        x = self.fc(x)
+        position_states = x #position_states + x
+
+        return position_states, [states1, states2, position_states]
+    
+        
 class TimeSeriesRegressorWrapper:
     def __init__(self, input_size, output_size, device, n_epochs, seq_len, learning_rate, warmup_steps, model_type, **kwargs):
 
@@ -265,12 +317,14 @@ class TimeSeriesRegressorWrapper:
             self.model = RNN(input_size, output_size, device, **kwargs)
         elif model_type == 'ModularModel':
             self.model = ModularModel(input_size, output_size, device, **kwargs)
+        elif model_type == 'stacked_LSTM':
+            self.model = myModel(input_size, output_size, device, **kwargs)
         else:
             raise ValueError(f'Unknown model type {model_type}')
 
         self.criterion = nn.MSELoss(reduction='mean')
         self.optimizer = optim.Adam(self.model.parameters(), lr=learning_rate)
-        self.scheduler = optim.lr_scheduler.ReduceLROnPlateau(self.optimizer, mode='min', factor=0.5, patience=3)
+        self.scheduler = optim.lr_scheduler.ReduceLROnPlateau(self.optimizer, mode='min', factor=0.5, patience=10)
 
 
         self.n_epochs = n_epochs
@@ -287,8 +341,20 @@ class TimeSeriesRegressorWrapper:
     def train_one_epoch(self, dataloader):
         self.model.train()
         epoch_loss = 0
+        
+        #n_samples, n_channels, n_timepoints  = x.shape
+        #ica_x = x.reshape(n_samples, n_channels * n_timepoints)
+        #ica = FastICA(n_components=8)
+        #sources = ica.fit_transform(ica_x)
+        #x = sources.reshape(n_samples, n_channels, n_timepoints)
+
         for x, y in dataloader:
-            states = self.model.get_starting_states(dataloader.batch_size, y)
+            states = self.model.get_starting_states(dataloader.batch_size, y) #might want to get batch size from config
+
+
+            #print(x)
+            #print(x.shape)
+            #print(sources)
             outputs, states = self.model(x, states)
 
             loss = self.criterion(outputs[:, self.warmup_steps:], y[:, self.warmup_steps:])

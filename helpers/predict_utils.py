@@ -9,7 +9,8 @@ import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 import math
-
+from sklearn.decomposition import FastICA
+from sklearn.model_selection import train_test_split
 
 def get_data(config, data_dirs, intact_hand, visualize=False):
 
@@ -20,8 +21,23 @@ def get_data(config, data_dirs, intact_hand, visualize=False):
         angles = pd.read_parquet(join(data_dir, 'cropped_smooth_angles.parquet'))
         angles.index = range(len(angles))
         emg = np.load(join(data_dir, 'cropped_aligned_emg.npy'))
+        #n_samples, n_channels, n_timepoints  = x.shape
+        #ica_x = x.reshape(n_samples, n_channels * n_timepoints)
+        #ica = FastICA(n_components=8)
+        #sources = ica.fit_transform(ica_x)
+        #x = sources.reshape(n_samples, n_channels, n_timepoints)
+        emgLen = len(emg)
+        emgNoise = emg + np.random.normal(0, 1e-6, emg.shape)
+        ica = FastICA(max_iter=1000, tol=1e-3)
+        
+        sources = ica.fit_transform(emgNoise)
+       
+        #emg[config.features]
+        # extract config.features from emg, type is tuple
+        # fit the ica using only 80% of the emg data then apply it to the full dataset
+        # the train test split should be fine then
 
-        data = angles.copy()
+        data = angles.copy() 
         data.loc[:, (intact_hand, 'thumbInPlaneAng')] = data.loc[:,
                                                              (intact_hand, 'thumbInPlaneAng')] + math.pi
         data.loc[:, (intact_hand, 'wristRot')] = (data.loc[:, (intact_hand, 'wristRot')] + math.pi) / 2
@@ -31,7 +47,7 @@ def get_data(config, data_dirs, intact_hand, visualize=False):
         data = np.clip(data, -1, 1)
 
         for feature in config.features:
-            data[feature] = emg[:, int(feature[1])]
+            data[feature] = sources[:, int(feature[1])] #using the ica fit to the noisy emg data instead of the emg data itself
 
         if visualize:
             data[config.features].plot(subplots=True)
