@@ -63,7 +63,6 @@ if __name__ == '__main__':
 
     epoch_len = 10
     # sampling_frequency = 60
-    calibration_frames = 30  # todo
     queue_size = 50000
 
     if torch.cuda.is_available():
@@ -90,18 +89,20 @@ if __name__ == '__main__':
     emg_channels = [int(feature[1]) for feature in config.features]
 
     if args.perturb:
-        perturber = np.abs(np.eye(8) + np.random.normal(0, .25, (len(emg_channels), len(emg_channels))))
+        # perturber = np.abs(np.eye(8) + np.random.normal(0, .25, (len(emg_channels), len(emg_channels))))
+        perturb_file = join('data', args.person_dir, 'online_trials', 'perturb', 'perturber.npy')
+        perturber = np.load(perturb_file)
     else:
+        perturb_file = join('data', 'eye.npy')
         perturber = np.eye(8)
-    perturb_file = join('data', args.person_dir, 'online_trials', args.experiment_name, 'perturber.npy')
+
     os.makedirs(join('data', args.person_dir, 'online_trials', args.experiment_name), exist_ok=True)
-    np.save(perturb_file, perturber)
+    # np.save(perturb_file, perturber)
     # perturber = torch.tensor(perturber, device=device, dtype=torch.float32)
 
     with open(join('data', args.person_dir, 'configs', f'{args.config_name}.yaml'), 'r') as file:
         wandb_config = yaml.safe_load(file)
         config = Config(wandb_config)
-
 
 
     if args.save_input:
