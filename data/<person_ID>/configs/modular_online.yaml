@@ -1,0 +1,134 @@
+name: <person_ID>
+method: grid
+
+metric:
+  goal: minimize
+  name: best_val_loss
+
+parameters:
+  recordings:
+    value:
+    - thumbFlEx
+    - thumbAbAd
+    - indexFlEx
+    - mrpFlEx
+    - fingersFlEx
+    - wristFlEx
+    - handOpCl
+    - pinchOpCl
+    - pointOpCl
+#    - keyOpCl
+#    - wristFlHandCl
+#    - indexFlDigitsEx
+
+
+  test_recordings:
+    value:
+    - keyOpCl
+    - wristFlHandCl
+    - indexFlDigitsEx
+
+  features:
+    value:
+    - [emg, '0'] # 0
+    - [emg, '1'] # 1
+    - [emg, '2'] # 2
+    - [emg, '4'] # 3
+    - [emg, '10'] # 4
+    - [emg, '11'] # 5
+    - [emg, '12'] # 6
+    - [emg, '13'] # 7
+
+
+  early_stopping_patience:
+    value: 1000
+
+  early_stopping_delta:
+    value: 0.05
+
+  learning_rate:
+    value: 0.005
+
+  n_epochs:
+    value: 1000
+
+  seq_len:
+    value: 64
+
+  targets:
+    value:
+    - [Left, indexAng]
+    - [Left, midAng]
+    - [Left, ringAng]
+    - [Left, pinkyAng]
+    - [Left, thumbInPlaneAng]
+    - [Left, thumbOutPlaneAng]
+#    - [Left, wristRot]
+    - [Left, wristFlex]
+
+  warmup_steps:
+    value: 0
+
+  batch_size:
+    value: 8
+
+  wandb_mode:
+    value: offline
+
+  wandb_project:
+    value: study_participants
+
+  model_type:
+    value: ModularModel
+
+  activation_model:
+#    parameters:
+#      hidden_size:
+#        value: 64
+#      model_type:
+#        value: DenseNet
+#      n_layers:
+#        value: 3
+#      n_freeze_epochs:
+#        value: 0
+
+    value: {model_type: DenseNet,
+            hidden_size: 64,
+            n_layers: 3,
+            n_freeze_epochs: 0,
+            }
+
+  muscle_model:
+#    parameters:
+#      model_type:
+#        value: PhysMuscleModel
+#        n_freeze_epochs:
+#        values: [0, 1]
+    value: {
+             model_type: PhysMuscleModel,
+#      model_type: GRU,
+#            hidden_size: 100,
+#            n_layers: 4,
+      n_freeze_epochs: 1,
+      }
+
+  joint_model:
+#    parameters:
+#      model_type:
+#        value: PhysJointModel
+#        n_freeze_epochs:
+#        values: [0, 1]
+    value: {
+#      model_type: GRU,
+#            hidden_size: 100,
+#            n_layers: 4,
+             model_type: PhysJointModel,
+      n_freeze_epochs: 1,
+             speed_mode: False,
+      }
+
+#  perturb:
+#    values: [True, False]
+#
+#  keep_states:
+#    values: [True, False]

@@ -4,4 +4,7 @@ __pycache__
 /model_files/
 /.idea/
 /dynamics/dynamics.egg-info/
+/dynamics/.DS_Store
 wandb
+.DS_Store
+

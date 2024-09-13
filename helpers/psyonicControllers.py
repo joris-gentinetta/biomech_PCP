@@ -63,6 +63,7 @@ class psyonicControllers():
 
 		self.model.load(model_path)
 		self.model.to(self.device)
+		self.model.eval()
 
 		if config.model_type == 'LSTM':
 			self.states = (torch.zeros(config.n_layers, 1, config.hidden_size),

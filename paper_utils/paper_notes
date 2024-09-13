@@ -1,0 +1,59 @@
+python s4_train.py --person_dir P_577 --intact_hand Left --config_name modular_SL -hs
+
+P_577
+P_407
+P_711
+P_238
+P_426
+P_950
+P_149
+P_668
+
+python paper_runs.py
+
+python online_HS.py --person_dir P_577 --intact_hand Left --config_name modular_SL --allow_tf32
+
+source prep_online_data.sh
+
+python s3_process_video.py --data_dir data/P_577/recordings/wristFlEx --experiment_name 2  --intact_hand Left --plane_frames_start 10 --plane_frames_end 110 --video_start 2300 --video_end 4100 --process
+
+1) same config as online, pert and not pert
+python online_HS.py --intact_hand Left --config_name pert-non_pert --allow_tf32
+-> study_participants_offline, sweep pert-non_pert
+
+2) evaluate online runs
+python paper_runs.py
+-> study_participants_online
+
+3) rerun failed P_950
+- delete 950 runs from study_participants_offline
+python online_HS.py --intact_hand Left --config_name pert-non_pert-rep950 --allow_tf32
+
+4) run sl32, bs16
+python online_HS.py --intact_hand Left --config_name pert-non_pert-sl32-bs16 --allow_tf32
+
+5) train from scratch
+python online_HS.py --intact_hand Left --config_name pert-non_pert-from_scratch --allow_tf32
+
+6) test unfrozen from scratch
+python online_HS.py --intact_hand Left --config_name pert-non_pert-from_scratch-unfrozen --allow_tf32
+
+7) test dense
+python online_HS.py --intact_hand Left --config_name dense --allow_tf32
+
+8) create online_concat_interp
+python paper_runs.py (interpolate)
+
+9)
+python online_HS.py --intact_hand Left --config_name pert-non_pert-interpolate --allow_tf32
+
+1) same config as online, pert and not pert, inverse order
+python online_HS.py --intact_hand Left --config_name pert-non_pert-inverse --allow_tf32
+-> study_participants_offline-inverse, sweep pert-non_pert-inverse
+
+python online_HS.py --intact_hand Left --config_name pert-non_pert-comp --allow_tf32
+
+python online_HS.py --intact_hand Left --config_name pert-non_pert-comp-interpolate --allow_tf32
+
+python online_HS.py --intact_hand Left --config_name pert-non_pert-adaptLR --allow_tf32
+
