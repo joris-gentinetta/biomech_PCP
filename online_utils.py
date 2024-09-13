@@ -555,7 +555,7 @@ class VisualizeProcess(Process):
         self.initialized.set()  # Signal that the initialization is complete
 
         while not self.killEvent.is_set():
-            target_angles, pred_angles = self.inputQ.get(timeout=4)
+            target_angles, pred_angles = self.inputQ.get(timeout=15)
             time_start = time()
 
             target_angles = rescale_data(target_angles, self.intact_hand)
