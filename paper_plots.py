@@ -6,15 +6,15 @@ import pandas as pd
 # import seaborn as sns
 import matplotlib as mpl
 from pathlib import Path
-
+import os
 from openpyxl.styles.builtins import title
 from torch.backends.cudnn import allow_tf32
 
-plot_folder = Path('/Users/jg/Desktop/upper_limb/presentation_figures')
 #%%
 participants = ['P_149', 'P_238', 'P_407', 'P_426', 'P_577', 'P_668', 'P_711', 'P_950']
 data_folder = Path('/Users/jg/Desktop/upper_limb/paper_data')
-plot_folder = Path('/Users/jg/Desktop/upper_limb/paper_figures')
+plot_folder = Path('/Users/jg/Desktop/upper_limb/presentation_figures')
+os.makedirs(plot_folder, exist_ok=True)
 
 #make df using the participants as index
 df = pd.DataFrame(index=participants, columns=pd.MultiIndex.from_product([['init', 'offline'], ['val', 'test', 'total']]))
@@ -249,7 +249,13 @@ for participant in participants:
     df.loc[participant, ('pert', 'frobenius_norm')] = np.linalg.norm(perturbation_matrix - I, 'fro')
     df.loc[participant, ('pert', 'spectral_norm')] = np.linalg.norm(perturbation_matrix, 2)
     df.loc[participant, ('pert', 'determinant')]  = np.linalg.det(perturbation_matrix)
-
+    #check invertability
+    # determinant = np.linalg.det(perturbation_matrix)
+    # if determinant != 0:
+    #     print("The matrix is invertible.")
+    #     print(determinant)
+    # else:
+    #     print("The matrix is not invertible.")
 
 #np.sum((pert - np.eye(8))**5)
     
@@ -366,6 +372,8 @@ ax2.set_ylabel('MSE ± STD')
 ax2.set_xticks(x_positions)
 ax2.set_xticklabels(['Before', 'After'])
 ax2.set_xlabel('Online Training')
+ax2.yaxis.set_tick_params(labelbottom=True)
+
 
 custom_legend_handles = custom_legend_handles + custom_legend_handles2
 # Add legend with custom handles in the desired order and set ncol to 2
@@ -374,39 +382,6 @@ ax2.legend(handles=custom_legend_handles, loc='upper right', ncol=2, title='Test
 # Adjust layout to make sure everything fits nicely
 plt.tight_layout()
 
-# Show the combined plots
-import matplotlib.pyplot as plt
-
-# Create a figure and a set of subplots with independent y-axis limits
-fig, axes = plt.subplots(1, 3, figsize=(18 * 0.7, 5 * 0.7), sharey=True)
-
-# Set index
-df.set_index('participants', inplace=True, drop=False)
-
-# Modes to plot
-modes = ['val', 'test', 'total']
-names = ['Known Movements', 'New Movements', 'All Movements']
-
-# Plot each mode in a separate subplot
-for idx, (ax, mode) in enumerate(zip(axes, modes)):
-    for participant in participants:
-        ax.plot(['Before', 'After'],
-                [df.loc[participant, ('init', mode)], df.loc[participant, ('offline', mode)]],
-                label=participant)
-    name = 'Validation' if mode == 'val' else 'Test' if mode == 'test' else 'Total'
-    ax.set_title(names[idx], fontweight='bold')
-
-    # Set ylabel only for the first subplot
-    if idx == 0:
-        ax.set_ylabel('MSE')
-
-    # Add legend only to the last subplot
-    if idx == 2:  # Last subplot
-        ax.legend(loc='upper right', title='Participants', title_fontproperties={'weight': 'bold'})
-    ax.set_xlabel('Online Training')
-
-# Adjust layout
-plt.tight_layout()
 
 plt.savefig(plot_folder / 'perturbation.png', dpi=300)
 plt.close(fig)
@@ -646,16 +621,18 @@ mean_init = np.mean([df.loc[participant, ('init', mode)] for participant in part
 #         va='bottom')
 
 # Set titles, labels, and adjust other plot properties
-ax1.set_title('Total MSE After Online Training on Regular Data', fontweight='bold')
+ax1.set_title(r'$\mathbf{Total\ MSE\ After\ Online\ Training\ on\ } \it{Regular} \mathbf{\ Data}$')
 ax1.set_ylabel('Total MSE')
 ax1.set_xticks(group1_positions)
 ax1.set_xticklabels([labels[key] for key in colors if 'pert' not in key], rotation=0)
 ax1.set_ylim(0, 0.14)  # Increase y-limit by 10%
 # ax1.set_xlabel('Training Mode')
 
-ax2.set_title('Total MSE After Online Training on Perturbed Data', fontweight='bold')
+ax2.set_title(r'$\mathbf{Total\ MSE\ After\ Online\ Training\ on\ } \it{Perturbed} \mathbf{\ Data}$')
 ax2.set_xticks(group2_positions)
 ax2.set_xticklabels([labels[key] for key in colors if 'pert' in key], rotation=0)
+# ax2.yaxis.set_tick_params(labelbottom=True)
+
 # ax2.set_ylim(0, 0.14)  # Increase y-limit by 10%
 # ax2.set_xlabel('Training Mode')
 
@@ -899,8 +876,8 @@ import numpy as np
 fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(18*0.7, 5*0.7), sharey=True)
 # Set x-axis limits and scale
 num_ticks = 7
-tick_positions = np.linspace(0, len(total_df_offline.mean(axis=0)) - 1, num_ticks, dtype=int)
-tick_labels = [int(i * 360 / (len(total_df_offline.mean(axis=0)) - 1)) for i in tick_positions]
+tick_positions = np.linspace(0, len(total_df_offline.mean(axis=0)) - 1, num_ticks, dtype=float)
+tick_labels = [0, 60, 120, 180, 240, 300, 360]
 
 # Plot 1: Validation and Test Loss
 ax1.plot(val_df_offline.mean(axis=0), label='Known Movements - New First', color='blue', linestyle='-')
@@ -957,6 +934,7 @@ ax2.set_xlabel('`Training Time [seconds]')  # Label x-axis
 ax2.set_xticks(tick_positions)
 ax2.set_xticklabels(tick_labels)
 ax2.set_xlim(0, len(total_df_offline.mean(axis=0)) - 1)  # Set x-axis limit based on the data length
+ax2.yaxis.set_tick_params(labelbottom=True)
 
 # Add vertical line at 180 seconds
 ax2.axvline(x=tick_positions[3], color='gray', linestyle='--', linewidth=1)
