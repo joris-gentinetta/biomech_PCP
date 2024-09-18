@@ -418,7 +418,7 @@ class JointsProcess(Process):
 
 
 class AnglesProcess(Process):
-    def __init__(self, intact_hand, queueSize=0, inputQ=None, kE=None):
+    def __init__(self, intact_hand, queueSize=0, inputQ=None, kE=None, joris=False):
         super().__init__()
         self.inputQ = inputQ
         self.outputQ = MPQueue(queueSize)
@@ -426,6 +426,8 @@ class AnglesProcess(Process):
         self.intact_hand = intact_hand
         self.fps = Value('f', 0)
         self.killEvent = Event()
+
+        self.joris = joris
 
 
     def run(self):
@@ -437,7 +439,7 @@ class AnglesProcess(Process):
         joints_df = None
         while joints_df is None: # make sure the first frame is not None
             joints_df, emg_timestep = self.inputQ.get(timeout=4)
-        angles_df = anglesHelper.getArmAngles(joints_df, sides)
+        angles_df = anglesHelper.getArmAngles(joints_df, sides, joris=self.joris)
         angles_df = angles_df.reindex(range(max_interpolation_steps))
         self.initialized.set()
 

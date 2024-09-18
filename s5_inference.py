@@ -1,3 +1,5 @@
+import os
+
 import serial
 from serial.tools import list_ports
 import sys
@@ -989,11 +991,13 @@ def callback():
 
 	return run
 
-def saveThread(filename, data):
+def saveThread(saveLocation, filename, data):
+	os.mkdir(saveLocation) if not os.path.exists(saveLocation) else None
 	dataToSave = np.array(data)
-	np.savetxt('/home/haptix/haptix/psyonic/logs/' + filename + '.csv', dataToSave, delimiter='\t', fmt='%s')
+	# np.savetxt('/home/haptix/haptix/psyonic/logs/' + filename + '.csv', dataToSave, delimiter='\t', fmt='%s')
+	np.savetxt(f'{saveLocation}/{filename}.csv', dataToSave, delimiter='\t', fmt='%s')
 
-def main(arm, emg=None):
+def main(arm, emg=None, saveLocation=''):
 	# connect to EMG board
 	if emg is not None:
 		print('Connecting to EMG board...')
@@ -1024,7 +1028,7 @@ def main(arm, emg=None):
 					if not filename == 'exit':
 						# dataToSave = np.array(arm.recordedData)
 						# np.savetxt('/home/haptix/haptix/psyonic/logs/' + filename + '.csv', dataToSave, delimiter='\t', fmt='%s')
-						thread = threading.Thread(target=saveThread, args=[filename, arm.recordedData], name='saveThread')
+						thread = threading.Thread(target=saveThread, args=[saveLocation, filename, arm.recordedData], name='saveThread')
 						thread.start()
 						arm.resetRecording()
 
@@ -1205,4 +1209,4 @@ if __name__ == '__main__':
 	print('Sensors initialized.')
 
 	arm.startComms()
-	main(arm, emg)
+	main(arm, emg, saveLocation=f'data/{args.person_dir}/logs')

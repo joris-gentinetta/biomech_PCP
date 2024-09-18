@@ -66,16 +66,14 @@ def get_data(config, data_dirs, intact_hand, visualize=False, test_dirs=None, pe
         data = load_data(data_dir, intact_hand, config.features, perturber)
 
         if visualize:
-            axs = data[config.features].plot(subplots=True)
-            for ax in axs:
-                ax.set_ylim(-1, 1)
-            plt.title(f'Features {config.recordings[recording_id]}')
+            axs = data[config.features].plot(subplots=True, ylim=(-0.1, 1.1))
+            for ax in axs: ax.legend(loc='upper right')
+            plt.suptitle(f'Features {config.recordings[recording_id]}')
             plt.show()
 
-            axs = data[config.targets].plot(subplots=True)
-            for ax in axs:
-                ax.set_ylim(-1, 1)
-            plt.title(f'Targets {config.recordings[recording_id]}')
+            axs = data[config.targets].plot(subplots=True, ylim=(-1.1, 1.1))
+            for ax in axs: ax.legend(loc='upper right')
+            plt.suptitle(f'Targets {config.recordings[recording_id]}')
             plt.show()
 
         # if test_dirs is None:

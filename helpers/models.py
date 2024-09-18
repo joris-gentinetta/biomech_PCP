@@ -444,6 +444,16 @@ class ModularModel(TimeSeriesRegressor):
 
         return out, states
 
+    def forwardInference(self, x, states):
+        out = torch.zeros((x.shape[0], x.shape[1], self.output_size), dtype=torch.float, device=self.device)
+        for i in range(x.shape[1]):
+            activation_out, states[0] = self.activation_model(x[:, i:i+1, :], states[0])
+            activation_out = self.sigmoid(activation_out)
+            muscle_out, states[1] = self.muscle_model(activation_out, [states[1], states[2][0]])
+            out[:, i:i+1, :], states[2] = self.joint_model(muscle_out, states[2])
+
+        return out, states, activation_out, muscle_out, states # return all intermediates!
+
 
 class CompensationModel(TimeSeriesRegressor):
     def __init__(self, input_size, output_size, device, **kwargs):
