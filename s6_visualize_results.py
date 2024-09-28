@@ -186,6 +186,7 @@ if __name__ == "__main__":
         print(1 / (time.time() - t))
         p.stepSimulation()
         t = time.time()
+        time.sleep(1/10)
 
     if args.video:
         cap.release()

@@ -45,6 +45,7 @@ if __name__ == '__main__':
     parser.add_argument('-cf', '--calibration_frames', type=int, default=60, help='Number of calibration frames')
     parser.add_argument('-p', '--perturb', action='store_true', help='Perturb the data')
     parser.add_argument('--keep_states', action='store_true', help='Keep states in history')
+    parser.add_argument('--jorisThumb', action='store_true', help='Use Joris thumb model')
 # --person_dir mikey --intact_hand Left --config_name modular_online --save_model -v --experiment_name perturbed_1 --camera 0 --calibration_frames 60 --perturbed
     args = parser.parse_args()
 
@@ -89,15 +90,15 @@ if __name__ == '__main__':
     emg_channels = [int(feature[1]) for feature in config.features]
 
     if args.perturb:
-        # perturber = np.abs(np.eye(8) + np.random.normal(0, .25, (len(emg_channels), len(emg_channels))))
+        perturber = np.abs(np.eye(8) + np.random.normal(0, .25, (len(emg_channels), len(emg_channels))))
         perturb_file = join('data', args.person_dir, 'online_trials', 'perturb', 'perturber.npy')
-        perturber = np.load(perturb_file)
+        # perturber = np.load(perturb_file)
     else:
         perturb_file = join('data', 'eye.npy')
         perturber = np.eye(8)
 
     os.makedirs(join('data', args.person_dir, 'online_trials', args.experiment_name), exist_ok=True)
-    # np.save(perturb_file, perturber)
+    np.save(perturb_file, perturber)
     # perturber = torch.tensor(perturber, device=device, dtype=torch.float32)
 
     with open(join('data', args.person_dir, 'configs', f'{args.config_name}.yaml'), 'r') as file:
@@ -372,7 +373,7 @@ if __name__ == '__main__':
             processManager.manage_process(visualizeProcess)
 
         joint_to_angles_Q = MPQueue(queue_size)
-        anglesProcess = AnglesProcess(args.intact_hand, queue_size, joint_to_angles_Q)
+        anglesProcess = AnglesProcess(args.intact_hand, queue_size, joint_to_angles_Q, joris=args.jorisThumb)
         jointsProcess = JointsProcess(args.intact_hand, queue_size, joint_to_angles_Q, save_path, args.camera, args.save_input, args.calibration_frames)
         processManager.manage_process(jointsProcess)
         processManager.manage_process(anglesProcess)

@@ -194,11 +194,16 @@ class psyonicControllers():
 
 			# for i in range(6):
 			# 	jointPos[i] = (np.rad2deg(self.output_dict['indexAng'] * math.pi) - 60) * 5
-			jointPos[0] = np.rad2deg(self.output_dict['indexAng'])
+			jointPos[0] = np.min([70, np.rad2deg(self.output_dict['indexAng'])])# if np.rad2deg(self.output_dict['thumbOutPlaneAng']) > 50 else np.rad2deg(self.output_dict['indexAng'])
 			jointPos[1] = np.rad2deg(self.output_dict['midAng'])
 			jointPos[2] = np.rad2deg(self.output_dict['ringAng'])
 			jointPos[3] = np.rad2deg(self.output_dict['pinkyAng'])
-			jointPos[4] = np.rad2deg(self.output_dict['thumbOutPlaneAng'])
-			jointPos[5] = np.rad2deg(self.output_dict['thumbInPlaneAng'])
+			# jointPos[4] = (np.rad2deg(self.output_dict['thumbOutPlaneAng']) - 30)*6
+			# jointPos[5] = (np.rad2deg(self.output_dict['thumbInPlaneAng']) + 30)*6
+			jointPos[4] = 1.5*np.rad2deg(self.output_dict['thumbOutPlaneAng'])
+			# jointPos[5] = np.rad2deg(self.output_dict['thumbInPlaneAng'])
 
+			jointPos[5] = -66
 		return jointPos
+
+

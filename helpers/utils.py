@@ -123,7 +123,7 @@ class AnglesHelper:
         return coords, angles, pinky_to_index_sim
 
 
-    def getArmAngles(self, output_df, sides):
+    def getArmAngles(self, output_df, sides, joris=False):
         angle_names = ['indexAng', 'midAng', 'ringAng', 'pinkyAng', 'thumbInPlaneAng', 'thumbOutPlaneAng', 'elbowAngle', 'wristRot',
                        'wristFlex']
         hand_names = ['Left', 'Right']
@@ -189,39 +189,78 @@ class AnglesHelper:
 
                 ### Thumb ###########
                 try:
-                    scaler = pinky_to_index_sim / math.sqrt(np.dot((index - pinky), (index - pinky)))
+                    if not joris:
+                        thumb = thumb_tip - thumb_cmc  # defines the line of the thumb
+                        thumb_index = index - thumb_mcp
+                        index_wrist = index - hand_wrist
+                        thumb_cmc_angle = thumb_cmc - hand_wrist
+                        thumb_base = thumb_mcp - thumb_cmc
+                        thumb_link = thumb_tip - thumb_mcp
+                        pinky_to_index = index - pinky
+                        cmc_to_ring = ring - thumb_cmc  # defines the axis of rotation for the thumb
 
-                    y_axis = palmNormal
-                    if side == 'Left':
-                        y_axis = -y_axis
-                    y = np.dot(thumb_tip, y_axis)
-                    y = y - np.dot(hand_wrist, y_axis)
+                        thumb_plane_normal = -np.cross(cmc_to_ring,
+                                                      thumb_cmc_angle)  # normal to the plane formed by the thumb and the axis of rotation
+                        thumb_plane_normal = thumb_plane_normal / np.linalg.norm(thumb_plane_normal)
+                        thumb_rot_angle = -3 * (self.angleBetweenVectors(thumb_plane_normal,
+                                                                         palmNormal) - 20)  # angle between the normal to the thumb plane and the normal to the palm plane (negate for psyonic)
 
-                    x_axis = index - pinky
-                    x_axis /= np.linalg.norm(x_axis)
-                    x = np.dot(thumb_tip, x_axis)
-                    x = x - np.dot((ring + middle)/2, x_axis)
+                        thumb_flex_angle = 3 * (np.max(90 - np.asarray(
+                            [self.angleBetweenVectors(thumb_tip - thumb_ip, thumb_mcp - thumb_ip),
+                             self.angleBetweenVectors(thumb_link, index_wrist), self.angleBetweenVectors(thumb_base,
+                                                                                                         index_wrist)])) - 50)  # angle between the thumb and the index finger
+                        # thumb_flex_angle = 3 * (np.max(90 - np.asarray(
+                        #     [self.angleBetweenVectors(thumb_tip - thumb_ip, thumb_mcp - thumb_ip),
+                        #      self.angleBetweenVectors(thumb_link, index_wrist)])) - 50)  # angle between the thumb and the index finger
 
-                    z_axis = (ring + middle)/2 - hand_wrist
-                    z_axis /= np.linalg.norm(z_axis)
-                    z = np.dot(thumb_tip, z_axis)
-                    z = z - np.dot(hand_wrist, z_axis)
+                        # thumb_flex_angle = 3 * (np.max(90 - np.asarray(
+                        #     [self.angleBetweenVectors(thumb_tip - thumb_ip, thumb_mcp - thumb_ip)])) - 50) # angle between the thumb and the index finger
 
-                    x *= scaler
-                    y *= scaler
-                    z *= scaler
+                        # thumb_flex_angle = np.max(np.asarray([self.angleBetweenVectors(thumb_tip - thumb_ip, thumb_mcp - thumb_ip)]))
+                        # thumb_flex_angle = 3 * (np.max(90 - np.asarray(
+                        #     [self.angleBetweenVectors(thumb_link, index_wrist), self.angleBetweenVectors(thumb_base,
+                        #                                                                                  index_wrist)])) - 50)  # angle between the thumb and the index finger
+                        # thumbIP = 180 - self.angleBetweenVectors(thumb_tip - thumb_ip, thumb_mcp - thumb_ip)
+                        # thumbLine = 90 - self.angleBetweenVectors(thumb_link, index_wrist)
+                        # thumbBase = 90 - self.angleBetweenVectors(thumb_base, index_wrist)
+                        # thumb_flex_angle = (np.sum(np.asarray([thumbIP, thumbLine, thumbBase])) - 45)  # angle between the thumb and the index finger
+                        # thumb_flex_angle = 3 * (np.max(np.asarray([thumbBase])) - 50)  # angle between the thumb and the index finger
 
-                    targetPos = (x, y, z)
-                    angles_df.loc[i, (side, 'thumb_x')] = x
-                    angles_df.loc[i, (side, 'thumb_y')] = y
-                    angles_df.loc[i, (side, 'thumb_z')] = z
+                        angles_df.loc[i, (side, 'thumbOutPlaneAng')] = np.deg2rad(thumb_flex_angle)
+                        angles_df.loc[i, (side, 'thumbInPlaneAng')] = np.deg2rad(thumb_rot_angle)
 
-                    distances = np.linalg.norm(coords - np.array(targetPos), axis=1)
-                    idx = np.argmin(distances)
-                    angles_df.loc[i, (side, 'thumbInPlaneAng')] = angles[idx][0]
-                    angles_df.loc[i, (side, 'thumbOutPlaneAng')] = angles[idx][1]
+                    else:
+                        scaler = pinky_to_index_sim / math.sqrt(np.dot((index - pinky), (index - pinky)))
 
+                        y_axis = palmNormal
+                        if side == 'Left':
+                            y_axis = -y_axis
+                        y = np.dot(thumb_tip, y_axis)
+                        y = y - np.dot(hand_wrist, y_axis)
 
+                        x_axis = index - pinky
+                        x_axis /= np.linalg.norm(x_axis)
+                        x = np.dot(thumb_tip, x_axis)
+                        x = x - np.dot((ring + middle)/2, x_axis)
+
+                        z_axis = (ring + middle)/2 - hand_wrist
+                        z_axis /= np.linalg.norm(z_axis)
+                        z = np.dot(thumb_tip, z_axis)
+                        z = z - np.dot(hand_wrist, z_axis)
+
+                        x *= scaler
+                        y *= scaler
+                        z *= scaler
+
+                        targetPos = (x, y, z)
+                        angles_df.loc[i, (side, 'thumb_x')] = x
+                        angles_df.loc[i, (side, 'thumb_y')] = y
+                        angles_df.loc[i, (side, 'thumb_z')] = z
+
+                        distances = np.linalg.norm(coords - np.array(targetPos), axis=1)
+                        idx = np.argmin(distances)
+                        angles_df.loc[i, (side, 'thumbInPlaneAng')] = angles[idx][0]
+                        angles_df.loc[i, (side, 'thumbOutPlaneAng')] = angles[idx][1]
 
                 except Exception as e:
                     print(i, side, f'Error: {e}')

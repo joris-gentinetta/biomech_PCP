@@ -159,6 +159,7 @@ if __name__ == "__main__":
     parser.add_argument('--video_start', type=int, default=0, help='Start of the video')
     parser.add_argument('--video_end', type=int, default=-1, help='End of the video')
     parser.add_argument('--process', action='store_true', help='Process the video')
+    parser.add_argument('--jorisThumb', action='store_true', help='Use Joris thumb angles')
     args = parser.parse_args()
 
     sides = [args.intact_hand] if args.intact_hand else ['Right', 'Left']
