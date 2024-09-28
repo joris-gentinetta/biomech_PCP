@@ -82,7 +82,7 @@ def online_train_model():
             # perturb_file = join('data', config.person_dir, 'online_trials', args.experiment_name, 'perturber.npy')
             perturb_file = join('data', config.person_dir, 'online_trials', 'perturb', 'perturber.npy')
         else:
-            perturb_file = join('data', 'eye.npy')
+            perturb_file = join('data', config.person_dir, 'online_trials', 'non_perturb', 'perturber.npy')
 
         # np.save(perturb_file, perturber)
         perturber = np.load(perturb_file)
