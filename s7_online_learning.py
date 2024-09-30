@@ -90,7 +90,7 @@ if __name__ == '__main__':
     emg_channels = [int(feature[1]) for feature in config.features]
 
     if args.perturb:
-        perturber = np.abs(np.eye(8) + np.random.normal(0, .25, (len(emg_channels), len(emg_channels))))
+        # perturber = np.abs(np.eye(8) + np.random.normal(0, .25, (len(emg_channels), len(emg_channels))))
         perturb_file = join('data', args.person_dir, 'online_trials', 'perturb', 'perturber.npy')
         # perturber = np.load(perturb_file)
     else:

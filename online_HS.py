@@ -44,13 +44,7 @@ def online_train_model():
     with wandb.init():
         config = wandb.config
 
-        # save_path = join('data', config.person_dir, 'online_trials', args.experiment_name, 'models')
-        #
-        #
-        # os.makedirs(save_path, exist_ok=True)
-
         epoch_len = 10
-
 
         if torch.cuda.is_available():
             device = torch.device("cuda")
@@ -68,26 +62,12 @@ def online_train_model():
             torch.backends.cuda.matmul.allow_tf32 = True
             print('TF32 enabled')
 
-
-
-
-        # if config.perturb:
-        #     perturber = np.abs(np.eye(8) + np.random.normal(0, .25, (len(emg_channels), len(emg_channels))))
-        # else:
-        #     perturber = np.eye(8)
-
-
-
         if config.perturb:
-            # perturb_file = join('data', config.person_dir, 'online_trials', args.experiment_name, 'perturber.npy')
             perturb_file = join('data', config.person_dir, 'online_trials', 'perturb', 'perturber.npy')
         else:
             perturb_file = join('data', config.person_dir, 'online_trials', 'non_perturb', 'perturber.npy')
 
-        # np.save(perturb_file, perturber)
         perturber = np.load(perturb_file)
-        # perturber = torch.tensor(perturber, device=device, dtype=torch.float32)
-
 
         data_dirs = [join('data', config.person_dir, 'recordings', recording, 'experiments', '1') for recording in
                      config.recordings]
@@ -98,17 +78,10 @@ def online_train_model():
         _, valsets, combined_sets, testsets = get_data(config, data_dirs, args.intact_hand, visualize=False,
                                                       test_dirs=test_dirs, perturb_file=perturb_file)
 
-
-
-        data_dir = join('data', config.person_dir, 'recordings', 'online_concat', 'experiments', '1') # todo
-        # data_dir = join('data', config.person_dir, 'recordings', 'online_concat_comp_interp', 'experiments', '1')
-        # data_dir = join('data', config.person_dir, 'recordings', 'online_concat_interp', 'experiments', '1')
-
+        data_dir = join('data', config.person_dir, 'recordings', f'{config.online_file}', 'experiments', '1') # todo
 
         data = load_data(data_dir, args.intact_hand, config.features, perturber)
         trainsets = [data]
-
-
 
         model = TimeSeriesRegressorWrapper(device=device, input_size=len(config.features),
                                            output_size=len(config.targets),
@@ -337,17 +310,6 @@ if __name__ == '__main__':
     with open(join('data', 'offline_configs', f'{args.config_name}.yaml'), 'r') as file:
         wandb_config = yaml.safe_load(file)
         config = Config(wandb_config)
-
-    ########################### todo remove
-    # emg_channels = [int(feature[1]) for feature in config.features]
-    # perturber = np.abs(np.eye(8) + np.random.normal(0, .25, (len(emg_channels), len(emg_channels))))
-    # os.makedirs(join('data', config.person_dir, 'online_trials', args.experiment_name), exist_ok=True)
-    # np.save(join('data', config.person_dir, 'online_trials', args.experiment_name, 'perturber.npy'), perturber)
-    #
-    # perturber = np.eye(8)
-    # np.save(join('data', config.person_dir, 'online_trials', args.experiment_name, 'eye.npy'), perturber)
-    # exit('Perturber saved')
-    ###########################
 
     sweep_id = wandb.sweep(wandb_config, project=config.wandb_project)
     # wandb.agent(sweep_id, online_train_model)
