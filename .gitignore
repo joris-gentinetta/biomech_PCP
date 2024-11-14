@@ -1,10 +1,9 @@
 /data/
 /models/
-__pycache__
+__pycache__/
 /model_files/
 /.idea/
 /dynamics/dynamics.egg-info/
-/dynamics/.DS_Store
-wandb
+wandb/
 .DS_Store
-
+.ipynb_checkpoints/
