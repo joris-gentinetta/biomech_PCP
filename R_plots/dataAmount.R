@@ -1,3 +1,8 @@
+# Load necessary libraries
+library(ggplot2)
+library(dplyr)
+library(tidyr)
+library(gridExtra)
 
 # Directories
 plot_folder <- "/Users/jg/Desktop/upper_limb/paper_figures-4"
@@ -53,7 +58,7 @@ combined_plot <- ggplot(df, aes(x = `Online Training Time [s]`, y = `Total MSE`,
   ) +
   scale_linetype_identity() + # Use identity to apply linetype directly
   guides(
-    color = guide_legend(title = "Test Set", ncol = 1, title.position = "top", title.hjust = 0.5),
+    color = guide_legend(title = "Parameters", ncol = 1, title.position = "top", title.hjust = 0.5),
     linetype = "none"
   ) +
   scale_x_continuous(
@@ -79,20 +84,12 @@ combined_plot <- ggplot(df, aes(x = `Online Training Time [s]`, y = `Total MSE`,
     panel.grid.major = element_line(size = 0.3)
   )
 
-# Save plots
-ggsave(
-  filename = file.path(plot_folder, "dataAmount.png"),
-  plot = combined_plot,
-  width = 9 * 0.7,
-  height = 4 * 0.7,
-  dpi = 600
-)
 
 ggsave(
-  filename = file.path(plot_folder, "dataAmount.eps"),
+  filename = file.path(plot_folder, "dataAmount.pdf"),
   plot = combined_plot,
   width = 9 * 0.7,
   height = 4 * 0.7,
   dpi = 600,
-  device = "eps"
+  device = "pdf"
 )

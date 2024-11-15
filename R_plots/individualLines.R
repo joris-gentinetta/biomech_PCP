@@ -83,19 +83,12 @@ combined_plot <- ggplot(plot_data, aes(x = Phase, y = MSE, color = Participant, 
   ) +
   scale_x_discrete(expand = c(0.05, 0.05))
 
-ggsave(
-  filename = file.path(plot_folder, "individualLines.png"),
-  plot = combined_plot,
-  width = 9 * 0.7,
-  height = 4 * 0.7,
-  dpi = 600
-)
 
 ggsave(
-  filename = file.path(plot_folder, "individualLines.eps"),
+  filename = file.path(plot_folder, "individualLines.pdf"),
   plot = combined_plot,
   width = 9 * 0.7,
   height = 4 * 0.7,
   dpi = 600,
-  device = "eps"
+  device = "pdf"
 )

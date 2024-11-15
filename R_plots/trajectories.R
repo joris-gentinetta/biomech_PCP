@@ -3,13 +3,33 @@ library(ggplot2)
 library(dplyr)
 library(tidyr)
 library(gridExtra)
+# library(tidyverse)
+# library(grid)
 
 # Define directories and settings
 person_id <- "P7_453"
-plot_folder <- "/Users/jg/Desktop/upper_limb/paper_figures-2"
+plot_folder <- "/Users/jg/Desktop/upper_limb/paper_figures-4"
 data_folder <- "/Users/jg/Desktop/upper_limb/paper_data-2"
-save_dir <- file.path(plot_folder, "fullPage")
-dir.create(save_dir, recursive = TRUE, showWarnings = FALSE)
+dir.create(plot_folder, recursive = TRUE, showWarnings = FALSE)
+
+draw_square <- function(data, params, size) {
+  if (is.null(data$size)) {
+    data$size <- 0.5
+  }
+  lwd <- min(data$size, min(size) /4)
+  grid::rectGrob(
+    width  = unit(1, "snpc") - unit(lwd, "mm"),
+    height = unit(1, "snpc") - unit(lwd, "mm"),
+    gp = gpar(
+      col = data$colour %||% NA,
+      fill = alpha(data$fill %||% "grey20", data$alpha),
+      lty = 0,
+      lwd = lwd * .pt,
+      linejoin = params$linejoin %||% "mitre",
+      lineend = if (identical(params$linejoin, "round")) "round" else "square"
+    )
+  )
+}
 
 # Plot settings
 plot_settings <- list(
@@ -126,33 +146,36 @@ create_plot <- function(data) {
       labels = c(0, 2, 4, 6)           # Label these breaks as 0 to 6
     ) +    
     theme(
-      legend.position = c(0.9834, 0.7892), # Adjust to move it right and up slightly
+      legend.position = c(0.9853, 0.795), # Adjust to move it right and up slightly
       legend.justification = c("right", "top"), # Aligns legend top-right corner to position
-
       legend.direction = "vertical", # Horizontal legend
+      legend.title = element_blank(), # Remove legend title
       legend.box = "horizontal", # Display color and linetype legends in one line
-      legend.margin = margin(t = -10, r = 2, b = 0, l = 0),
+      legend.margin = margin(t = 4, b = 4.5, r = 5, l = 5), # Adjust legend margin
       legend.key = element_blank(), # Removes background behind legend markers
+      legend.key.height = unit(1, "lines"),
+      legend.key.width = unit(2, "lines"),
       legend.spacing = unit(0, "lines"), # Remove spacing between legend items
       legend.background = element_rect(fill="gray90"), # Adds border around legend
-
-      plot.margin = margin(t = 0, r = 0, b = 28, l = 0), # Adjust plot margin to fit the legend
-      strip.text.y.left = element_text(size = 10),
+      legend.text = element_text(size = 15.4), # Bold legend text
       strip.placement = "outside",
-      strip.text = element_text(size = 12, face = "bold"),
-      # strip.background = element_blank(), # Remove strip background
+      strip.text = element_text(size = 19, face = "bold"),
+      strip.text.y.left = element_text(size = 12, face = "bold"), # Bold y-axis labels
 
       panel.grid.minor = element_blank(), # Removes minor grid lines
       panel.grid.major = element_line(size = 0.3, color = "gray90"), # Lightens major grid lines
       panel.background = element_rect(fill = "gray98", color = NA), # Light gray background within the panel
-      # panel.background = element_blank(), # Remove strip background
 
       axis.ticks.length = unit(0, "pt"), # Removes ticks for smooth appearance
-      # panel.spacing = unit(0, "lines"), # Remove spacing between panels
+      axis.text = element_text(size = 13), # Larger x-axis text
+      axis.title = element_text(size = 14, face = "bold"), # Bold axis titles
+      
+      axis.title.y = element_text(margin = margin(t = 0, r = 10, b = 0, l = 0)), # Adjust y-axis title margin
+      plot.margin = margin(t = 0, r = 0, b = 28, l = 28), # Adjust plot margin to fit the legend
 
 
     ) +
-    labs(x = "Time (s)", y = "Normalized Angle")
+    labs(x = "Time [s]", y = "Normalized Angle")
 }
 
 
@@ -163,11 +186,16 @@ p3 <- create_plot(data_last_set)
 
 # Arrange and save combined plot
 combined_plot <- grid.arrange(p1, p2, p3, ncol = 1)
+
+width <- 18
+height <- 18 * 1.2
+
+
 ggsave(
+  filename = file.path(plot_folder, "trajectories.pdf"),
   plot = combined_plot,
-  filename = file.path(save_dir, "trajectories.png"),
-  width = 18,
-  height = 18 * 1.2,
+  width = width,
+  height = height,
   dpi = 600,
-  limitsize = FALSE
+  device = "pdf"
 )

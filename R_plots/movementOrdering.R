@@ -52,20 +52,11 @@ combined_plot <- ggplot(df, aes(x = `Online Training Time [s]`, y = MSE, color =
   ) 
 
 
-
 ggsave(
-  filename = file.path(plot_folder, "movementOrdering.png"),
-  plot = combined_plot,
-  width = 9 * 0.7,
-  height = 4 * 0.7,
-  dpi = 600
-)
-
-ggsave(
-  filename = file.path(plot_folder, "movementOrdering.eps"),
+  filename = file.path(plot_folder, "movementOrdering.pdf"),
   plot = combined_plot,
   width = 9 * 0.7,
   height = 4 * 0.7,
   dpi = 600,
-  device = "eps"
+  device = "pdf"
 )
