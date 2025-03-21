@@ -97,7 +97,7 @@ if __name__ == '__main__':
 
     # port = 'COM5'
     # baudrate = 921600 
-    baudrate = 9600
+    
 
     sensor_source = 'external' if args.external else 'prosthesis'
     force_interface = ForceInterface(hand=args.hand, frequency=args.frequency, sensor_source=sensor_source)
