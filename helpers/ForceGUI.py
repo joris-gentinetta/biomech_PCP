@@ -113,17 +113,15 @@ class MainWindow(QMainWindow):
         error_font = self.error_info.font()
         error_font.setPointSize(9)
         self.error_info.setFont(error_font)
-        self.error_info.setMinimumWidth(20)
+        self.error_info.setMinimumWidth(200)
         
-        # Add left layout and error info to main horizontal layout
+        # Add left layout and error info to main horizontal layout with stretch factors (5:1)
         main_h_layout.addLayout(left_layout, stretch=5)
         main_h_layout.addWidget(self.error_info, stretch=1)
 
     def mode_changed(self, mode):
         self.current_mode = mode
-        # Reset buffers when mode changes
         self.reset_buffers()
-        # Show manual input only in Manual mode
         if mode == "Manual":
             self.manual_input.show()
         else:
@@ -203,8 +201,15 @@ class MainWindow(QMainWindow):
         
         self.live_line.set_data(self.time_data, self.live_force_data)
         self.target_line.set_data(self.time_data, self.target_force_data)
+        
+        # Set sliding window: if more than 15 seconds, show last 15 seconds
+        if current_time > 15:
+            self.canvas.ax.set_xlim(current_time - 15, current_time)
+        else:
+            self.canvas.ax.set_xlim(0, 15)
+        
         self.canvas.ax.relim()
-        self.canvas.ax.autoscale_view()
+        self.canvas.ax.autoscale_view(scalex=False)  # only update y-axis limits
         self.canvas.draw()
 
     def get_live_force(self, t):
