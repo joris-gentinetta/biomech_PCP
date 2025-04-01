@@ -23,6 +23,7 @@ class ForceInterface:
         if self.sensor_source == 'prosthesis':
             self.hand = psyonicArm(hand=self.hand_side, stuffing=False, usingEMG=False)
             self.hand.initSensors()
+            self.hand.startComms()
         else:
             # External sensor integration not implemented yet.
             self.hand = None
@@ -39,8 +40,12 @@ class ForceInterface:
         if self.sensor_source == 'prosthesis':
             # sensor_data = self.hand.get_sensor_readings()
             sensor_data = {'sensorForces': [self.hand.sensors[force] for force in self.hand.sensorForce]}
-            forces = sensor_data['sensorForces']
-            return np.array(forces)
+            # forces = sensor_data['sensorForces']
+            # return np.array(forces)
+            forces = np.array(sensor_data['sensorForces'])
+            forces[forces < 0.01] = 0  # Set all values < 0.01 to zero
+            return forces
+
         else:
             # Placeholder: External sensor integration to be implemented.
             print("External force sensor integration not implemented. Returning dummy zero values.")
