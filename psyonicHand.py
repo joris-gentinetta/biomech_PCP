@@ -1,3 +1,7 @@
+# Added 17, 72, 997
+# Uncommented 142-147
+# Changed 157 from "str(Path(passedPort).resolve())," to "passedPort,"
+
 import serial
 from serial.tools import list_ports
 import sys
@@ -65,7 +69,8 @@ class psyonicArm():
 		self.handCom = self.curPos
 
 		# setup communication with arm (serial port)
-		self.serialSet = self.setupSerial(passedPort='/dev/psyonicHand')
+		# self.serialSet = self.setupSerial(passedPort='/dev/psyonicHand')
+		self.serialSet = self.setupSerial(passedPort='COM5')
 		if not self.serialSet:
 			sys.exit('Error: Serial Port not found')
 
@@ -139,11 +144,11 @@ class psyonicArm():
 
 	# Search for Serial Port to use
 	def setupSerial(self, passedPort=None):
-		# if passedPort is not None:
-		# 	self.ser = serial.Serial(str(Path(passedPort).resolve()), self.baud, timeout=0.02, write_timeout=0.02)
-		# 	assert self.ser.is_open, 'Failed to open serial port'
-		# 	print(f'Connected to port {self.ser.name}')
-		# 	return True
+		if passedPort is not None:
+			self.ser = serial.Serial(passedPort, self.baud, timeout=0.02, write_timeout=0.02)
+			assert self.ser.is_open, 'Failed to open serial port'
+			print(f'Connected to port {self.ser.name}')
+			return True
 
 		print('Searching for serial ports...')
 		com_ports_list = list(list_ports.comports())
@@ -989,8 +994,8 @@ def callback():
 
 def saveThread(filename, data):
 	dataToSave = np.array(data)
-	np.savetxt('/home/haptix/haptix/psyonic/logs/' + filename + '.csv', dataToSave, delimiter='\t', fmt='%s')
-
+	# np.savetxt('/home/haptix/haptix/psyonic/logs/' + filename + '.csv', dataToSave, delimiter='\t', fmt='%s')
+	np.savetxt('C:/Users/Emanuel Wicki/Documents/MIT/biomech_PCP/Psyonic/Logs/' + filename + '.csv', dataToSave, delimiter='\t', fmt='%s')
 def main(arm, emg=None):
 	# connect to EMG board
 	if emg is not None:
