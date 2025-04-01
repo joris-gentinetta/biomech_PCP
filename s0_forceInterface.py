@@ -37,7 +37,8 @@ class ForceInterface:
 
     def read_force_sensors(self):
         if self.sensor_source == 'prosthesis':
-            sensor_data = self.hand.get_sensor_readings()
+            # sensor_data = self.hand.get_sensor_readings()
+            sensor_data = {'sensorForces': [self.hand.sensors[force] for force in self.hand.sensorForce]}
             forces = sensor_data['sensorForces']
             return np.array(forces)
         else:
@@ -88,11 +89,11 @@ if __name__ == '__main__':
     os.makedirs(args.output_dir, exist_ok=True)
 
     # Create an instance of psyonicArm for the left hand (or 'right' if needed)
-    hand = psyonicArm(hand='left', stuffing=False, usingEMG=False)
+    # hand = psyonicArm(hand='left', stuffing=False, usingEMG=False)
 
     # Initialize sensors
-    hand.initSensors()
-    print("Current control mode:", hand.getCurControlMode())
+    # hand.initSensors()
+    # print("Current control mode:", hand.getCurControlMode())
 
 
     # port = 'COM5'
