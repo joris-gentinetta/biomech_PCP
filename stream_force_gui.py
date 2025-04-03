@@ -6,13 +6,8 @@ from matplotlib.animation import FuncAnimation
 
 # Import the updated Force class from the helpers directory.
 from helpers.ForceClass import Force
+from config import NUM_CHANNELS, SENSORS_PER_FINGER, NUM_FINGERS, BUFFER_LENGTH, ACQ_FREQUENCY
 
-# -------------------- Configuration Parameters --------------------
-NUM_CHANNELS = 30           # Total sensor channels.
-SENSORS_PER_FINGER = 6      # Sensors per finger.
-NUM_FINGERS = 5
-BUFFER_LENGTH = 100         # Number of samples to display per channel.
-ACQ_FREQUENCY = 60          # Acquisition frequency (Hz) for display and GUI.
 
 # Initialize a circular buffer for sensor data (shape: NUM_CHANNELS x BUFFER_LENGTH).
 sensor_buffer = np.zeros((NUM_CHANNELS, BUFFER_LENGTH))
