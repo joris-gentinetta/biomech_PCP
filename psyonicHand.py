@@ -1,6 +1,7 @@
 # Added 17, 72, 997
 # Uncommented 142-147
-# Changed 157 from "str(Path(passedPort).resolve())," to "passedPort,"
+# Changed 148 from "str(Path(passedPort).resolve())," to "passedPort,"
+# Added def close(slef)
 
 import serial
 from serial.tools import list_ports
@@ -141,6 +142,24 @@ class psyonicArm():
 			self.plotCTX.term()
 		except Exception as e:
 			print(f'__del__: Plot socket closing error {e}')
+
+	def stopComms(self):
+        # Signal the communication thread to stop and wait for it to finish
+		if hasattr(self, 'stopEvent'):
+			self.stopEvent.set()
+		if hasattr(self, 'sendThread'):
+			self.sendThread.join(timeout=2)
+        # Now, safely close the serial port if it's open
+		if hasattr(self, 'ser') and self.ser.is_open:
+			try:
+				self.ser.close()
+				print("Serial port closed.")
+			except Exception as e:
+				print(f"Error closing serial port: {e}")
+
+	def close(self):
+		# Call stopComms() to ensure the serial thread is stopped before closing resources
+		self.stopComms()
 
 	# Search for Serial Port to use
 	def setupSerial(self, passedPort=None):
