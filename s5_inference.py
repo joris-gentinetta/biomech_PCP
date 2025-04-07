@@ -913,25 +913,41 @@ class psyonicArm():
 			# 	self.handCom = [0]*self.numMotors
 
 	# Run the neural net at self.Hz, allowing faster command interpolation to be sent to the arm
-	def runNetForward(self, controller):
+	def runNetForward(self, free_space_controller, interaction_controller):
 		T = time.time()
 		self.NetCom = self.getCurPos()
+
+		# Define Force Threshold
+		force_threshold = 0.6
+
 		# controller.resetModel() # todo biophysical model
 		while not self.exitEvent.is_set():
 			newT = time.time()
 			time.sleep(max(1/(self.loopRate*self.Hz) - (newT - T), 0))
 			T = time.time()
 
-			self.lastposCom = self.NetCom
+			# Read live Force
+			force_data = np.array([self.sensors[key] for key in self.sensorForce])
+			force_magnitude = np.linalg.norm(force_data)
+
+			# Select controller based on Force input
+			if force_magnitude > force_threshold:
+				self.lastposCom = self.NetCom
+				posCom = interaction_controller.runModel() # If contact detected
+			else:
+				self.lastposCom = self.NetCom
+				posCom = free_space_controller.runModel()
+
+			# self.lastposCom = self.NetCom
 			# posCom = controller.forwardDynamics() # todo biophysical model
-			posCom = controller.runModel()
+			# posCom = controller.runModel()
 			self.NetCom = np.asarray(self.lowpassCommands.filter(np.asarray([posCom]).T).T[0])
 
 			if self.exitEvent.is_set():
 				break
 
-	def runNetThread(self, controller):
-		self.netThread = threading.Thread(target=self.runNetForward, args=[controller], name='runNetForward')
+	def runNetThread(self, free_space_controller, interaction_controller):
+		self.netThread = threading.Thread(target=self.runNetForward, args=(free_space_controller, interaction_controller), name='runNetForward')
 		self.netThread.daemon = True
 		self.netThread.start()
 
@@ -1159,7 +1175,9 @@ if __name__ == '__main__':
 	parser.add_argument('-s', '--stuffing', help='Using byte stuffing?', action='store_true')
 	parser.add_argument('--person_dir', type=str, required=True, help='Person directory')
 	parser.add_argument('--config_name', type=str, required=True, help='Training configuration')
-	parser.add_argument('--model_path', type=str, required=True, help='Model path')
+	parser.add_argument('--free_space_model_path', type=str, required=True, help='Path to the free space model')
+	parser.add_argument('--interaction_model_path', type=str, required=True, help='Path to the interaction model')
+
 
 	args = parser.parse_args()
 
@@ -1179,12 +1197,16 @@ if __name__ == '__main__':
 		emg.startCommunication()
 		print(f'Starting Psyonic Hand (EMG control{strInsert})...')
 
+		free_space_model_path = args.model_path
+		interaction_model_path = args.interaction_model_path
+
+		free_space_controller = psyonicControllers(numMotors=arm.numMotors, arm=arm, freq_n=3, emg=emg, config=config, model_path=free_space_model_path)
+		interaction_controller = psyonicControllers(numMotors=arm.numMotors, arm=arm, freq_n=3, emg=emg, config=config, model_path=interaction_model_path)
+
 		# model_name = args.config_name.split('.')[0]
 		# model_path = join('data', args.person_dir, 'models', f'{model_name}.pt')
-		model_path = args.model_path
-
-		controller = psyonicControllers(numMotors=arm.numMotors, arm=arm, freq_n=3, emg=emg, config=config, model_path=model_path)
-		arm.runNetThread(controller)
+		
+		arm.runNetThread(free_space_controller, interaction_controller)
 
 	elif args.tracker:
 		trackerAddr = 'tcp://127.0.0.1:1239'
