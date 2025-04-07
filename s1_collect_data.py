@@ -54,7 +54,16 @@ def capture_Force(stop_flag, output_dir, dummy_force):
     if dummy_force:
         num_channels = 30
         forceHistory = np.empty((1, num_channels))
+        start_time = time.time()
         while not stop_flag.value:
+            current_time = time.time()
+            elapsed_time = current_time - start_time
+
+            if elapsed_time < 5: # First 5 seconds no contact to simulate free space
+                thisForce = np.zeros((1, num_channels))
+            else: # After 5s simulate force to switch to interaction mode (0.7N with noise)
+                thisForce = 0.7 * np.ones((1, num_channels)) + 0.05 * np.random.randn(1, num_channels)
+            
             force_timestamps.append(time.time())
             thisForce = np.random.rand(1, num_channels)
             forceHistory = np.concatenate((forceHistory, thisForce), axis=0)
