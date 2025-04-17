@@ -1,197 +1,135 @@
-# ==========================================
-# Script: cyberglove_to_psyonic.py
-# Purpose: Control the Psyonic Ability Hand
-#          using CyberGlove-II angles from NinaPro
-#          with optional thumb lock,
-#          low-pass filtering,
-#          and correct mapping to the hand's range.
-# ==========================================
-
 import scipy.io
 import numpy as np
-import time
-import sys
-import os
-from scipy.signal import butter, filtfilt
+import matplotlib.pyplot as plt
+from scipy.signal import savgol_filter
+from mpl_toolkits.mplot3d import Axes3D
+from matplotlib.animation import FuncAnimation
 
-# Add path for custom libraries
-sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
-from psyonicHand import psyonicArm
+# ------------------------------------------------------
+# 1) Load raw CyberGlove angles
+# ------------------------------------------------------
+mat_path = r"C:/Users/Emanuel Wicki/Documents/MIT/biomech_PCP/pretraining/CyberGlove2/s_1_angles/s_1_angles/S64_E1_A1.mat"
+data     = scipy.io.loadmat(mat_path)
+angles_raw = data['angles']   # shape (n_frames, n_channels)
 
-# ------------------------------------------
-# 1) Low-pass filter function
-# ------------------------------------------
-def lowpass_filter(data, cutoff=5, fs=100, order=4):
-    """
-    data: 2D array (samples, channels)
-    cutoff: cutoff frequency in Hz
-    fs: sampling rate in Hz
-    order: filter order
-    """
-    nyq = 0.5 * fs
-    normal_cutoff = cutoff / nyq
-    b, a = butter(order, normal_cutoff, btype='low', analog=False)
-    filtered = filtfilt(b, a, data, axis=0)
-    return filtered
+# ------------------------------------------------------
+# 2) Zero‑and‑stretch each channel into [0°,90°]
+# ------------------------------------------------------
+# mins   = angles_raw.min(axis=0)
+# n_col  = angles_raw.shape[1]
+# mins   = np.zeros(n_col)
+mins   = angles_raw.min(axis=0)
+maxs   = angles_raw.max(axis=0)
+ranges = maxs - mins + 1e-8
 
-# ------------------------------------------
-# 2) Load angles + stimulus, clip up to stimulus == 2
-# ------------------------------------------
-mat_file_path = r"C:/Users/Emanuel Wicki/Documents/MIT/biomech_PCP/pretraining/CyberGlove2/s_1_angles/s_1_angles/S1_E3_A1.mat"
-data = scipy.io.loadmat(mat_file_path)
+n_channels = angles_raw.shape[1]
+multipliers = np.full(n_channels, 110.0)
+for idx in [4, 7, 9, 13]:
+    multipliers[idx] = 110.0
+for idx in [6, 8, 11, 15]:
+    multipliers[idx] = 110.0
+for idx in [16, 17, 18, 19]:
+    multipliers[idx] = 80.0
 
-angles = data['angles']             # shape (samples, 22)
-stimulus = data['stimulus'].flatten()
 
-# We stop at the first time stimulus == 2
-if 2 in stimulus:
-    task_change_idx = np.where(stimulus == 2)[0][0]
-else:
-    task_change_idx = len(stimulus)
+angles_deg = (angles_raw - mins[np.newaxis, :]) / ranges[np.newaxis, :] * multipliers[np.newaxis, :]
 
-angles = angles[:task_change_idx]
-stimulus = stimulus[:task_change_idx]
+# ------------------------------------------------------
+# 3) (Optional) Flip “reversed” channels here
+#    If channel i *decreases* when you flex, add i to this list:
+# ------------------------------------------------------
+reversed_channels = []  # e.g. [17,18,19] if those go backwards
+if reversed_channels:
+    angles_deg[:,reversed_channels] = 90.0 - angles_deg[:,reversed_channels]
 
-print(f"Clipped dataset to {angles.shape[0]} samples (up to first appearance of task 2).")
+# ------------------------------------------------------
+# 4) (Optional) Smooth jitter: Savitzky–Golay filter
+#    window_length must be odd; here 5 frames (~80ms @60Hz)
+# ------------------------------------------------------
+angles_smooth = savgol_filter(angles_deg, window_length=5, polyorder=2, axis=0)
 
-# ------------------------------------------
-# 3) Choose the correct sensor indices
-#    in the order: [Thumb Flex, Index, Middle, Ring, Pinky, Thumb Rot]
-#
-# Example from your mention: 
-#   - Thumb flex = sensor 1 (0-based index?), 
-#   - Index flex = sensor 6 => 5 in 0-based,
-#   - Middle flex = sensor 9 => 8 in 0-based,
-#   - Ring flex = sensor 13 => 12 in 0-based,
-#   - Pinky flex = sensor 17 => 16 in 0-based,
-#   - Thumb rotation = sensor 0 => (?), 
-#
-# Adjust these carefully!
-# ------------------------------------------
-# Suppose for example:
-#   sensor  1 =>  0 in code => Thumb flex
-#   sensor  6 =>  5 => Index MCP
-#   sensor  9 =>  8 => Middle MCP
-#   sensor 13 => 12 => Ring MCP
-#   sensor 17 => 16 => Pinky MCP
-#   sensor  0 =>  -1 => ??? for rotation
-#
-# Check your glove map carefully!
-# 
-# For demonstration, let's do this:
-selected_indices = [
-    1,   # (col 0) -> Thumb Flex
-    5,   # (col 1) -> Index MCP
-    8,   # (col 2) -> Middle MCP
-    12,  # (col 3) -> Ring MCP
-    16,  # (col 4) -> Pinky MCP
-    0    # (col 5) -> Thumb Rotation
-]
+# choose which to animate:
+angles_for_anim = angles_smooth  # or switch to angles_deg for no smoothing
 
-selected_angles = angles[:, selected_indices]
+# ------------------------------------------------------
+# 5) Animation setup (your original kinematics & plotting)
+# ------------------------------------------------------
+thumb_indices  = [0, 1, 2]
+index_indices  = [4, 6, 16]
+middle_indices = [7, 8, 17]
+ring_indices   = [9, 11, 18]
+pinky_indices  = [13,15,19]
 
-print("Selected Indices => Final columns order:")
-print("0 -> Thumb Flex\n1 -> Index\n2 -> Middle\n3 -> Ring\n4 -> Pinky\n5 -> Thumb Rotation")
+base_pts = {
+    'thumb':  np.array([0, 0, 0]),
+    'index':  np.array([2, 0, 0]),
+    'middle': np.array([4, 0, 0]),
+    'ring':   np.array([6, 0, 0]),
+    'pinky':  np.array([8, 0, 0]),
+}
 
-# ------------------------------------------
-# 4) Apply a low-pass filter (5 Hz cut) to smooth angles
-# ------------------------------------------
-fs = 100   # assumed sampling freq
-cutoff = 3 # adjust as needed
-order = 4
-selected_angles = lowpass_filter(selected_angles, cutoff=cutoff, fs=fs, order=order)
+fig = plt.figure(figsize=(10,10))
+ax  = fig.add_subplot(111, projection='3d')
+ax.set_xlim(-10,10); ax.set_ylim(-10,10); ax.set_zlim(-10,10)
+ax.set_xlabel('X'); ax.set_ylabel('Y'); ax.set_zlabel('Z')
 
-# ------------------------------------------
-# 5) Analyze min/max for normalization 
-#    (only from clipped & filtered data)
-# ------------------------------------------
-mins = np.min(selected_angles, axis=0)
-maxs = np.max(selected_angles, axis=0)
+finger_lines = {
+    finger: ax.plot([], [], [], 'o-', linewidth=3, label=finger)[0]
+    for finger in base_pts
+}
+ax.legend()
 
-print("\nMin/Max per final angle (after clipping & filtering):")
-for col_i, (mn, mx) in enumerate(zip(mins, maxs)):
-    print(f"  Col {col_i}: min={mn:.2f}, max={mx:.2f}")
+def finger_kinematics(base, angles_deg, lengths=[4,3,2]):
+    angles_rad = np.radians(angles_deg)
+    pts = [base.copy()]
+    direction = np.array([0,0,1])
+    for angle, L in zip(angles_rad, lengths):
+        Rx = np.array([[1,0,0],
+                       [0,np.cos(angle),-np.sin(angle)],
+                       [0,np.sin(angle), np.cos(angle)]])
+        direction = Rx @ direction
+        pts.append(pts[-1] + direction * L)
+    return np.array(pts)
 
-# Now normalize each column
-normalized = (selected_angles - mins) / (maxs - mins)
-normalized = np.clip(normalized, 0, 1)
+def thumb_kinematics(base, angles_deg, lengths=[3,2,1.5]):
+    cmc_abd, mcp_flex, ip_flex = np.radians(angles_deg)
+    pts = [base.copy()]
+    Rz = np.array([[ np.cos(cmc_abd), -np.sin(cmc_abd), 0],
+                   [ np.sin(cmc_abd),  np.cos(cmc_abd), 0],
+                   [ 0,                0,               1]])
+    direction = Rz @ np.array([0,1,0])
+    Rx_mcp = np.array([[1,0,0],
+                       [0,np.cos(mcp_flex), -np.sin(mcp_flex)],
+                       [0,np.sin(mcp_flex),  np.cos(mcp_flex)]])
+    direction = Rx_mcp @ direction
+    pt1 = pts[-1] + direction * lengths[0]; pts.append(pt1)
+    Rx_ip = np.array([[1,0,0],
+                      [0,np.cos(ip_flex), -np.sin(ip_flex)],
+                      [0,np.sin(ip_flex),  np.cos(ip_flex)]])
+    direction = Rx_ip @ direction
+    pt2 = pts[-1] + direction * lengths[1]; pts.append(pt2)
+    return np.array(pts)
 
-# ------------------------------------------
-# 6) Map to Psyonic range
-#    Here the function expects:
-#        col 0 -> Thumb Flex
-#        col 1 -> Index
-#        col 2 -> Middle
-#        col 3 -> Ring
-#        col 4 -> Pinky
-#        col 5 -> Thumb Rotation
-# ------------------------------------------
-def map_to_psyonic_range(norm_data, control_thumb=True):
-    # create output (samples, 6 motors)
-    out = np.zeros_like(norm_data)  
+def update(frame):
+    fa = angles_for_anim[frame]
+    # thumb
+    th_pts = thumb_kinematics(base_pts['thumb'], fa[thumb_indices])
+    line  = finger_lines['thumb']
+    line.set_data(th_pts[:,0], th_pts[:,1]); line.set_3d_properties(th_pts[:,2])
+    # other fingers
+    for name, idxs in zip(['index','middle','ring','pinky'],
+                          [index_indices, middle_indices, ring_indices, pinky_indices]):
+        pts = finger_kinematics(base_pts[name], fa[idxs])
+        ln = finger_lines[name]
+        ln.set_data(pts[:,0], pts[:,1]); ln.set_3d_properties(pts[:,2])
+    return list(finger_lines.values())
 
-    # Thumb flex => row[:,0], range 0..120
-    # Index => row[:,1], middle => row[:,2], ring => row[:,3], pinky => row[:,4], each 0..120
-    # Thumb rot => row[:,5], range -120..0
-
-    # copy thumb flex
-    if control_thumb:
-        out[:,0] = norm_data[:,0] * 120.0        # thumb flex
-        out[:,5] = -120.0 + norm_data[:,5]*120.0 # thumb rotation
-    else:
-        # fix thumb to half open
-        out[:,0] = 10.0   # flex
-        out[:,5] = -60.0  # rotation
-
-    # index, middle, ring, pinky
-    out[:,1] = norm_data[:,1] * 119.0 + 1
-    out[:,2] = norm_data[:,2] * 119.0 + 1
-    out[:,3] = norm_data[:,3] * 119.0 + 1
-    out[:,4] = norm_data[:,4] * 119.0 + 1
-
-    return out
-
-# Ask user if they want to control thumb
-thumb_choice = input("\nControl thumb via CyberGlove? (y/n): ").strip().lower()
-if thumb_choice == 'y':
-    control_thumb = True
-    print("Thumb is controlled by glove angles.")
-else:
-    control_thumb = False
-    print("Thumb is locked to semi-open position.")
-
-motor_commands = map_to_psyonic_range(normalized, control_thumb=control_thumb)
-
-# ------------------------------------------
-# 7) Connect to the actual Ability Hand
-# ------------------------------------------
-arm = psyonicArm(hand='left')
-arm.initSensors()
-arm.startComms()
-
-# Move to neutral pose first
-neutral_pose = np.array([5, 5, 5, 5, 5, -5])
-arm.mainControlLoop(posDes=neutral_pose, period=0.08)
-time.sleep(1)
-
-try:
-    print("\nSending smoothed + normalized CyberGlove-based movements ...")
-    # Subsample to avoid flooding
-    motor_commands_downsampled = motor_commands[::5]
-    arm.mainControlLoop(posDes=motor_commands_downsampled, period=0.06)
-
-except KeyboardInterrupt:
-    print("Stopped by user.")
-
-finally:
-    arm.close()
-    print("Closed connection.")
-
-# ==========================================
-# Notes:
-#  - We do a low-pass filter on the chosen angles.
-#  - We clip data up to the first time stimulus == 2
-#  - We reorder columns so col0=thumb flex, col1=index, etc.
-#  - Then map to [0..120], [ -120..0 ] for thumb rotation
-#  - Subsample frames for less dense motion
-# ==========================================
+# ------------------------------------------------------
+# 6) Fire off the animation
+#    - step=20 skips ahead 20 frames per draw (speeds it up)
+#    - interval=30 sets ~33fps
+# ------------------------------------------------------
+ani = FuncAnimation(fig, update,
+                    frames=np.arange(0, angles_for_anim.shape[0], 200),
+                    interval=50, blit=False)
+plt.show()
