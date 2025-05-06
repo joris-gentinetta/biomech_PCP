@@ -132,34 +132,76 @@ def main():
         poses_arr = np.vstack(key_poses)
         smooth_traj = CubicSpline(key_times, poses_arr, axis=0)(t_interp)
 
+    # 1) compute cumulative distance along the curve
+    diffs = np.diff(smooth_traj, axis=0)                  # (N-1,6)
+    step_dists = np.linalg.norm(diffs, axis=1)            # (N-1,)
+    s = np.concatenate([[0], np.cumsum(step_dists)])      # (N,); s[-1] is total length
+
+    # 2) sample N points at *uniform* arc‐length
+    N = smooth_traj.shape[0]
+    s_uniform = np.linspace(0, s[-1], N)
+
+    # 3) for each target s, find which segment it lies in & linearly interp
+    traj_const_speed = np.zeros_like(smooth_traj)         # (N,6)
+    idx = np.searchsorted(s, s_uniform) - 1
+    idx = np.clip(idx, 0, N-2)
+
+    for i, su in enumerate(s_uniform):
+        i0 = idx[i]
+        ds = s[i0+1] - s[i0]
+        α  = (su - s[i0]) / ds if ds>0 else 0
+        traj_const_speed[i] = smooth_traj[i0] * (1-α) + smooth_traj[i0+1] * α
+
+    # now overwrite your old trajectory
+    smooth_traj = traj_const_speed
+
+
+    arm.Hz = 10
+    arm.loopRate = 7
+
     # Warm-up sync iterations
     print(f"Running {args.sync_iterations} sync iterations (no recording)...")
     for i in range(args.sync_iterations):
-        arm.mainControlLoop(posDes=smooth_traj, period=0.06, emg=emg)
+        arm.mainControlLoop(posDes=smooth_traj, period=10, emg=emg) 
 
-    # Recording iterations
     all_records = []
+    headers = None
+    joint_names = ['index','middle','ring','pinky','thumbFlex','thumbRot']
+    angle_cols = [f"{j}_Pos" for j in joint_names]
+
+    overall_start = time.time()
+
     for itr in range(1, args.record_iterations + 1):
         print(f"Starting recording iteration {itr} of {args.record_iterations}...")
         arm.resetRecording()
         arm.recording = True
         start = time.time()
-        arm.mainControlLoop(posDes=smooth_traj, period=0.06, emg=emg)
+        arm.mainControlLoop(posDes=smooth_traj, period=10, emg=emg)
         arm.recording = False
         duration = time.time() - start
-        print(f"Iteration {itr} completed in {duration:.2f} s.")
+        
         raw = arm.recordedData
-        if raw and isinstance(raw[0][0], str):
-            data_rows = raw[1:]
-        else:
-            data_rows = raw
+        if not raw or not isinstance(raw[0][0], str):
+            raise RuntimeError("Expected recorded Data [0] to be header row")
+        
+        if headers is None:
+            headers = raw[0]
+            angle_idxs = [headers.index(col) for col in angle_cols]
+            print("Angle columns:", [headers[i] for i in angle_idxs])
+
+        data_rows = raw[1:]
         all_records.extend(data_rows)
+
+        overall_duration = time.time() - overall_start
+
+        print(f"Iteration {itr} completed in {duration:.2f} s.")
+        print(f"Duration: {overall_duration}")
 
     # Convert all records to float array
     rec = np.array(all_records, dtype=float)
     timestamps = rec[:, 0]
     emg_data   = rec[:, 1:9]
-    angles     = rec[:, 9:]
+    angles     = rec[:, angle_idxs]
 
     # Save to .npy files
     np.save(os.path.join(base_dir, "emg.npy"), emg_data)
