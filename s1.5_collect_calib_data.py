@@ -1,134 +1,178 @@
-import sys
+import argparse
 import os
 import time
 import numpy as np
 from helpers.hand_poses import hand_poses
 from psyonicHand import psyonicArm
 from scipy.interpolate import CubicSpline
-from EMGClass import EMG  # Ensure this module is in the PYTHONPATH
+from EMGClass import EMG
+from s0_emgInterface import EMGStreamer
+import inspect
 
-# ---------------------------
-# Ask the user for the output directory.
-output_dir = input("Enter the output directory for recorded data: ")
-if not os.path.isdir(output_dir):
-    print("Directory does not exist. Creating it.")
-    os.makedirs(output_dir)
 
-# ---------------------------
-# Connect to the EMG board.
-# print("Connecting to EMG board...")
-# emg = EMG(usedChannels=[0, 1, 2, 4, 5, 8, 10, 11])
-# emg.startCommunication()
-# print("EMG board connected.")
+def main():
+    parser = argparse.ArgumentParser(
+        description="Record synchronized EMG + prosthetic hand pose data"
+    )
+    parser.add_argument(
+        "--person_id", "-p",
+        required=True,
+        help="Person ID (folder under data/)"
+    )
+    parser.add_argument(
+        "--movement", "-m",
+        required=True,
+        help="Movement name (subfolder under recordings/)"
+    )
+    parser.add_argument(
+        "--out_root", "-o",
+        default="data",
+        help="Root data directory (default: ./data)"
+    )
+    parser.add_argument(
+        "--no_emg",
+        action="store_true",
+        help="Disable EMG capture for testing without hardware"
+    )
+    parser.add_argument(
+        "--hand_side", "-s",
+        choices=["left", "right"],
+        default="left",
+        help="Side of the prosthetic hand (default: left)"
+    )
+    parser.add_argument(
+        "--sync_iterations", 
+        type=int,
+        default=7,
+        help="Number of warm-up sync iterations (default: 7)"
+    )
+    parser.add_argument(
+        "--record_iterations", "-r",
+        type=int,
+        default=25,
+        help="Number of recording iterations to perform (default: 10)"
+    )
+    args = parser.parse_args()
 
-# ---------------------------
-# Initialize the hand (Ability Hand)
-arm = psyonicArm(hand='left')
-arm.initSensors()
-arm.startComms()
+    # Prepare output directory
+    base_dir = os.path.join(
+        args.out_root,
+        args.person_id,
+        "recordings",
+        args.movement,
+        "experiments",
+        "1"
+    )
+    os.makedirs(base_dir, exist_ok=True)
 
-# Define the neutral hand pose
-neutral_pose = np.array([5, 5, 5, 5, 5, -5])
+    # Initialize EMG
+    if not args.no_emg:
+        # print("Starting EMGStreamer (COM6 → ZMQ)…")
+        # print("Loading EMGClass from:", inspect.getsourcefile(EMG))
+        # streamer = EMGStreamer(
+        #     socketAddr='tcp://127.0.0.1:1236',
+        #     port='COM6',
+        #     baudrate=921600
+        # )
+        # streamer.startCommunication()
+        # # give the bridge a moment
+        # time.sleep(0.05)
 
-# ---------------------------
-# Ask the user which hand pose to run.
-pose_name = input(f"Enter pose name {list(hand_poses.keys())}: ")
-if pose_name not in hand_poses:
-    print(f"Pose '{pose_name}' not found.")
-    arm.close()
-    sys.exit()
-
-pose = hand_poses[pose_name]
-
-# ---------------------------
-# Build the key poses for the desired movement.
-# Special case: "indexFlDigitsEx" must contain exactly two positions.
-if pose_name == "indexFlDigitsEx":
-    if isinstance(pose, list) and len(pose) == 2:
-        pos1 = np.array(pose[0])
-        pos2 = np.array(pose[1])
-        key_poses = [pos1, pos2]
+        print("Connecting EMGClass subscriber…")
+        emg = EMG(
+            socketAddr='tcp://127.0.0.1:1236',
+            usedChannels=[0, 1, 2, 4, 5, 8, 10, 11]
+        )
+        emg.startCommunication()
+        print("EMG board connected.")
     else:
-        print("Error: The pose 'indexFlDigitsEx' must contain exactly two positions.")
+        emg = None
+        print("EMG capture disabled; running in no-EMG mode.")
+
+    # Initialize the prosthetic arm
+    arm = psyonicArm(hand=args.hand_side)
+    arm.initSensors()
+    arm.startComms()
+
+    # Validate movement
+    pose_name = args.movement
+    if pose_name not in hand_poses:
+        print(f"Unknown movement '{pose_name}'. Available: {list(hand_poses.keys())}")
         arm.close()
-        sys.exit()
-else:
-    # For other poses, if sub-steps are provided, wrap with neutral pose at start and end.
-    if isinstance(pose[0], (list, np.ndarray)):
-        key_poses = [neutral_pose] + pose + [neutral_pose]
+        return
+    pose = hand_poses[pose_name]
+
+    # Build key poses (insert neutral at start/end if needed)
+    neutral_pose = np.array([2, 2, 2, 2, 2, -2])
+    if pose_name == "indexFlDigitsEx":
+        if isinstance(pose, list) and len(pose) == 2:
+            pos1 = np.array(pose[0])
+            pos2 = np.array(pose[1])
+            key_poses = [pos1, pos2]
+        else:
+            raise ValueError("'indexFlDigitsEx' must have exactly two key poses.")
     else:
-        key_poses = [neutral_pose, pose, neutral_pose]
+        if isinstance(pose[0], (list, np.ndarray)):
+            key_poses = [neutral_pose] + [np.array(p) for p in pose] + [neutral_pose]
+        else:
+            key_poses = [neutral_pose, np.array(pose), neutral_pose]
 
-# ---------------------------
-# Movement parameters
-total_duration = 2.0  # seconds for one full trajectory cycle
-sync_iterations = 7   # Number of iterations to run without recording (to allow user syncing)
-record_iterations = 10 # We'll record on one iteration (the 8th)
+    # Trajectory parameters
+    total_duration = 2.0  # seconds per cycle
+    interp_steps = 120
+    if pose_name == "indexFlDigitsEx":
+        half = total_duration / 2
+        t_half = np.linspace(0, half, interp_steps // 2)
+        traj1 = CubicSpline([0, half], np.vstack([key_poses[0], key_poses[1]]), axis=0)(t_half)
+        traj2 = CubicSpline([0, half], np.vstack([key_poses[1], key_poses[0]]), axis=0)(t_half)
+        smooth_traj = np.vstack([traj1, traj2])
+    else:
+        key_times = np.linspace(0, total_duration, len(key_poses))
+        t_interp = np.linspace(0, total_duration, interp_steps)
+        poses_arr = np.vstack(key_poses)
+        smooth_traj = CubicSpline(key_times, poses_arr, axis=0)(t_interp)
 
-# Initial command to send the arm to a neutral position
-arm.mainControlLoop(posDes=neutral_pose, period=0.08)
-time.sleep(1)
+    # Warm-up sync iterations
+    print(f"Running {args.sync_iterations} sync iterations (no recording)...")
+    for i in range(args.sync_iterations):
+        arm.mainControlLoop(posDes=smooth_traj, period=0.06, emg=emg)
 
-# ---------------------------
-# Generate a smooth trajectory using cubic spline interpolation.
-interp_steps = 120
-if pose_name == "indexFlDigitsEx":
-    # Generate a trajectory that goes from pos1 to pos2 (half_cycle) and then back to pos1.
-    half_duration = total_duration / 2
-    times_half = np.linspace(0, half_duration, interp_steps // 2)
-    # Interpolate from first key pose to second.
-    traj_to = CubicSpline([0, half_duration],
-                          np.vstack([key_poses[0], key_poses[1]]),
-                          axis=0)(times_half)
-    # Interpolate back from second key pose to first.
-    traj_back = CubicSpline([0, half_duration],
-                            np.vstack([key_poses[1], key_poses[0]]),
-                            axis=0)(times_half)
-    smooth_trajectory = np.vstack([traj_to, traj_back])
-else:
-    # For normal poses, define key times and interpolate.
-    key_times = np.linspace(0, total_duration, len(key_poses))
-    interp_times = np.linspace(0, total_duration, interp_steps)
-    key_poses_array = np.vstack(key_poses)
-    smooth_trajectory = CubicSpline(key_times, key_poses_array, axis=0)(interp_times)
+    # Recording iterations
+    all_records = []
+    for itr in range(1, args.record_iterations + 1):
+        print(f"Starting recording iteration {itr} of {args.record_iterations}...")
+        arm.resetRecording()
+        arm.recording = True
+        start = time.time()
+        arm.mainControlLoop(posDes=smooth_traj, period=0.06, emg=emg)
+        arm.recording = False
+        duration = time.time() - start
+        print(f"Iteration {itr} completed in {duration:.2f} s.")
+        raw = arm.recordedData
+        if raw and isinstance(raw[0][0], str):
+            data_rows = raw[1:]
+        else:
+            data_rows = raw
+        all_records.extend(data_rows)
 
-# ---------------------------
-# Run the pose for sync iterations (without recording) so the user can acclimate.
-print("\nSynchronizing with the hand's movement. Running 7 iterations (no recording).")
-for i in range(sync_iterations):
-    print(f"Sync iteration {i+1} of {sync_iterations}")
-    arm.mainControlLoop(posDes=smooth_trajectory, period=0.06)
-    time.sleep(0.1)
+    # Convert all records to float array
+    rec = np.array(all_records, dtype=float)
+    timestamps = rec[:, 0]
+    emg_data   = rec[:, 1:9]
+    angles     = rec[:, 9:]
 
-# ---------------------------
-# Now begin recording.
-print("\nStarting recording on iteration 8.")
-arm.resetRecording()   # Clear any previous recordings in the arm's internal log.
-arm.recording = True
+    # Save to .npy files
+    np.save(os.path.join(base_dir, "emg.npy"), emg_data)
+    np.save(os.path.join(base_dir, "emg_timestamps.npy"), timestamps)
+    np.save(os.path.join(base_dir, "angles.npy"), angles)
+    np.save(os.path.join(base_dir, "angle_timestamps.npy"), timestamps)
 
-# For this example, we record one full iteration while the arm executes the smooth trajectory.
-print("Recording iteration...")
-recording_start_time = time.time()
-# We pass the EMG object as well so that arm.addLogEntry(emg) can grab the EMG signal.
-# arm.mainControlLoop(posDes=smooth_trajectory, period=0.06, emg=emg)
-arm.mainControlLoop(posDes=smooth_trajectory, period=0.06)
-print(f"Recording iteration completed in {time.time() - recording_start_time:.2f} seconds.")
+    print(f"Saved EMG and angle data to {base_dir}")
 
-arm.recording = False
+    # Cleanup
+    arm.close()
+    if emg:
+        emg.exitEvent.set()
 
-# ---------------------------
-# Ask the user for a filename to save the recorded data.
-filename = pose_name
-filepath = os.path.join(output_dir, filename + ".csv")
-
-# Save the recorded data.
-# arm.recordedData is assumed to be a list of lists (each row is a log entry with timestamp, EMG, joint positions, etc.).
-recorded_data = np.array(arm.recordedData)
-np.savetxt(filepath, recorded_data, delimiter='\t', fmt='%s')
-print(f"Recorded data saved to: {filepath}")
-
-# ---------------------------
-# Clean up communications.
-arm.close()
-# emg.exitEvent.set()
-print("Arm and EMG communications closed.")
+if __name__ == "__main__":
+    main()
