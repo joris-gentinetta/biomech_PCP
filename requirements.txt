@@ -4,9 +4,8 @@ imageio[ffmpeg]
 numpy
 pandas
 pyarrow
-tqdm
 zmq
-pybullet
+# pybullet
 pandas
 matplotlib
 scikit-learn
@@ -22,4 +21,6 @@ pyzmq
 scipy
 pillow
 pyyaml
+
+ruff
 -e dynamics

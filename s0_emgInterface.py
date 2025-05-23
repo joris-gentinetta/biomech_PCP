@@ -2,26 +2,40 @@
 # 12/08/2022
 # Python interface to pull EMG board data over USB
 
-import serial
-from serial.tools import list_ports
-from helpers.emgDef import *
-from helpers.fakeDataSource import FakeStreamer
-from time import sleep, time
-import struct
-import zmq
-import threading
-from helpers.BCI_Data_Receiver import BCI_Data_Receiver
-
 import os
-os.environ['PYQTGRAPH_QT_LIB'] = 'PyQt5'
-from helpers.MainGUI import mainWindow
-from PyQt5 import QtWidgets
+import struct
+import threading
+from time import sleep, time
+
+import numpy as np
+import serial
+import zmq
+from serial.tools import list_ports
+
+from helpers.BCI_Data_Receiver import BCI_Data_Receiver
+from helpers.emgDef import (
+    ACTIVE_DATA,
+    BUFFER_FULL,
+    BUFFER_FULL_LENGTH,
+    BUFFER_HALF,
+    BUFFER_HALF_LENGTH,
+    COMM_COMMAND_CONFIG_USB,
+    COMM_TX_DONE,
+    COMM_TX_INACTIVE,
+    DSP_DATA_AUX3,
+    USB_PACKET_LENGTH,
+    emgDataFull,
+    emgDataHalf,
+)
+from helpers.fakeDataSource import FakeStreamer
+
+os.environ["PYQTGRAPH_QT_LIB"] = "PyQt5"
+import argparse
 import sys
 
-import argparse
 
-class EMGHardware():
-    def __init__(self, baudrate=921600, port='COM9'):
+class EMGHardware:
+    def __init__(self, baudrate=921600, port="COM9"):
         self.port = port
         self.baudrate = baudrate
         self.EMGPort = serial.Serial(port=port, baudrate=self.baudrate, timeout=None)
@@ -54,7 +68,9 @@ class EMGHardware():
             buf = self.EMGPort.read(USB_PACKET_LENGTH)
             self._semg_decodeBufferHalf(buf)
 
-            print(f'tick: {self.mEMGData.emg_os_tick}, error: {cnt}, idx: {self.mEMGData.idx}, data[0]: {self.mEMGData.dataBuf[0]}')
+            print(
+                f"tick: {self.mEMGData.emg_os_tick}, error: {cnt}, idx: {self.mEMGData.idx}, data[0]: {self.mEMGData.dataBuf[0]}"
+            )
 
             if self.mEMGData.dataBuf[0] == -800:
                 # self._semg_stream_on()
@@ -65,10 +81,10 @@ class EMGHardware():
                     self._semg_decodeBufferHalf(buf)
 
                     sleep(0.01)
-                    print('Requesting EMG stream...')
+                    print("Requesting EMG stream...")
 
                 self.aligned = True
-                print('EMG data successfully aligned.')
+                print("EMG data successfully aligned.")
             else:
                 self._semg_stream_off()
 
@@ -81,7 +97,7 @@ class EMGHardware():
                 self._semg_stream_aux_on()
                 # print('Attempting EMG data alignment...')
                 cnt += 1
-        
+
         buf = self.EMGPort.read(USB_PACKET_LENGTH)
         self._semg_decodeBufferHalf(buf)
 
@@ -92,31 +108,46 @@ class EMGHardware():
         while not self.aligned:
             buf = self.EMGPort.read(USB_PACKET_LENGTH)
             self._semg_decodeBufferFull(buf)
-            print(f'{len(buf)} bytes read ({buf[0:20]})') # print up to the first EMG channel reading
-            assert len(buf) == USB_PACKET_LENGTH, 'Read incorrect number of bytes in _semg_usb_readFull'
+            print(
+                f"{len(buf)} bytes read ({buf[0:20]})"
+            )  # print up to the first EMG channel reading
+            assert len(buf) == USB_PACKET_LENGTH, (
+                "Read incorrect number of bytes in _semg_usb_readFull"
+            )
 
-            print(f'\ttick: {self.mEMGDataFull.osTime_ms:08d}, error: {cnt:03d}, data[0]: {self.mEMGDataFull.dataBuf[0]:07.2f}\n')
+            print(
+                f"\ttick: {self.mEMGDataFull.osTime_ms:08d}, error: {cnt:03d}, data[0]: {self.mEMGDataFull.dataBuf[0]:07.2f}\n"
+            )
 
-            if self.mEMGDataFull.dataBuf[0] == -800 and self.mEMGDataFull.dataBuf[1] == -700:
+            if (
+                self.mEMGDataFull.dataBuf[0] == -800
+                and self.mEMGDataFull.dataBuf[1] == -700
+            ):
                 self._semg_stream_on()
                 self.mEMGDataFull.first_timestamp = self.mEMGDataFull.osTime_ms
                 self.mEMGDataFull.last_timestamp = self.mEMGDataFull.osTime_ms
                 sleep(0.0005)
 
-                while self.mEMGDataFull.dataBuf[0] == -800 and self.mEMGDataFull.dataBuf[1] == -700:
+                while (
+                    self.mEMGDataFull.dataBuf[0] == -800
+                    and self.mEMGDataFull.dataBuf[1] == -700
+                ):
                     buf = self.EMGPort.read(USB_PACKET_LENGTH)
                     self._semg_decodeBufferFull(buf)
                     self.mEMGDataFull.last_timestamp = self.mEMGDataFull.osTime_ms
                     sleep(0.0005)
                     self._semg_stream_on()
                     # print('Requesting EMG stream...')
-                    print(self.mEMGDataFull.last_timestamp - self.mEMGDataFull.first_timestamp)
+                    print(
+                        self.mEMGDataFull.last_timestamp
+                        - self.mEMGDataFull.first_timestamp
+                    )
 
                 self._semg_stream_on()
                 print(self.mEMGDataFull.dataBuf)
 
                 self.aligned = True
-                print('EMG data successfully aligned.')
+                print("EMG data successfully aligned.")
             else:
                 self._semg_stream_off()
 
@@ -131,14 +162,16 @@ class EMGHardware():
                 self._semg_stream_aux_on()
 
                 cnt += 1
-        
+
         buf = self.EMGPort.read(USB_PACKET_LENGTH)
         self._semg_decodeBufferFull(buf)
 
         return 0
 
     def _semg_decodeBufferHalf(self, bufferData):
-        assert struct.calcsize(self.mEMGData.format) == len(bufferData), 'Wrong buffer size in _semg_decodeBufferHalf'
+        assert struct.calcsize(self.mEMGData.format) == len(bufferData), (
+            "Wrong buffer size in _semg_decodeBufferHalf"
+        )
         buf = struct.unpack(self.mEMGData.format, bufferData)
 
         self.mEMGData.idx = buf[0]
@@ -154,7 +187,9 @@ class EMGHardware():
         # if self.aligned: self.mEMGData.emgDataPrint()
 
     def _semg_decodeBufferFull(self, bufferData):
-        assert struct.calcsize(self.mEMGDataFull.format) == len(bufferData), 'Wrong buffer size in _semg_decodeBufferFull'
+        assert struct.calcsize(self.mEMGDataFull.format) == len(bufferData), (
+            "Wrong buffer size in _semg_decodeBufferFull"
+        )
         buf = struct.unpack(self.mEMGDataFull.format, bufferData)
 
         self.mEMGDataFull.startCode = buf[0]
@@ -166,7 +201,7 @@ class EMGHardware():
         self.mEMGDataFull.processingTime = buf[6]
 
         self.mEMGDataFull.dataBuf = np.asarray(buf[7:23])
-        
+
         self.mEMGDataFull.gpioTimedState = buf[23]
         self.mEMGDataFull.sw1 = buf[24]
         self.mEMGDataFull.sw2 = buf[25]
@@ -183,7 +218,9 @@ class EMGHardware():
         buf[2] = COMM_TX_INACTIVE
 
         bytes_written = self.EMGPort.write(buf)
-        assert bytes_written == bytesToSend, 'Wrong number of bytes send in _semg_stream_off'
+        assert bytes_written == bytesToSend, (
+            "Wrong number of bytes send in _semg_stream_off"
+        )
         # print('EMG Stream: OFF')
 
     def _semg_stream_on(self):
@@ -191,10 +228,10 @@ class EMGHardware():
         buf = bytearray(bytesToSend)
 
         buf[0] = 0x00
-        buf[1] = COMM_COMMAND_CONFIG_USB # comm port type
-        buf[2] = COMM_TX_DONE # start/stop stream
-        buf[3] = ACTIVE_DATA # data to be sent over, emgDef.py
-        buf[4] = 1 # streaming frequency divisor (1000/buf[4])
+        buf[1] = COMM_COMMAND_CONFIG_USB  # comm port type
+        buf[2] = COMM_TX_DONE  # start/stop stream
+        buf[3] = ACTIVE_DATA  # data to be sent over, emgDef.py
+        buf[4] = 1  # streaming frequency divisor (1000/buf[4])
 
         if USB_PACKET_LENGTH == BUFFER_HALF_LENGTH:
             buf[5] = BUFFER_HALF
@@ -202,7 +239,9 @@ class EMGHardware():
             buf[5] = BUFFER_FULL
 
         bytes_written = self.EMGPort.write(buf)
-        assert bytes_written == bytesToSend, 'Wrong number of bytes send in _semg_stream_on'
+        assert bytes_written == bytesToSend, (
+            "Wrong number of bytes send in _semg_stream_on"
+        )
         # print('EMG stream: ON')
 
     def _semg_stream_aux_on(self):
@@ -210,18 +249,22 @@ class EMGHardware():
         buf = bytearray(bytesToSend)
 
         buf[0] = 0x00
-        buf[1] = COMM_COMMAND_CONFIG_USB # comm port type
-        buf[2] = COMM_TX_DONE # start/stop stream
-        buf[3] = DSP_DATA_AUX3 # data to be sent over, defined in seonghoEMG_definitions.h
+        buf[1] = COMM_COMMAND_CONFIG_USB  # comm port type
+        buf[2] = COMM_TX_DONE  # start/stop stream
+        buf[3] = (
+            DSP_DATA_AUX3  # data to be sent over, defined in seonghoEMG_definitions.h
+        )
         buf[4] = 1  #  streaming frequency divisor (1000/buf[4])
 
         if USB_PACKET_LENGTH == BUFFER_HALF_LENGTH:
-            buf[5] = BUFFER_HALF #  Half buffer is 40 bytes
+            buf[5] = BUFFER_HALF  #  Half buffer is 40 bytes
         elif USB_PACKET_LENGTH == BUFFER_FULL_LENGTH:
             buf[5] = BUFFER_FULL
 
         bytes_written = self.EMGPort.write(buf)
-        assert bytes_written == bytesToSend, 'Wrong number of bytes send in _semg_stream_aux_on'
+        assert bytes_written == bytesToSend, (
+            "Wrong number of bytes send in _semg_stream_aux_on"
+        )
         sleep(0.0005)
 
     def _semg_get_dataBufHalf(self):
@@ -237,6 +280,7 @@ class EMGHardware():
             return self.mEMGData.sw2
 
         return 128
+
 
 class EMGDriver(EMGHardware):
     def __init__(self, port, baudrate):
@@ -268,7 +312,8 @@ class EMGDriver(EMGHardware):
     def getHalfButton(self, button):
         return self._semg_get_bufHalfButton(button)
 
-class EMGInterface():
+
+class EMGInterface:
     def __init__(self, port, baudrate):
         self.m_emg = EMGDriver(port, baudrate)
 
@@ -276,7 +321,7 @@ class EMGInterface():
         self.m_emg.begin()
         # self.m_emg._semg_stream_on()
 
-        print('EMG Started.')
+        print("EMG Started.")
 
     def updateSensorState(self):
         self.m_emg.readData()
@@ -296,15 +341,18 @@ class EMGInterface():
         return self.m_emg.getHalfButton(buttonNum)
 
     def shutdown(self):
-        print('Shutting down EMG')
+        print("Shutting down EMG")
         del self.m_emg
 
     @staticmethod
     def getMeasurement(unit):
         return 0.0
 
-class EMGStreamer():
-    def __init__(self, socketAddr='tcp://18.27.123.85:1236', port='COM9', baudrate=921600):
+
+class EMGStreamer:
+    def __init__(
+        self, socketAddr="tcp://18.27.123.85:1236", port="COM9", baudrate=921600
+    ):
         self.port = port
         self.baudrate = baudrate
         self.sensor = EMGInterface(port, baudrate)
@@ -317,7 +365,7 @@ class EMGStreamer():
         self.sock = self.ctx.socket(zmq.PUB)
         self.sock.bind(self.socketAddr)
 
-        self.recordRate = 2000 # Hz
+        self.recordRate = 2000  # Hz
         self.printRate = 100
 
     def __del__(self):
@@ -329,7 +377,7 @@ class EMGStreamer():
             self.quitEvent.set()
 
         except Exception as e:
-            print(f'__del__: Socket closing error {e}')
+            print(f"__del__: Socket closing error {e}")
 
     def stream(self):
         a = 0
@@ -352,54 +400,81 @@ class EMGStreamer():
                 break
 
             endTime = time()
-            sleep(max(1/self.recordRate - endTime - start, 0))
+            sleep(max(1 / self.recordRate - endTime - start, 0))
             # print(f'Time since last send: {(endTime - start):07.5f}')
-        
-        print('Stopping stream.')
+
+        print("Stopping stream.")
 
     def pack(self, data):
-        packedData = struct.pack("BBBBIHHffffffffffffffffBBBB", data.startCode, data.gpioState, data.dataType, 
-            data.freqScalar, data.osTime_us, data.osTime_ms, data.processingTime, 
-            data.dataBuf[0], data.dataBuf[1], data.dataBuf[2], data.dataBuf[3], data.dataBuf[4], data.dataBuf[5], data.dataBuf[6], data.dataBuf[7], 
-            data.dataBuf[8], data.dataBuf[9], data.dataBuf[10], data.dataBuf[11], data.dataBuf[12], data.dataBuf[13], data.dataBuf[14], data.dataBuf[15], 
-            data.gpioTimedState, data.sw1, data.sw2, data.newline)
+        packedData = struct.pack(
+            "BBBBIHHffffffffffffffffBBBB",
+            data.startCode,
+            data.gpioState,
+            data.dataType,
+            data.freqScalar,
+            data.osTime_us,
+            data.osTime_ms,
+            data.processingTime,
+            data.dataBuf[0],
+            data.dataBuf[1],
+            data.dataBuf[2],
+            data.dataBuf[3],
+            data.dataBuf[4],
+            data.dataBuf[5],
+            data.dataBuf[6],
+            data.dataBuf[7],
+            data.dataBuf[8],
+            data.dataBuf[9],
+            data.dataBuf[10],
+            data.dataBuf[11],
+            data.dataBuf[12],
+            data.dataBuf[13],
+            data.dataBuf[14],
+            data.dataBuf[15],
+            data.gpioTimedState,
+            data.sw1,
+            data.sw2,
+            data.newline,
+        )
 
         return packedData
 
     def printEMG(self, data):
-            print(f"""{len(data)} bytes sent to {self.socketAddr}\nTime: {data[5]/1000:07.3f} s\n
-                {data[ 7]:07.2f} {data[ 8]:07.2f} {data[ 9]:07.2f} {data[10]:07.2f}
+        print(f"""{len(data)} bytes sent to {self.socketAddr}\nTime: {data[5] / 1000:07.3f} s\n
+                {data[7]:07.2f} {data[8]:07.2f} {data[9]:07.2f} {data[10]:07.2f}
                 {data[11]:07.2f} {data[12]:07.2f} {data[13]:07.2f} {data[14]:07.2f}
                 {data[15]:07.2f} {data[16]:07.2f} {data[17]:07.2f} {data[18]:07.2f}
                 {data[19]:07.2f} {data[20]:07.2f} {data[21]:07.2f} {data[22]:07.2f}\n""")
 
     def startCommunication(self):
-        self.streamThread = threading.Thread(target=self.stream, name='streamEMG')
+        self.streamThread = threading.Thread(target=self.stream, name="streamEMG")
         self.streamThread.daemon = False
         self.streamThread.start()
+
 
 # Search for Serial Port to use
 def setupSerial(passthrough=None):
     if passthrough:
-        print(f'Using passthrough port {passthrough}')
+        print(f"Using passthrough port {passthrough}")
         return passthrough
 
-    print('Searching for serial ports...')
+    print("Searching for serial ports...")
     com_ports_list = list(list_ports.comports())
-    port = ''
+    port = ""
 
     for p in com_ports_list:
         if p:
-            if ('COM' in p[0] and 'USB' in p.description):
-                print(f'Found EMG board at {p[0]}')
+            if "COM" in p[0] and "USB" in p.description:
+                print(f"Found EMG board at {p[0]}")
                 print(p[0])
                 return p[0]
     if not port:
-        print('No port found')
+        print("No port found")
         sys.exit()
 
+
 if __name__ == "__main__":
-# run this file with no arguments and it will stream from the EMG board - otherwise (with precisely one additional integer argument), it will generate fake data to use with the GUI
+    # run this file with no arguments and it will stream from the EMG board - otherwise (with precisely one additional integer argument), it will generate fake data to use with the GUI
     # if len(sys.argv) == 1:
     #     print('Starting EMG streamer...\n')
     #     port = setupSerial(passthrough='/dev/ttyUSB1')
@@ -418,26 +493,38 @@ if __name__ == "__main__":
     # else:
     #     raise Exception(f'Wrong number of arguments ({len(sys.argv) - 1})')
 
-    parser = argparse.ArgumentParser(description='EMG USB Interface')
-    parser.add_argument('-p', '--port', type=str, default='/dev/ttyUSB0', help='Serial port to use')
+    parser = argparse.ArgumentParser(description="EMG USB Interface")
+    parser.add_argument(
+        "-p", "--port", type=str, default="/dev/ttyUSB0", help="Serial port to use"
+    )
     # parser.add_argument('-a', '--address', type=str, default='tcp://18.27.123.85:1236', help='Socket address to use')
-    parser.add_argument('-a', '--address', type=str, default='tcp://127.0.0.1:1236', help='Socket address to use')
-    parser.add_argument('-b', '--baudrate', type=int, default=921600, help='Baudrate to use')
-    parser.add_argument('-f', '--fake', action='store_true', help='Use fake data')
+    parser.add_argument(
+        "-a",
+        "--address",
+        type=str,
+        default="tcp://127.0.0.1:1236",
+        help="Socket address to use",
+    )
+    parser.add_argument(
+        "-b", "--baudrate", type=int, default=921600, help="Baudrate to use"
+    )
+    parser.add_argument("-f", "--fake", action="store_true", help="Use fake data")
 
     args = parser.parse_args()
 
     if args.fake:
-        print('Starting fake EMG streamer...\n')
+        print("Starting fake EMG streamer...\n")
         streamer = FakeStreamer(socketAddr=args.address)
     else:
-        print('Starting EMG streamer...\n')
+        print("Starting EMG streamer...\n")
         port = setupSerial(passthrough=args.port)
-        streamer = EMGStreamer(socketAddr=args.address, port=port, baudrate=args.baudrate)
+        streamer = EMGStreamer(
+            socketAddr=args.address, port=port, baudrate=args.baudrate
+        )
 
     streamer.startCommunication()
 
-    dataReceiver = BCI_Data_Receiver('127.0.0.1', 1236, 1000)
+    dataReceiver = BCI_Data_Receiver("127.0.0.1", 1236, 1000)
     dataReceiver.asyncReceiveData(None)
     # app = QtWidgets.QApplication([])
     # ex = mainWindow()
