@@ -5,11 +5,129 @@ import time
 import threading
 import numpy as np
 import cv2
+import yaml
 from os.path import join
 from helpers.hand_poses import hand_poses
 from psyonicHand import psyonicArm
 from scipy.interpolate import CubicSpline
 from helpers.EMGClass import EMG
+from scipy.signal import butter, filtfilt
+from helpers.BesselFilter import BesselFilterArr
+def filter_emg_pipeline_bessel(raw_emg, fs, noise_level=None):
+    # raw_emg: shape [channels, samples] (transpose if needed)
+    num_channels = raw_emg.shape[0]
+
+    # 1. Bandstop (powerline)
+    notch = BesselFilterArr(numChannels=num_channels, order=8, critFreqs=[58,62], fs=fs, filtType='bandstop')
+    emg = notch.filter(raw_emg)
+    # 2. Highpass (20 Hz)
+    hp = BesselFilterArr(numChannels=num_channels, order=4, critFreqs=20, fs=fs, filtType='highpass')
+    emg = hp.filter(emg)
+    # 3. Rectification
+    emg = np.abs(emg)
+    # 4. Noise subtraction and clipping
+    if noise_level is not None:
+        emg = np.clip(emg - noise_level[:, None], 0, None)
+    # 5. Lowpass (envelope, 3 Hz)
+    lp = BesselFilterArr(numChannels=num_channels, order=4, critFreqs=3, fs=fs, filtType='lowpass')
+    emg = lp.filter(emg)
+
+    return emg  # same shape as input
+
+
+def robust_mvc(mvc_data, min_count=3, nbins=500):
+    # mvc_data: [samples, channels]
+    robust_max = []
+    for ch in range(mvc_data.shape[1]):
+        channel_data = mvc_data[:, ch]
+        # Use a histogram to group "similar" values
+        hist, bin_edges = np.histogram(channel_data, bins=nbins)
+        # Find all bins with count >= min_count
+        valid_bins = np.where(hist >= min_count)[0]
+        if len(valid_bins) == 0:
+            # Fallback: just use the overall max
+            robust_max.append(np.max(channel_data))
+        else:
+            # Use the highest value bin
+            max_bin = valid_bins[-1]
+            robust_val = bin_edges[max_bin + 1]  # right edge of the bin
+            robust_max.append(robust_val)
+    return np.array(robust_max)
+
+def calibrate_emg(base_dir, rest_time=5, mvc_time=10):
+    print("EMG Calibration Routine")
+    emg = EMG()
+    emg.startCommunication()
+
+    print("1. Relax for baseline noise recording")
+    time.sleep(2)
+    emg_rawHistory = []
+    rest_timestamps = []
+    emg.exitEvent.clear()
+
+    # Record REST data
+    t0 = time.time()
+    while time.time() - t0 < rest_time:
+        if hasattr(emg, 'rawEMG'):
+            emg_rawHistory.append(list(emg.rawEMG))
+            rest_timestamps.append(time.time())
+        time.sleep(0.001)
+    rest_data = np.vstack(emg_rawHistory)
+    rest_timestamps = np.array(rest_timestamps)
+
+    # --- FILTER REST DATA ---
+    if len(rest_timestamps) > 1:
+        sf_rest = (len(rest_timestamps) - 1) / (rest_timestamps[-1] - rest_timestamps[0])
+    else:
+        sf_rest = 1000  # fallback
+
+    # Filtering: do NOT subtract noise yet!
+    filtered_rest = filter_emg_pipeline_bessel(rest_data.T, sf_rest)
+    noise_levels = np.mean(filtered_rest, axis=1)
+
+    # -- MVC COLLECTION --
+    input("2. Prepare for MVC (5x full fist and full hand open in 10s), press enter when ready")
+    time.sleep(1)
+    emg_rawHistory = []
+    mvc_timestamps = []
+    emg.exitEvent.clear()
+
+    # Record MVC data
+    t0 = time.time()
+    while time.time() - t0 < mvc_time:
+        if hasattr(emg, 'rawEMG'):
+            emg_rawHistory.append(list(emg.rawEMG))
+            mvc_timestamps.append(time.time())
+        time.sleep(0.001)
+    mvc_data = np.vstack(emg_rawHistory)
+    mvc_timestamps = np.array(mvc_timestamps)
+
+    if len(mvc_timestamps) > 1:
+        sf_mvc = (len(mvc_timestamps) - 1) / (mvc_timestamps[-1] - mvc_timestamps[0])
+    else:
+        sf_mvc = 1000
+
+    # --- FILTER MVC DATA and subtract noise floor ---
+    filtered_mvc = filter_emg_pipeline_bessel(mvc_data.T, sf_mvc)
+    filtered_mvc = np.clip(filtered_mvc - noise_levels[:, None], 0, None)
+
+    # --- Compute robust max (per channel) ---
+    max_vals = robust_mvc(filtered_mvc.T, min_count=3, nbins=500)
+
+    emg.exitEvent.set()
+    time.sleep(0.5)
+
+    # --- Store result in scaling.yaml ---
+    scaling_dict = {
+        'maxVals': max_vals.tolist(),
+        'noiseLevels': noise_levels.tolist()
+    }
+    yaml_path = os.path.join(base_dir, 'scaling.yaml')
+    with open(yaml_path, 'w') as f:
+        yaml.safe_dump(scaling_dict, f)
+
+    print(f"Saved scaling.yaml to {yaml_path}")
+    print(f"Max vals and noise lvl: {max_vals},    {noise_levels}")
 
 def start_raw_emg_recorder(base_dir, enable_video=False, sync_event=None):
     """
@@ -95,12 +213,14 @@ def main():
                         help="Disable prosthetic arm control; EMG-only recording")
     parser.add_argument("--hand_side", "-s", choices=["left", "right"],
                         default="left", help="Side of the prosthetic hand")
-    parser.add_argument("--sync_iterations", type=int, default=3,
+    parser.add_argument("--sync_iterations", type=int, default=5,
                         help="Warm-up sync iterations (default: 1)")
-    parser.add_argument("--record_iterations", "-r", type=int, default=10,
+    parser.add_argument("--record_iterations", "-r", type=int, default=20,
                         help="Number of recording iterations (default: 1)")
     parser.add_argument("--video", action="store_true",
                         help="Enable simultaneous webcam video recording")
+    parser.add_argument("--calibrate_emg", action="store_true",
+                    help="Run EMG calibration (noise level and MVC detection)")
     args = parser.parse_args()
 
     # Prepare output directory
@@ -130,6 +250,11 @@ def main():
         raw_history = []
         raw_timestamps = []
         video_timestamps = []
+
+    if args.calibrate_emg:
+        calibrate_emg(base_dir, rest_time=5, mvc_time=10)
+        return
+    
 
     # Raw-EMG-only mode (no prosthesis movement, just record)
     if args.no_prosthesis:
@@ -170,31 +295,54 @@ def main():
         return
     pose = hand_poses[args.movement]
 
-    # Build and smooth trajectory
-    neutral = np.array([2, 2, 2, 2, 2, -2])
-    if isinstance(pose[0], (list, np.ndarray)):
-        key_poses = [neutral] + [np.array(p) for p in pose] + [neutral]
-    else:
-        key_poses = [neutral, np.array(pose), neutral]
-    total_dur = 2.0
-    steps = 600
-    times = np.linspace(0, total_dur, len(key_poses))
-    interp = np.linspace(0, total_dur, steps)
-    traj = CubicSpline(times, np.vstack(key_poses), axis=0)(interp)
+    if args.movement == "indexFlDigitsEx" and isinstance(pose, list) and len(pose) == 2:
+        pos1 = np.array(pose[0])
+        pos2 = np.array(pose[1])
+        total_dur = 2.0  # total duration (seconds)
+        steps = 500      # number of trajectory steps
 
-    # Enforce constant speed
-    diffs = np.diff(traj, axis=0)
-    dist = np.linalg.norm(diffs, axis=1)
-    s = np.concatenate([[0], np.cumsum(dist)])
-    s_u = np.linspace(0, s[-1], len(s))
-    const_traj = np.zeros_like(traj)
-    idx = np.clip(np.searchsorted(s, s_u) - 1, 0, len(s) - 2)
-    for i, su in enumerate(s_u):
-        i0 = idx[i]
-        ds = s[i0 + 1] - s[i0]
-        alpha = (su - s[i0]) / ds if ds > 0 else 0
-        const_traj[i] = traj[i0] * (1 - alpha) + traj[i0 + 1] * alpha
-    smooth_traj = const_traj
+        key_poses = [pos1, pos2, pos1]
+        times = [0, total_dur / 2, total_dur]
+
+        # Create symmetric, smooth out-and-back trajectory
+        smooth_traj = CubicSpline(
+            times, 
+            np.vstack(key_poses), 
+            axis=0, 
+            bc_type='clamped'  # ensures smooth (zero velocity) at endpoints
+        )(np.linspace(0, total_dur, steps))
+
+    else:
+        # Build and smooth trajectory
+        neutral = np.array([2, 2, 2, 2, 2, -2])
+        if isinstance(pose[0], (list, np.ndarray)):
+            key_poses = [neutral] + [np.array(p) for p in pose] + [neutral]
+        else:
+            key_poses = [neutral, np.array(pose), neutral]
+        total_dur = 2.0
+        steps = 600
+        times = np.linspace(0, total_dur, len(key_poses))
+        interp = np.linspace(0, total_dur, steps)
+        traj = CubicSpline(times, np.vstack(key_poses), axis=0)(interp)
+
+        # Enforce constant speed
+        diffs = np.diff(traj, axis=0)
+        dist = np.linalg.norm(diffs, axis=1)
+        s = np.concatenate([[0], np.cumsum(dist)])
+        s_u = np.linspace(0, s[-1], len(s))
+        const_traj = np.zeros_like(traj)
+        idx = np.clip(np.searchsorted(s, s_u) - 1, 0, len(s) - 2)
+        for i, su in enumerate(s_u):
+            i0 = idx[i]
+            ds = s[i0 + 1] - s[i0]
+            alpha = (su - s[i0]) / ds if ds > 0 else 0
+            const_traj[i] = traj[i0] * (1 - alpha) + traj[i0 + 1] * alpha
+        smooth_traj = const_traj
+
+    # --- CLIP THE TRAJECTORY TO SAFE RANGES ---
+    joint_mins = np.array([0, 0, 0, 0, 0, -120])
+    joint_maxs = np.array([120, 120, 120, 120, 120, 0])
+    smooth_traj = np.clip(smooth_traj, joint_mins, joint_maxs)
 
     # Warm-up sync
     for _ in range(args.sync_iterations):
