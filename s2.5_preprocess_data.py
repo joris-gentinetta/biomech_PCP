@@ -2,6 +2,7 @@ import os
 import numpy as np
 import yaml
 import argparse
+import pandas as pd
 from helpers.EMGClass import EMG
 
 SKIP_MOVEMENTS = {"calibration", "Calibration", "calib", "Calib"}
@@ -12,8 +13,7 @@ def get_used_channels_from_snr(scaling_yaml_path, snr_threshold=5.0):
         scalers = yaml.safe_load(file)
     maxVals = np.array(scalers['maxVals'])
     noiseLevel = np.array(scalers['noiseLevels'])
-    # SNR calculation
-    snr = (maxVals - noiseLevel) / (noiseLevel + 1e-10)  # add small value to avoid division by zero
+    snr = (maxVals - noiseLevel) / (noiseLevel + 1e-10)
     used_channels = [i for i, val in enumerate(snr) if val > snr_threshold]
     print(f"Calculated SNR per channel: {snr}")
     print(f"Selected used channels (SNR > {snr_threshold}): {used_channels}")
@@ -32,7 +32,6 @@ def update_features_in_configs(person_id, used_channels, out_root='data'):
         with open(yaml_path, 'r') as f:
             lines = f.readlines()
 
-        # Find the features and value lines
         features_idx, value_idx = None, None
         for i, line in enumerate(lines):
             if line.strip().startswith('features:'):
@@ -44,17 +43,14 @@ def update_features_in_configs(person_id, used_channels, out_root='data'):
             print(f"'features' section not found in {yaml_path}, skipping.")
             continue
 
-        # Find where the features block ends (first line that is not indented like a list or is empty)
         end_idx = value_idx + 1
         while end_idx < len(lines) and (lines[end_idx].strip().startswith('-') or lines[end_idx].strip() == ''):
             end_idx += 1
 
-        # Build the correct features block
         feature_lines = []
         for idx, ch in enumerate(used_channels):
             feature_lines.append(f"    - [emg, '{ch}'] # {idx}\n")
 
-        # Replace the block
         new_lines = lines[:value_idx+1] + feature_lines + lines[end_idx:]
 
         with open(yaml_path, 'w') as f:
@@ -62,6 +58,20 @@ def update_features_in_configs(person_id, used_channels, out_root='data'):
 
         print(f"Updated features in {yaml_path} to: {used_channels}")
 
+def save_angles_as_parquet(data_dir, angles_array):
+    header_path = os.path.join(data_dir, 'angles_header.txt')
+    if not os.path.isfile(header_path):
+        print(f"No angles_header.txt found in {data_dir}. Skipping parquet export.")
+        return
+    with open(header_path, 'r') as f:
+        headers = [h.strip() for h in f.read().strip().split(',')]
+    if angles_array.shape[1] != len(headers):
+        print(f"Shape mismatch: {angles_array.shape[1]} data columns vs {len(headers)} headers! Parquet not saved.")
+        return
+    df = pd.DataFrame(angles_array, columns=headers)
+    parquet_path = os.path.join(data_dir, 'aligned_angles.parquet')
+    df.to_parquet(parquet_path, index=False)
+    print(f"Saved {parquet_path} with shape {df.shape}")
 
 def process_emg_and_angles(
         data_dir, 
@@ -86,7 +96,6 @@ def process_emg_and_angles(
     maxVals = np.array(scalers['maxVals'])
     noiseLevel = np.array(scalers['noiseLevels'])
 
-    # Select only the used channels!
     emg = emg[used_channels, :]
     maxVals = maxVals[used_channels]
     noiseLevel = noiseLevel[used_channels]
@@ -116,6 +125,7 @@ def process_emg_and_angles(
 
     np.save(os.path.join(data_dir, 'aligned_filtered_emg.npy'), aligned_emg)
     np.save(os.path.join(data_dir, 'aligned_angles.npy'), aligned_angles)
+    save_angles_as_parquet(data_dir, aligned_angles)
     print(f"{os.path.basename(data_dir)}: {aligned_emg.shape[0]} synchronized EMG and angle datapoints saved.")
 
 def process_all_experiments(person_id, out_root, movement=None, snr_threshold=3.0):
@@ -124,13 +134,11 @@ def process_all_experiments(person_id, out_root, movement=None, snr_threshold=3.
         print(f"No such directory: {recordings_dir}")
         return
 
-    # --- GET USED CHANNELS FROM SNR ---
     scaling_yaml_path = os.path.join(
         out_root, person_id, "recordings", "Calibration", "experiments", "1", "scaling.yaml"
     )
     used_channels = get_used_channels_from_snr(scaling_yaml_path, snr_threshold=snr_threshold)
 
-    # --- UPDATE FEATURES IN ALL CONFIGS ---
     update_features_in_configs(person_id, used_channels, out_root=out_root)
 
     movements_to_process = []
