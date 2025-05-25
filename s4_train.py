@@ -9,8 +9,8 @@ import multiprocessing
 from os.path import join
 
 import torch
-import wandb
 
+import wandb
 from helpers.models import TimeSeriesRegressorWrapper
 from helpers.predict_utils import (
     Config,
@@ -137,23 +137,34 @@ if __name__ == "__main__":
 
     if args.hyperparameter_search:  # training on training set, evaluation on test set
         sweep_id = wandb.sweep(wandb_config, project=config.wandb_project)
-        # wandb.agent(sweep_id, lambda: train_model(trainsets, valsets, testsets, device, config.wandb_mode, config.wandb_project, config.name))
-        pool = multiprocessing.Pool(processes=4)
-        pool.map(
-            wandb_process,
-            [
-                {
-                    "id": i,
-                    "config": config,
-                    "sweep_id": sweep_id,
-                    "trainsets": trainsets,
-                    "valsets": valsets,
-                    "testsets": testsets,
-                    "device": device,
-                }
-                for i in range(4)
-            ],
+        wandb.agent(
+            sweep_id,
+            lambda: train_model(
+                trainsets,
+                valsets,
+                testsets,
+                device,
+                config.wandb_mode,
+                config.wandb_project,
+                config.name,
+            ),
         )
+        # pool = multiprocessing.Pool(processes=4)
+        # pool.map(
+        #     wandb_process,
+        #     [
+        #         {
+        #             "id": i,
+        #             "config": config,
+        #             "sweep_id": sweep_id,
+        #             "trainsets": trainsets,
+        #             "valsets": valsets,
+        #             "testsets": testsets,
+        #             "device": device,
+        #         }
+        #         for i in range(4)
+        #     ],
+        # )
 
     if args.test:  # trains on the training set and saves the test set predictions
         os.makedirs(join("data", args.person_dir, "models"), exist_ok=True)
