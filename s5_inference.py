@@ -1,3 +1,6 @@
+# Run $env:KMP_DUPLICATE_LIB_OK="TRUE" in terminal to solve OMP error
+
+
 import os
 
 import serial
@@ -16,6 +19,7 @@ from os.path import join
 
 sys.path.append('/home/haptix/haptix/haptix_controller/handsim/src')
 
+
 from helpers.EMGClass import EMG
 from helpers.BesselFilter import BesselFilterArr
 from helpers.ExponentialFilter import ExponentialFilterArr
@@ -24,7 +28,7 @@ from helpers.predict_utils import Config
 import numpy as np
 
 class psyonicArm():
-	def __init__(self, hand='right', usingEMG=False, stuffing=False, baud=460800, plotSocketAddr='tcp://127.0.0.1:1240'):
+	def __init__(self, hand='right', usingEMG=False, stuffing=False, baud=460800, plotSocketAddr='tcp://127.0.0.1:1240', dummy=False):
 		self.baud = baud
 		self.hand = hand
 		self.stuffing = stuffing
@@ -69,7 +73,8 @@ class psyonicArm():
 		self.handCom = self.curPos
 
 		# setup communication with arm (serial port)
-		self.serialSet = self.setupSerial(passedPort='/dev/psyonicHand')
+		# self.serialSet = self.setupSerial(passedPort='/dev/psyonicHand')
+		self.serialSet = self.setupSerial(passedPort='COM5')
 		if not self.serialSet:
 			sys.exit('Error: Serial Port not found')
 
@@ -144,11 +149,11 @@ class psyonicArm():
 
 	# Search for Serial Port to use
 	def setupSerial(self, passedPort=None):
-		# if passedPort is not None:
-		# 	self.ser = serial.Serial(str(Path(passedPort).resolve()), self.baud, timeout=0.02, write_timeout=0.02)
-		# 	assert self.ser.is_open, 'Failed to open serial port'
-		# 	print(f'Connected to port {self.ser.name}')
-		# 	return True
+		if passedPort is not None:
+			self.ser = serial.Serial(passedPort, self.baud, timeout=0.02, write_timeout=0.02)
+			assert self.ser.is_open, 'Failed to open serial port'
+			print(f'Connected to port {self.ser.name}')
+			return True
 
 		print('Searching for serial ports...')
 		com_ports_list = list(list_ports.comports())
@@ -917,34 +922,49 @@ class psyonicArm():
 		T = time.time()
 		self.NetCom = self.getCurPos()
 
-		# Define Force Threshold
-		force_threshold = 0.6
+		ENTER_FORCE_THRESHOLD = 0.8
+		EXIT_FORCE_THRESHOLD = 0.3
+		INTERACTION_MODE_DEBOUNCE_TIME = 0.1  # seconds
 
-		# controller.resetModel() # todo biophysical model
+		self.in_interaction_mode = False
+		exit_mode_start_time = None  # Track when force dropped below exit threshold
+
 		while not self.exitEvent.is_set():
 			newT = time.time()
 			time.sleep(max(1/(self.loopRate*self.Hz) - (newT - T), 0))
 			T = time.time()
 
-			# Read live Force
 			force_data = np.array([self.sensors[key] for key in self.sensorForce])
-			force_magnitude = np.linalg.norm(force_data)
+			max_finger_force = np.max(force_data)
+			current_time = time.time()
 
-			# Select controller based on Force input
-			if force_magnitude > force_threshold:
-				self.lastposCom = self.NetCom
-				posCom = interaction_controller.runModel() # If contact detected
+			if not self.in_interaction_mode:
+				if max_finger_force > ENTER_FORCE_THRESHOLD:
+					self.in_interaction_mode = True
+					exit_mode_start_time = None
+					# print("Entered interaction mode")
 			else:
-				self.lastposCom = self.NetCom
+				if max_finger_force < EXIT_FORCE_THRESHOLD:
+					if exit_mode_start_time is None:
+						exit_mode_start_time = current_time
+					elif (current_time - exit_mode_start_time) > INTERACTION_MODE_DEBOUNCE_TIME:
+						self.in_interaction_mode = False
+						exit_mode_start_time = None
+						# print("Exited interaction mode")
+				else:
+					exit_mode_start_time = None  # Reset if force rises above exit threshold
+
+			self.lastposCom = self.NetCom
+			if self.in_interaction_mode:
+				posCom = interaction_controller.runModel()
+			else:
 				posCom = free_space_controller.runModel()
 
-			# self.lastposCom = self.NetCom
-			# posCom = controller.forwardDynamics() # todo biophysical model
-			# posCom = controller.runModel()
 			self.NetCom = np.asarray(self.lowpassCommands.filter(np.asarray([posCom]).T).T[0])
 
 			if self.exitEvent.is_set():
 				break
+
 
 	def runNetThread(self, free_space_controller, interaction_controller):
 		self.netThread = threading.Thread(target=self.runNetForward, args=(free_space_controller, interaction_controller), name='runNetForward')
@@ -1165,70 +1185,96 @@ def main(arm, emg=None, saveLocation=''):
 
 	arm.movingEvent.set()
 
+
 # Check the args and run
 if __name__ == '__main__':
-	# Define all arguments
-	parser = argparse.ArgumentParser(description='Psyonic Ability Hand Command Line Interface')
-	parser.add_argument('-t', '--tracker', help='Using the MediaPipe hand tracker?', action='store_true')
-	parser.add_argument('-e', '--emg', help='Using EMG control?', action='store_true')
-	parser.add_argument('-l', '--laterality', type=str, help='Handedness', default='left')
-	parser.add_argument('-s', '--stuffing', help='Using byte stuffing?', action='store_true')
-	parser.add_argument('--person_dir', type=str, required=True, help='Person directory')
-	parser.add_argument('--config_name', type=str, required=True, help='Training configuration')
-	parser.add_argument('--free_space_model_path', type=str, required=True, help='Path to the free space model')
-	parser.add_argument('--interaction_model_path', type=str, required=True, help='Path to the interaction model')
+    parser = argparse.ArgumentParser(description='Psyonic Ability Hand Command Line Interface')
+    parser.add_argument('-t', '--tracker', help='Use MediaPipe hand tracker?', action='store_true')
+    parser.add_argument('-e', '--emg', help='Use EMG control?', action='store_true')
+    parser.add_argument('-l', '--laterality', type=str, help='Handedness (left or right)', default='left')
+    parser.add_argument('-s', '--stuffing', help='Use byte stuffing?', action='store_true')
+    parser.add_argument('--person_dir', type=str, required=True, help='Person directory')
+    parser.add_argument('--config_name', type=str, required=True, help='Training configuration')
+    parser.add_argument('--free_space_model_path', type=str, required=True, help='Path to free space model')
+    parser.add_argument('--interaction_model_path', type=str, required=True, help='Path to interaction model')
+    parser.add_argument('--dummy', action='store_true', help='Run in dummy mode without connecting to real hand')
 
+    args = parser.parse_args()
 
-	args = parser.parse_args()
+    emg = None
 
-	emg = None
+    if not args.dummy:
+        print("Connecting to Psyonic Hand")
+        arm = psyonicArm(hand=args.laterality, stuffing=args.stuffing, usingEMG=args.emg)
+    else:
+        print("Running in Dummy Mode")
+        arm = None
 
-	# instantiate arm class
-	arm = psyonicArm(hand=args.laterality, stuffing=args.stuffing, usingEMG=args.emg)
-	strInsert = ', byte stuffing' if args.stuffing else ', no byte stuffing'
+    # EMG Setup
+    if args.emg:
+        with open(join('data', args.person_dir, 'configs', args.config_name), 'r') as file:
+            wandb_config = yaml.safe_load(file)
+            config = Config(wandb_config)
+        channels = [int(feature[1]) for feature in config.features]
 
-	if args.emg:
-		with open(join('data', args.person_dir, 'configs', args.config_name), 'r') as file:
-			wandb_config = yaml.safe_load(file)
-			config = Config(wandb_config)
-		channels = [int(feature[1]) for feature in config.features]
+        emg = EMG(usedChannels=channels)
+        emg.startCommunication()
+        print(f'Starting Psyonic Hand (EMG control)...')
 
-		emg = EMG(usedChannels=channels)
-		emg.startCommunication()
-		print(f'Starting Psyonic Hand (EMG control{strInsert})...')
+        free_space_model_path = args.free_space_model_path
+        interaction_model_path = args.interaction_model_path
 
-		free_space_model_path = args.model_path
-		interaction_model_path = args.interaction_model_path
+        free_space_controller = psyonicControllers(
+            numMotors=6 if args.dummy else arm.numMotors,
+            arm=arm,
+            freq_n=3,
+            emg=emg,
+            config=config,
+            model_path=free_space_model_path
+        )
+        interaction_controller = psyonicControllers(
+            numMotors=6 if args.dummy else arm.numMotors,
+            arm=arm,
+            freq_n=3,
+            emg=emg,
+            config=config,
+            model_path=interaction_model_path
+        )
 
-		free_space_controller = psyonicControllers(numMotors=arm.numMotors, arm=arm, freq_n=3, emg=emg, config=config, model_path=free_space_model_path)
-		interaction_controller = psyonicControllers(numMotors=arm.numMotors, arm=arm, freq_n=3, emg=emg, config=config, model_path=interaction_model_path)
+        if not args.dummy:
+            print('Initializing sensor readings...')
+            arm.initSensors()
+            print('Sensors initialized.')
+            arm.startComms()
+            arm.runNetThread(free_space_controller, interaction_controller)
 
-		# model_name = args.config_name.split('.')[0]
-		# model_path = join('data', args.person_dir, 'models', f'{model_name}.pt')
-		
-		arm.runNetThread(free_space_controller, interaction_controller)
+        # Always call main (even if dummy)
+        main(arm, emg, saveLocation=f'data/{args.person_dir}/logs')
 
-	elif args.tracker:
-		trackerAddr = 'tcp://127.0.0.1:1239'
+    elif args.tracker:
+        if args.dummy:
+            raise ValueError("Tracker mode requires real hardware connection. Cannot run in dummy mode.")
 
-		print(f'Starting Psyonic Hand (tracker control{strInsert})...')
+        trackerAddr = 'tcp://127.0.0.1:1239'
+        print('Starting Psyonic Hand (tracker control)...')
 
-		ctx = zmq.Context()
-		trackerSock = ctx.socket(zmq.SUB)
-		trackerSock.connect(trackerAddr)
-		trackerSock.subscribe('') # Subscribe to all topics
+        ctx = zmq.Context()
+        trackerSock = ctx.socket(zmq.SUB)
+        trackerSock.connect(trackerAddr)
+        trackerSock.subscribe('')  # Subscribe to all topics
 
-		try:
-			while True:
-				arm.handCom = trackerSock.recv_pyobj()
-	
-		except KeyboardInterrupt:
-			arm.stopEvent.set()
-			sys.exit()
+        try:
+            while True:
+                arm.handCom = trackerSock.recv_pyobj()
+        except KeyboardInterrupt:
+            arm.stopEvent.set()
+            sys.exit()
 
-	print('Initializing sensor readings...')
-	arm.initSensors()
-	print('Sensors initialized.')
+        print('Initializing sensor readings...')
+        arm.initSensors()
+        print('Sensors initialized.')
+        arm.startComms()
+        main(arm, emg, saveLocation=f'data/{args.person_dir}/logs')
 
-	arm.startComms()
-	main(arm, emg, saveLocation=f'data/{args.person_dir}/logs')
+    else:
+        raise ValueError("Please specify either --emg or --tracker mode.")
