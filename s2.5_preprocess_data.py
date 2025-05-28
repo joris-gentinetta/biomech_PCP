@@ -19,12 +19,40 @@ def get_used_channels_from_snr(scaling_yaml_path, snr_threshold=5.0):
     print(f"Selected used channels (SNR > {snr_threshold}): {used_channels}")
     return used_channels
 
-def update_features_in_configs(person_id, used_channels, out_root='data'):
-    """Update 'features' field in all yaml config files in the person's configs folder in the correct style."""
+def update_yaml_configs(person_id, hand_side, used_channels, out_root='data'):
     config_dir = os.path.join(out_root, person_id, 'configs')
-    if not os.path.exists(config_dir):
-        print(f"No configs directory found: {config_dir}")
-        return
+    recordings_dir = os.path.join(out_root, person_id, 'recordings')
+    hand_side_cap = hand_side.capitalize()
+
+    SKIP_MOVEMENTS = {"calibration", "Calibration", "calib", "Calib"}
+
+    # Movements for recordings:value
+    movement_names = sorted([
+        d for d in os.listdir(recordings_dir)
+        if os.path.isdir(os.path.join(recordings_dir, d)) and d not in SKIP_MOVEMENTS
+    ])
+
+    # Fixed list for test_recordings:value
+    test_recordings = ['indexFlEx', 'mrpFlEx', 'fingersFlEx']
+
+    # Standard targets, switch side as needed
+    TARGETS = [
+        "index_PosCom",
+        "middle_PosCom",
+        "ring_PosCom",
+        "pinky_PosCom",
+        "thumbFlex_PosCom",
+        "thumbRot_PosCom"
+    ]
+    # Formatting for targets
+    targets_block = ""
+    for t in TARGETS:
+        targets_block += f"    - [{hand_side_cap}, {t}]\n"
+
+    # Formatting for features (with channel comments)
+    features_block = ""
+    for idx, ch in enumerate(used_channels):
+        features_block += f"    - [emg, '{ch}'] # {idx}\n"
 
     yaml_files = [f for f in os.listdir(config_dir) if f.endswith('.yaml')]
     for yaml_file in yaml_files:
@@ -32,31 +60,73 @@ def update_features_in_configs(person_id, used_channels, out_root='data'):
         with open(yaml_path, 'r') as f:
             lines = f.readlines()
 
-        features_idx, value_idx = None, None
-        for i, line in enumerate(lines):
-            if line.strip().startswith('features:'):
-                features_idx = i
-            if features_idx is not None and line.strip().startswith('value:'):
-                value_idx = i
-                break
-        if features_idx is None or value_idx is None:
-            print(f"'features' section not found in {yaml_path}, skipping.")
-            continue
-
-        end_idx = value_idx + 1
-        while end_idx < len(lines) and (lines[end_idx].strip().startswith('-') or lines[end_idx].strip() == ''):
-            end_idx += 1
-
-        feature_lines = []
-        for idx, ch in enumerate(used_channels):
-            feature_lines.append(f"    - [emg, '{ch}'] # {idx}\n")
-
-        new_lines = lines[:value_idx+1] + feature_lines + lines[end_idx:]
+        # Find key sections
+        new_lines = []
+        i = 0
+        while i < len(lines):
+            line = lines[i]
+            # parameters:recordings:value
+            if line.strip().startswith("recordings:") and "parameters:" in "".join(lines[max(0, i-2):i+1]):
+                new_lines.append(line)
+                i += 1
+                while i < len(lines) and lines[i].strip() != "value:":
+                    new_lines.append(lines[i])
+                    i += 1
+                new_lines.append("    value:\n")
+                for m in movement_names:
+                    new_lines.append(f"    - {m}\n")
+                new_lines.append('\n')  # Blank line after recordings:value block
+                while i < len(lines) and (lines[i].strip().startswith("- ") or lines[i].strip() == "value:" or lines[i].strip() == "" or lines[i].strip().startswith("#")):
+                    i += 1
+                continue
+            # parameters:test_recordings:value
+            if line.strip().startswith("test_recordings:"):
+                new_lines.append(line)
+                i += 1
+                while i < len(lines) and lines[i].strip() != "value:":
+                    new_lines.append(lines[i])
+                    i += 1
+                new_lines.append("    value:\n")
+                for m in test_recordings:
+                    new_lines.append(f"    - {m}\n")
+                # new_lines.append('\n')  # Blank line after test_recordings:value block
+                while i < len(lines) and (lines[i].strip().startswith("- ") or lines[i].strip() == "value:" or lines[i].strip() == "" or lines[i].strip().startswith("#")):
+                    i += 1
+                continue
+            # parameters:targets:value
+            if line.strip().startswith("targets:"):
+                new_lines.append(line)
+                i += 1
+                while i < len(lines) and lines[i].strip() != "value:":
+                    new_lines.append(lines[i])
+                    i += 1
+                new_lines.append("    value:\n")
+                new_lines.extend(targets_block)
+                # No blank line here (matches your formatting)
+                while i < len(lines) and (lines[i].strip().startswith("- [") or lines[i].strip() == "value:" or lines[i].strip().startswith("#") or lines[i].strip() == ""):
+                    i += 1
+                continue
+            # parameters:features:value
+            if line.strip().startswith("features:"):
+                new_lines.append('\n')  # Blank line BEFORE features block
+                new_lines.append(line)
+                i += 1
+                while i < len(lines) and lines[i].strip() != "value:":
+                    new_lines.append(lines[i])
+                    i += 1
+                new_lines.append("    value:\n")
+                new_lines.extend(features_block)
+                new_lines.append('\n')  # Blank line AFTER features:value block
+                while i < len(lines) and (lines[i].strip().startswith("- [emg,") or lines[i].strip() == "value:" or lines[i].strip().startswith("#") or lines[i].strip() == ""):
+                    i += 1
+                continue
+            # Default: keep old line
+            new_lines.append(line)
+            i += 1
 
         with open(yaml_path, 'w') as f:
             f.writelines(new_lines)
-
-        print(f"Updated features in {yaml_path} to: {used_channels}")
+        print(f"Updated {yaml_path}")
 
 def save_angles_as_parquet(data_dir, angles_array, timestamps=None, hand_side='left'):
     header_path = os.path.join(data_dir, 'angles_header.txt')
@@ -148,7 +218,8 @@ def process_all_experiments(person_id, out_root, movement=None, snr_threshold=3.
     )
     used_channels = get_used_channels_from_snr(scaling_yaml_path, snr_threshold=snr_threshold)
 
-    update_features_in_configs(person_id, used_channels, out_root=out_root)
+    update_yaml_configs(person_id, hand_side, used_channels, out_root)
+
 
     movements_to_process = []
     if movement:
