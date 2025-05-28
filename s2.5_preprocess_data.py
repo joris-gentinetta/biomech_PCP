@@ -133,21 +133,42 @@ def save_angles_as_parquet(data_dir, angles_array, timestamps=None, hand_side='l
     if not os.path.isfile(header_path):
         print(f"No angles_header.txt found in {data_dir}. Skipping parquet export.")
         return
+    # read the comma-separated headers
     with open(header_path, 'r') as f:
         headers = [h.strip() for h in f.read().strip().split(',')]
     if angles_array.shape[1] != len(headers):
         print(f"Shape mismatch: {angles_array.shape[1]} data columns vs {len(headers)} headers! Parquet not saved.")
         return
 
-    # Create multiple columns
-    hand_side_cap = hand_side.capitalize() # left -> Left
-    multi_cols = pd.MultiIndex.from_product([[hand_side_cap], headers])
-    df = pd.DataFrame(angles_array, columns=multi_cols)
+    # build the column list, tuple for only the 6 finger joints
+    hand_side_cap = hand_side.capitalize()
+    TUPLE_COLS = {
+      'index_PosCom','middle_PosCom','ring_PosCom',
+      'pinky_PosCom','thumbFlex_PosCom','thumbRot_PosCom'
+    }
+
+    cols = []
+    for h in headers:
+        if h.lower() == 'timestamp':
+            cols.append('timestamp')
+        elif h in TUPLE_COLS:
+            cols.append((hand_side_cap, h))
+        else:
+            cols.append(h)
+
+    df = pd.DataFrame(angles_array, columns=cols)
+
+    # now insert or replace the timestamp column, if provided
     if timestamps is not None:
-        df.insert(0, "timestamp", timestamps)
+        # if there already is a timestamp column, drop it first
+        if 'timestamp' in df.columns:
+            df = df.drop(columns=['timestamp'])
+        df.insert(0, 'timestamp', timestamps)
+
     parquet_path = os.path.join(data_dir, 'aligned_angles.parquet')
     df.to_parquet(parquet_path, index=False)
     print(f"Saved {parquet_path} with shape {df.shape}")
+    print(f"Columns: {df.columns.tolist()}")
 
 
 def process_emg_and_angles(
