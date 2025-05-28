@@ -58,7 +58,7 @@ def update_features_in_configs(person_id, used_channels, out_root='data'):
 
         print(f"Updated features in {yaml_path} to: {used_channels}")
 
-def save_angles_as_parquet(data_dir, angles_array):
+def save_angles_as_parquet(data_dir, angles_array, timestamps=None, hand_side='left'):
     header_path = os.path.join(data_dir, 'angles_header.txt')
     if not os.path.isfile(header_path):
         print(f"No angles_header.txt found in {data_dir}. Skipping parquet export.")
@@ -68,16 +68,24 @@ def save_angles_as_parquet(data_dir, angles_array):
     if angles_array.shape[1] != len(headers):
         print(f"Shape mismatch: {angles_array.shape[1]} data columns vs {len(headers)} headers! Parquet not saved.")
         return
-    df = pd.DataFrame(angles_array, columns=headers)
+
+    # Create multiple columns
+    hand_side_cap = hand_side.capitalize() # left -> Left
+    multi_cols = pd.MultiIndex.from_product([[hand_side_cap], headers])
+    df = pd.DataFrame(angles_array, columns=multi_cols)
+    if timestamps is not None:
+        df.insert(0, "timestamp", timestamps)
     parquet_path = os.path.join(data_dir, 'aligned_angles.parquet')
     df.to_parquet(parquet_path, index=False)
     print(f"Saved {parquet_path} with shape {df.shape}")
+
 
 def process_emg_and_angles(
         data_dir, 
         person_id,
         out_root,
         used_channels,
+        hand_side='left',
         emg_file='raw_emg.npy', 
         emg_timestamps_file='raw_timestamps.npy',
         angles_file='angles.npy',
@@ -125,10 +133,11 @@ def process_emg_and_angles(
 
     np.save(os.path.join(data_dir, 'aligned_filtered_emg.npy'), aligned_emg)
     np.save(os.path.join(data_dir, 'aligned_angles.npy'), aligned_angles)
-    save_angles_as_parquet(data_dir, aligned_angles)
+    np.save(os.path.join(data_dir, 'aligned_timestamps.npy'), ref_t)
+    save_angles_as_parquet(data_dir, aligned_angles, ref_t, hand_side=hand_side)
     print(f"{os.path.basename(data_dir)}: {aligned_emg.shape[0]} synchronized EMG and angle datapoints saved.")
 
-def process_all_experiments(person_id, out_root, movement=None, snr_threshold=3.0):
+def process_all_experiments(person_id, out_root, movement=None, snr_threshold=3.0, hand_side='left'):
     recordings_dir = os.path.join(out_root, person_id, "recordings")
     if not os.path.exists(recordings_dir):
         print(f"No such directory: {recordings_dir}")
@@ -167,7 +176,7 @@ def process_all_experiments(person_id, out_root, movement=None, snr_threshold=3.
                 continue
             print(f"Processing {exp_dir} ...")
             try:
-                process_emg_and_angles(exp_dir, person_id, out_root, used_channels)
+                process_emg_and_angles(exp_dir, person_id, out_root, used_channels, hand_side=hand_side)
             except Exception as e:
                 print(f"Failed to process {exp_dir}: {e}")
 
@@ -176,6 +185,7 @@ if __name__ == "__main__":
     parser.add_argument('--person_id', required=True, help='Person ID (e.g. Emanuel_FirstTries)')
     parser.add_argument('--movement', required=False, help='Movement name (e.g. indexFlDigitsEx, optional)')
     parser.add_argument('--out_root', default='data', help='Root directory (default: data)')
-    parser.add_argument('--snr_threshold', type=float, default=3.0, help='SNR threshold for channel selection')
+    parser.add_argument('--snr_threshold', type=float, default=5.0, help='SNR threshold for channel selection')
+    parser.add_argument("--hand_side", "-s", choices=["left", "right"], default="left", help="Side of the prosthetic hand")
     args = parser.parse_args()
-    process_all_experiments(args.person_id, args.out_root, args.movement, args.snr_threshold)
+    process_all_experiments(args.person_id, args.out_root, args.movement, args.snr_threshold, args.hand_side)
