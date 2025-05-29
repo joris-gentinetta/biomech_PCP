@@ -195,10 +195,15 @@ def process_emg_and_angles(
     maxVals = maxVals[used_channels]
     noiseLevel = noiseLevel[used_channels]
 
+    print("Going into EMG Class !!!!!!!!!!!!!!")
+
     sf = (len(emg_timestamps) - 1) * 1e6 / (emg_timestamps[-1] - emg_timestamps[0])
+    print(f"Sampling frequency sf: {sf}")
     emg_proc = EMG(samplingFreq=sf, offlineData=emg, maxVals=maxVals, noiseLevel=noiseLevel, numElectrodes=len(used_channels))
+    print("Going out of EMG Class !!!!!!!!!!!!!!")
     emg_proc.startCommunication()
     emg_proc.emgThread.join()
+
     filtered_emg = emg_proc.emgHistory[:, emg_proc.numPackets * 100 + 1:]
     filtered_emg = filtered_emg[:, :emg.shape[1]]
 
@@ -273,7 +278,7 @@ if __name__ == "__main__":
     parser.add_argument('--person_id', required=True, help='Person ID (e.g. Emanuel_FirstTries)')
     parser.add_argument('--movement', required=False, help='Movement name (e.g. indexFlDigitsEx, optional)')
     parser.add_argument('--out_root', default='data', help='Root directory (default: data)')
-    parser.add_argument('--snr_threshold', type=float, default=3.0, help='SNR threshold for channel selection')
+    parser.add_argument('--snr_threshold', type=float, default=0.3, help='SNR threshold for channel selection')
     parser.add_argument("--hand_side", "-s", choices=["left", "right"], default="left", help="Side of the prosthetic hand")
     args = parser.parse_args()
     process_all_experiments(args.person_id, args.out_root, args.movement, args.snr_threshold, args.hand_side)

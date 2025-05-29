@@ -65,6 +65,10 @@ def calibrate_emg(base_dir, rest_time=5, mvc_time=10):
         time.sleep(0.001)
     rest_data = np.vstack(emg_rawHistory)
     rest_timestamps = np.array(rest_timestamps)
+    # Store the data
+    np.save(os.path.join(base_dir, "calib_rest_emg.npy"), rest_data)
+    np.save(os.path.join(base_dir, "calib_rest_timestamps.npy"), rest_timestamps)
+    print(f"Save calib_rest_emg.npy and calib_rest_timestamps.npy in {base_dir}")
 
     print("Recording ended, filtering data now...")
 
@@ -94,6 +98,10 @@ def calibrate_emg(base_dir, rest_time=5, mvc_time=10):
         time.sleep(0.001)
     mvc_data = np.vstack(emg_rawHistory)
     mvc_timestamps = np.array(mvc_timestamps)
+    # Store the data
+    np.save(os.path.join(base_dir, "calib_mvc_emg.npy"), mvc_data)
+    np.save(os.path.join(base_dir, "calib_mvc_timestamps.npy"), mvc_timestamps)
+    print(f"Save calib_mvc_emg.npy and calib_mvc_timestamps.npy in {base_dir}")
 
     print("Recording ended, filtering data now...")
 
