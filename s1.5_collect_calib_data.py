@@ -35,23 +35,14 @@ def filter_emg_pipeline_bessel(raw_emg, fs, noise_level=None):
     return emg  # same shape as input
 
 
-def robust_mvc(mvc_data, min_count=3, nbins=500):
+def robust_mvc(mvc_data, percentile=90):
     # mvc_data: [samples, channels]
     robust_max = []
     for ch in range(mvc_data.shape[1]):
         channel_data = mvc_data[:, ch]
-        # Use a histogram to group "similar" values
-        hist, bin_edges = np.histogram(channel_data, bins=nbins)
-        # Find all bins with count >= min_count
-        valid_bins = np.where(hist >= min_count)[0]
-        if len(valid_bins) == 0:
-            # Fallback: just use the overall max
-            robust_max.append(np.max(channel_data))
-        else:
-            # Use the highest value bin
-            max_bin = valid_bins[-1]
-            robust_val = bin_edges[max_bin + 1]  # right edge of the bin
-            robust_max.append(robust_val)
+        # Calculate the percentile value
+        robust_val = np.percentile(channel_data, percentile)
+        robust_max.append(robust_val)
     return np.array(robust_max)
 
 def calibrate_emg(base_dir, rest_time=5, mvc_time=10):
@@ -74,6 +65,8 @@ def calibrate_emg(base_dir, rest_time=5, mvc_time=10):
         time.sleep(0.001)
     rest_data = np.vstack(emg_rawHistory)
     rest_timestamps = np.array(rest_timestamps)
+
+    print("Recording ended, filtering data now...")
 
     # --- FILTER REST DATA ---
     if len(rest_timestamps) > 1:
@@ -102,6 +95,8 @@ def calibrate_emg(base_dir, rest_time=5, mvc_time=10):
     mvc_data = np.vstack(emg_rawHistory)
     mvc_timestamps = np.array(mvc_timestamps)
 
+    print("Recording ended, filtering data now...")
+
     if len(mvc_timestamps) > 1:
         sf_mvc = (len(mvc_timestamps) - 1) / (mvc_timestamps[-1] - mvc_timestamps[0])
     else:
@@ -112,10 +107,11 @@ def calibrate_emg(base_dir, rest_time=5, mvc_time=10):
     filtered_mvc = np.clip(filtered_mvc - noise_levels[:, None], 0, None)
 
     # --- Compute robust max (per channel) ---
-    max_vals = robust_mvc(filtered_mvc.T, min_count=3, nbins=500)
+    max_vals = robust_mvc(filtered_mvc.T, percentile=80)
 
     emg.exitEvent.set()
     time.sleep(0.5)
+    emg.shutdown()
 
     # --- Store result in scaling.yaml ---
     scaling_dict = {
@@ -213,9 +209,9 @@ def main():
                         help="Disable prosthetic arm control; EMG-only recording")
     parser.add_argument("--hand_side", "-s", choices=["left", "right"],
                         default="left", help="Side of the prosthetic hand")
-    parser.add_argument("--sync_iterations", type=int, default=5,
+    parser.add_argument("--sync_iterations", type=int, default=2,
                         help="Warm-up sync iterations (default: 1)")
-    parser.add_argument("--record_iterations", "-r", type=int, default=20,
+    parser.add_argument("--record_iterations", "-r", type=int, default=5,
                         help="Number of recording iterations (default: 1)")
     parser.add_argument("--video", action="store_true",
                         help="Enable simultaneous webcam video recording")
