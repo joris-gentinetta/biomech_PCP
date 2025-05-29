@@ -13,7 +13,7 @@ arm.initSensors()
 arm.startComms()
 
 # Neutral hand pose
-neutral_pose = np.array([5, 5, 5, 5, 5, -5])
+neutral_pose = np.array([2, 2, 2, 2, 2, -2])
 
 # Select pose
 pose_name = input(f"Enter pose name {list(hand_poses.keys())}: ")
@@ -43,11 +43,11 @@ else:
         key_poses = [neutral_pose, pose, neutral_pose]
 
 # Movement parameters
-total_duration = 2  # total duration for one trajectory (seconds)
+total_duration = 20  # total duration for one trajectory (seconds)
 iterations = int(input("Enter number of iterations: "))
 
 # Initial pause command before beginning trajectory execution
-arm.mainControlLoop(posDes=neutral_pose, period=0.08)
+arm.mainControlLoop(posDes=neutral_pose, period=1)
 time.sleep(1)
 
 if pose_name == "indexFlDigitsEx":
@@ -73,7 +73,7 @@ try:
         iteration_start_time = time.time()
 
         # Command the arm with the smooth interpolated trajectory
-        arm.mainControlLoop(posDes=smooth_trajectory, period=0.06)
+        arm.mainControlLoop(posDes=smooth_trajectory, period=1)
 
         print(f"Iteration {itr + 1} completed in {time.time() - iteration_start_time:.2f}s")
         # Pause for 1 second between iterations

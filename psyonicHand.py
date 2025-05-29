@@ -18,7 +18,7 @@ from pathlib import Path
 # sys.path.append('/home/haptix/haptix/haptix_controller/handsim/src')
 sys.path.append('C:/Users/Emanuel Wicki/Documents/MIT/biomech_PCP/helpers')
 
-from EMGClass import EMG
+from helpers.EMGClass import EMG
 from BesselFilter import BesselFilterArr
 from ExponentialFilter import ExponentialFilterArr
 # from psyonicControllers import psyonicControllers
@@ -71,7 +71,7 @@ class psyonicArm():
 
 		# setup communication with arm (serial port)
 		# self.serialSet = self.setupSerial(passedPort='/dev/psyonicHand')
-		self.serialSet = self.setupSerial(passedPort='COM5')
+		self.serialSet = self.setupSerial(passedPort='COM7')
 		if not self.serialSet:
 			sys.exit('Error: Serial Port not found')
 

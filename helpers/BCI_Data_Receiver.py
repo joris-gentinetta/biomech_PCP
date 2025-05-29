@@ -72,7 +72,7 @@ class BCI_Data_Receiver(object):
             raise Exception("The reading thread is already running!")
 
 
-    ## Added by Mikey 02/05/21 to allow feeding EMG data to Haptix Gazebo
+    ## Added by Mikey 02/05/21 to allow feeding EMG data to Gazebo
     def bypassToController(self, data, frameRate):
         """
         Bypass the received data to the virtual limb or hardware for controlling the prosthesis

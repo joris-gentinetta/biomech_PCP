@@ -22,6 +22,7 @@ import os
 
 import torch
 sys.path.append('/home/haptix/haptix/biomech_PCP/')
+sys.path.append('C:/Users/Emanuel Wicki/Documents/MIT/biomech_PCP/helpers')
 from helpers.models import TimeSeriesRegressorWrapper
 
 import matplotlib.pyplot as plt

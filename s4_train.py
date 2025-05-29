@@ -4,6 +4,8 @@ import os
 import yaml
 os.environ['PYTORCH_ENABLE_MPS_FALLBACK'] = '1'
 import torch
+os.environ["MKL_THREADING_LAYER"] = "GNU"
+os.environ["KMP_DUPLICATE_LIB_OK"] = "TRUE"
 import numpy as np
 from os.path import join
 import wandb

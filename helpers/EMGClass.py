@@ -12,7 +12,7 @@ import threading
 import platform
 
 class EMG():
-    def __init__(self, socketAddr='tcp://127.0.0.1:1235', numElectrodes=16, tauA=0.05, tauD=0.1, usedChannels=None, usingSynergies=False, samplingFreq=None, offlineData=None, noiseLevel=None, maxVals=None):
+    def __init__(self, socketAddr='tcp://127.0.0.1:1235', numElectrodes=16, tauA=0.05, tauD=0.1, usedChannels=None, usingSynergies=False, samplingFreq=1000, offlineData=None, noiseLevel=None, maxVals=None):
         self.numElectrodes = numElectrodes
         self.tauA = tauA
         self.tauD = tauD
@@ -33,9 +33,9 @@ class EMG():
             self.synergyPath = '/home/haptix/haptix/haptix_controller/handsim/include/synergyMat.csv'
             # self.synergyPath = '/home/haptix/haptix/haptix_controller/handsim/include/JM_0929_synergyMat.csv'
         else:
-            self.boundsPath = '/Users/jg/projects/biomech/UEA-AMI-Controller/handsim/include/scaleFactors.txt'
-            self.deltasPath = '/Users/jg/projects/biomech/UEA-AMI-Controller/handsim/include/deltas.txt'
-            self.synergyPath = '/Users/jg/projects/biomech/UEA-AMI-Controller/handsim/include/synergyMat.csv'
+            self.boundsPath = 'C:/Users/Emanuel Wicki/Documents/MIT/UEA-AMI-Controller/handsim/include/scaleFactors.txt'
+            self.deltasPath = 'C:/Users/Emanuel Wicki/Documents/MIT/UEA-AMI-Controller/handsim/include/deltas.txt'
+            self.synergyPath = 'C:/Users/Emanuel Wicki/Documents/MIT/UEA-AMI-Controller/handsim/include/synergyMat.csv'
 
         self.socketAddr = socketAddr
         self.ctx = zmq.Context()
@@ -50,7 +50,7 @@ class EMG():
         self.switch1 = None
         self.switch2 = None
         self.end = None
-        self.samplingFreq = None # this SHOULD be 1 kHz - but don't assume that
+        self.samplingFreq = 1000 # this SHOULD be 1 kHz - but don't assume that
 
         if self.offlineData is None:
             self.getBounds()  # first 16: maximum values, second 16: minimum values

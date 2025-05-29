@@ -37,12 +37,12 @@ def update_yaml_configs(person_id, hand_side, used_channels, out_root='data'):
 
     # Standard targets, switch side as needed
     TARGETS = [
-        "index_PosCom",
-        "middle_PosCom",
-        "ring_PosCom",
-        "pinky_PosCom",
-        "thumbFlex_PosCom",
-        "thumbRot_PosCom"
+        "index_Pos",
+        "middle_Pos",
+        "ring_Pos",
+        "pinky_Pos",
+        "thumbFlex_Pos",
+        "thumbRot_Pos"
     ]
     # Formatting for targets
     targets_block = ""
@@ -133,42 +133,38 @@ def save_angles_as_parquet(data_dir, angles_array, timestamps=None, hand_side='l
     if not os.path.isfile(header_path):
         print(f"No angles_header.txt found in {data_dir}. Skipping parquet export.")
         return
-    # read the comma-separated headers
+
+    # read your raw headers
     with open(header_path, 'r') as f:
-        headers = [h.strip() for h in f.read().strip().split(',')]
-    if angles_array.shape[1] != len(headers):
-        print(f"Shape mismatch: {angles_array.shape[1]} data columns vs {len(headers)} headers! Parquet not saved.")
-        return
+        headers = [h.strip() for h in f.read().split(',')]
 
-    # build the column list, tuple for only the 6 finger joints
+    # define exactly the 6 angle names you care about:
+    SIDE_TUPLE_COLS = [
+        'index_Pos',
+        'middle_Pos',
+        'ring_Pos',
+        'pinky_Pos',
+        'thumbFlex_Pos',
+        'thumbRot_Pos'
+    ]
+
+    # locate their column indices in the raw angles_array
+    col_indices = [headers.index(h) for h in SIDE_TUPLE_COLS]
+
+    # build a new DataFrame with only timestamp + those six columns
     hand_side_cap = hand_side.capitalize()
-    TUPLE_COLS = {
-      'index_PosCom','middle_PosCom','ring_PosCom',
-      'pinky_PosCom','thumbFlex_PosCom','thumbRot_PosCom'
-    }
+    # start with timestamp
+    df = pd.DataFrame({'timestamp': timestamps}) if timestamps is not None else pd.DataFrame()
 
-    cols = []
-    for h in headers:
-        if h.lower() == 'timestamp':
-            cols.append('timestamp')
-        elif h in TUPLE_COLS:
-            cols.append((hand_side_cap, h))
-        else:
-            cols.append(h)
+    # add only the six angle columns, as MultiIndex
+    for h, idx in zip(SIDE_TUPLE_COLS, col_indices):
+        df[(hand_side_cap, h)] = angles_array[:, idx]
 
-    df = pd.DataFrame(angles_array, columns=cols)
-
-    # now insert or replace the timestamp column, if provided
-    if timestamps is not None:
-        # if there already is a timestamp column, drop it first
-        if 'timestamp' in df.columns:
-            df = df.drop(columns=['timestamp'])
-        df.insert(0, 'timestamp', timestamps)
-
+    # finally, write parquet
     parquet_path = os.path.join(data_dir, 'aligned_angles.parquet')
     df.to_parquet(parquet_path, index=False)
     print(f"Saved {parquet_path} with shape {df.shape}")
-    print(f"Columns: {df.columns.tolist()}")
+    print("Columns:", df.columns.tolist())
 
 
 def process_emg_and_angles(
@@ -277,7 +273,7 @@ if __name__ == "__main__":
     parser.add_argument('--person_id', required=True, help='Person ID (e.g. Emanuel_FirstTries)')
     parser.add_argument('--movement', required=False, help='Movement name (e.g. indexFlDigitsEx, optional)')
     parser.add_argument('--out_root', default='data', help='Root directory (default: data)')
-    parser.add_argument('--snr_threshold', type=float, default=5.0, help='SNR threshold for channel selection')
+    parser.add_argument('--snr_threshold', type=float, default=3.0, help='SNR threshold for channel selection')
     parser.add_argument("--hand_side", "-s", choices=["left", "right"], default="left", help="Side of the prosthetic hand")
     args = parser.parse_args()
     process_all_experiments(args.person_id, args.out_root, args.movement, args.snr_threshold, args.hand_side)

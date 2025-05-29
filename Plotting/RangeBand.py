@@ -3,9 +3,9 @@ import matplotlib.pyplot as plt
 from scipy.signal import bessel, filtfilt
 import os
 
-root = "C:/Users/Emanuel Wicki/Documents/MIT/biomech_PCP/data/testt/recordings/handOpCl/experiments"
-emg_channel = 14  # 0-based
-angle_idx = 2     # adjust as needed
+root = "C:/Users/Emanuel Wicki/Documents/MIT/biomech_PCP/data/gg/recordings/handOpCl/experiments"
+emg_channel = 15  # 0-based
+angle_idx = 26     # adjust as needed
 
 def bessel_bandstop(data, lowcut, highcut, fs, order=4):
     nyq = 0.5 * fs

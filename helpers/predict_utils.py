@@ -1,5 +1,6 @@
 import wandb
 import torch
+import os
 from torch.utils.data import Dataset, DataLoader
 import random
 from helpers.models import TimeSeriesRegressorWrapper
@@ -7,16 +8,47 @@ from tqdm import tqdm
 from os.path import join
 import numpy as np
 import pandas as pd
+import config
 import matplotlib.pyplot as plt
 import math
 
 def scale_data(data, intact_hand):
-    data.loc[:, (intact_hand, 'thumbInPlaneAng')] = data.loc[:,(intact_hand, 'thumbInPlaneAng')] + math.pi
-    data.loc[:, (intact_hand, 'wristRot')] = (data.loc[:, (intact_hand, 'wristRot')] + math.pi) / 2
-    data.loc[:, (intact_hand, 'wristFlex')] = (data.loc[:, (intact_hand, 'wristFlex')] + math.pi / 2)
-    data = (2 * data - math.pi) / math.pi
-    data = data.clip(-1, 1)
-    return data
+    # # If in-plane thumb angle exists, shift by pi
+    # col = (intact_hand, 'thumbInPlaneAng')
+    # if col in data.columns:
+    #     data.loc[:, col] = data.loc[:, col] + math.pi
+    # col = (intact_hand, 'wristRot')
+    # if col in data.columns:
+    #     data.loc[:, col] = (data.loc[:, col] + math.pi) / 2
+    # col = (intact_hand, 'wristFlex')
+    # if col in data.columns:
+    #     data.loc[:, col] = (data.loc[:, col] + math.pi) / 2
+    # # data.loc[:, (intact_hand, 'thumbInPlaneAng')] = data.loc[:,(intact_hand, 'thumbInPlaneAng')] + math.pi
+    # # data.loc[:, (intact_hand, 'wristRot')] = (data.loc[:, (intact_hand, 'wristRot')] + math.pi) / 2
+    # # data.loc[:, (intact_hand, 'wristFlex')] = (data.loc[:, (intact_hand, 'wristFlex')] + math.pi / 2)
+    # data = (2 * data - math.pi) / math.pi
+    # data = data.clip(-1, 1)
+    # return data
+    scaled = data.copy()
+    # Angles in [0, 120]
+    angle_cols = [
+        (intact_hand, 'index_Pos'),
+        (intact_hand, 'middle_Pos'),
+        (intact_hand, 'ring_Pos'),
+        (intact_hand, 'pinky_Pos'),
+        (intact_hand, 'thumbFlex_Pos'),
+    ]
+    for col in angle_cols:
+        if col in scaled.columns:
+            scaled[col] = (scaled[col] - 60) / 60
+            scaled[col] = scaled[col].clip(-1, 1)
+    # ThumbRot in [-120, 0]
+    col = (intact_hand, 'thumbRot_Pos')
+    if col in scaled.columns:
+        scaled[col] = (scaled[col] + 60) / 60
+        scaled[col] = scaled[col].clip(-1, 1)
+    # Leave EMG columns unchanged!
+    return scaled
 
 def rescale_data(angles_df, intact_hand):
     series = False
@@ -33,26 +65,87 @@ def rescale_data(angles_df, intact_hand):
     else:
         return angles_df
 
-def load_data(data_dir, intact_hand, features, perturber=None):
-    angles = pd.read_parquet(join(data_dir, 'cropped_smooth_angles.parquet'))
-    angles.index = range(len(angles))
-    try:
-        emg = np.load(join(data_dir, 'cropped_aligned_emg.npy'))
-    except:
-        emg = np.load(join(data_dir, 'cropped_emg.npy'))
+def load_data(data_dir, intact_hand, features, targets, perturber=None):
+    """
+    Load one experiment's EMG and angle data, build a combined DataFrame.
+    Handles missing features or extra features gracefully.
+    """
+    import os
+    # 1) Load angles
+    angle_path = os.path.join(data_dir, 'aligned_angles.parquet')
+    angles_df = pd.read_parquet(angle_path)
 
-    data = angles.copy()
-    data = scale_data(data, intact_hand)
+    # If this is the aligned_angles.parquet mode, convert any stringified tuple columns back to real tuples
+    if os.path.basename(angle_path) == 'aligned_angles.parquet':
+        import ast
+        def _maybe_tuple(x):
+            if isinstance(x, str) and x.startswith('(') and x.endswith(')'):
+                try:
+                    y = ast.literal_eval(x)
+                    if isinstance(y, tuple):
+                        return y
+                except Exception:
+                    pass
+            return x
+        angles_df.columns = pd.Index([_maybe_tuple(c) for c in angles_df.columns])
 
-    int_features = [int(feature[1]) for feature in features]
-    emg = emg[:, int_features]
+    # 2) Load EMG and timestamps
+    emg_arr = np.load(os.path.join(data_dir, 'aligned_filtered_emg.npy'))  # shape (T_emg, C_emg)
+    ts = np.load(os.path.join(data_dir, 'aligned_timestamps.npy'))        # shape (T_emg,)
+
+    # 3) Determine EMG feature names - only use as many as channels present
+    emg_feature_names = features[:emg_arr.shape[1]]
+
+    # 4) Build DataFrame for EMG
+    df_emg = pd.DataFrame(emg_arr, index=ts, columns=emg_feature_names)
+
+    # 5) Build DataFrame for angles, set index to timestamp for alignment
+    df_angles = angles_df.set_index('timestamp')
+
+    # 6) Concatenate EMG and angles on the timestamp index (inner join)
+    data = pd.concat([df_emg, df_angles], axis=1, join='inner')
+
+    # 7) Apply perturbation if provided
     if perturber is not None:
-        emg = (perturber @ emg.T).T
+        data = perturber.apply(data)
+    
+    # print("\n--- Before scaling ---")
+    # print("EMG min:", data[features].min().min())
+    # print("EMG max:", data[features].max().max())
+    # print("Angle min:", data[targets].min().min())
+    # print("Angle max:", data[targets].max().max())
 
-    for feature in features:
-        data[tuple(feature)] = emg[:, int_features.index(int(feature[1]))]
+    # 8) Scale data (handle missing columns inside)# 
+    data[targets] = scale_data(data[targets], intact_hand)
+
+    # print("\n--- After scaling ---")
+    # print("EMG min:", data[features].min().min())
+    # print("EMG max:", data[features].max().max())
+    # print("Angle min:", data[targets].min().min())
+    # print("Angle max:", data[targets].max().max())
 
     return data
+
+# def load_data(data_dir, intact_hand, features, perturber=None):
+#     angles = pd.read_parquet(join(data_dir, 'cropped_smooth_angles.parquet'))
+#     angles.index = range(len(angles))
+#     try:
+#         emg = np.load(join(data_dir, 'cropped_aligned_emg.npy'))
+#     except:
+#         emg = np.load(join(data_dir, 'cropped_emg.npy'))
+# 
+#     data = angles.copy()
+#     data = scale_data(data, intact_hand)
+# 
+#     int_features = [int(feature[1]) for feature in features]
+#     emg = emg[:, int_features]
+#     if perturber is not None:
+#         emg = (perturber @ emg.T).T
+# 
+#     for feature in features:
+#         data[tuple(feature)] = emg[:, int_features.index(int(feature[1]))]
+# 
+#     return data
 
 
 def get_data(config, data_dirs, intact_hand, visualize=False, test_dirs=None, perturb_file=None):
@@ -63,10 +156,22 @@ def get_data(config, data_dirs, intact_hand, visualize=False, test_dirs=None, pe
     combined_sets = []
     perturber = np.load(perturb_file) if perturb_file is not None else None
     for recording_id, data_dir in enumerate(data_dirs):
-        data = load_data(data_dir, intact_hand, config.features, perturber)
+        data = load_data(data_dir, intact_hand, config.features, config.targets, perturber)
 
         if visualize:
+            # debug prints:
+            print("=== get_data debug ===")
+            print("Available DataFrame columns:")
+            for col in data.columns:
+                print("   ", col)
+            print("Requested targets (config.targets):")
+            for tgt in config.targets:
+                print("   ", tgt)
+            missing = [t for t in config.targets if t not in data.columns]
+            print("Missing from DataFrame:", missing)
+            print("=======================")
             axs = data[config.features].plot(subplots=True, ylim=(-0.1, 1.1))
+            # axs = data[config.features].plot(subplots=True, ylim=(-1, -0.9))
             for ax in axs: ax.legend(loc='upper right')
             plt.suptitle(f'Features {config.recordings[recording_id]}')
             plt.show()
@@ -89,7 +194,7 @@ def get_data(config, data_dirs, intact_hand, visualize=False, test_dirs=None, pe
 
     if test_dirs is not None:
         for test_dir in test_dirs:
-            data = load_data(test_dir, intact_hand, config.features, perturber)
+            data = load_data(test_dir, intact_hand, config.features, config.targets, perturber)
             test_set = data.loc[len(data) // 5 * 4:].copy()
             train_set = data.loc[: len(data) // 5 * 4].copy()
             testsets.append(test_set)

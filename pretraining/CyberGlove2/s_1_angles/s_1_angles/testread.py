@@ -3,7 +3,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 
 # Load the .mat file
-data = scipy.io.loadmat(r"C:/Users/Emanuel Wicki/Documents/MIT/biomech_PCP/pretraining/CyberGlove2/s_1_angles/s_1_angles/S1_E2_A1.mat")
+data = scipy.io.loadmat(r"C:/Users/Emanuel Wicki/Documents/MIT/biomech_PCP/pretraining/CyberGlove2/s_1_angles/s_1_angles/S61_E2_A1.mat")
 
 # Check what's inside
 print(data.keys())
@@ -11,11 +11,13 @@ print(data.keys())
 # Extract angles and stimulus
 angles = data['angles']
 stimulus = data['stimulus'].flatten()  # make it a 1D array
-
+angles[:, 18] *= -1.0
+angles[:, 9] -= 6
+angles[:, 13] -= 48
 # Relevant joints (indices)
-selected_indices = [1, 2, 4, 7, 9, 13]
+selected_indices = [0, 1, 2, 3, 13, 5]
 # selected_indices = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21]
-labels = ['Thumb Rotation', 'Thumb Flexion', 'Index MCP Flexion', 'Middle MCP Flexion', 'Ring MCP Flexion', 'Pinky MCP Flexion']
+labels = ['Thumb', 'Index', 'Middle', 'Ring', 'Pinky', 'XX']
 
 # Plot
 plt.figure(figsize=(14, 7))
@@ -26,8 +28,9 @@ markers = ['o', '^', 's', 'x', 'd', '*']
 
 
 # Plot only the selected joints
+end_sample = 200000
 for idx, i in enumerate(selected_indices):
-    plt.plot(angles[:, i], label=labels[idx])
+    plt.plot(angles[:end_sample, i], label=labels[idx])
     # plt.plot(angles[:, i])
 
 # Find the points where the task changes

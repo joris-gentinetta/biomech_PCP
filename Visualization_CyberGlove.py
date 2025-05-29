@@ -35,7 +35,7 @@ def finger_kin(base, ang, lengths=[4,3,2]):
         pts.append(pts[-1] + d*L)
     return np.array(pts)
 
-def thumb_kin(base, ang, lengths=[5,3,2]):
+def thumb_kin(base, ang, lengths=[6,3,2]):
     # ang = [cmc_flex, cmc_abd, mcp_flex, ip_flex]
     cmc_f, cmc_a, mcp_f, ip_f = np.radians(ang)
     pts = [base.copy()]
@@ -148,7 +148,7 @@ def main():
         return list(lines.values())
 
     ani = FuncAnimation(fig, update,
-                        frames=np.arange(0, angles.shape[0], 200),
+                        frames=np.arange(0, angles.shape[0], 400),
                         interval=50, blit=False)
     plt.show()
 

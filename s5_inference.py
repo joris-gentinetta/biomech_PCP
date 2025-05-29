@@ -942,7 +942,7 @@ class psyonicArm():
 				if max_finger_force > ENTER_FORCE_THRESHOLD:
 					self.in_interaction_mode = True
 					exit_mode_start_time = None
-					# print("Entered interaction mode")
+					print("Entered interaction mode")
 			else:
 				if max_finger_force < EXIT_FORCE_THRESHOLD:
 					if exit_mode_start_time is None:
@@ -950,7 +950,7 @@ class psyonicArm():
 					elif (current_time - exit_mode_start_time) > INTERACTION_MODE_DEBOUNCE_TIME:
 						self.in_interaction_mode = False
 						exit_mode_start_time = None
-						# print("Exited interaction mode")
+						print("Exited interaction mode")
 				else:
 					exit_mode_start_time = None  # Reset if force rises above exit threshold
 

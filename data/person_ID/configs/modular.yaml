@@ -13,7 +13,7 @@ parameters:
     - indexFlEx
     - mrpFlEx
     - fingersFlEx
-    - wristFlEx
+#    - wristFlEx
     - handOpCl
     - pinchOpCl
     - pointOpCl
