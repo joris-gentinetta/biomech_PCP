@@ -45,18 +45,18 @@ def robust_mvc(mvc_data, percentile=90):
         robust_max.append(robust_val)
     return np.array(robust_max)
 
-def calibrate_emg(base_dir, rest_time=5, mvc_time=10):
+def calibrate_emg(base_dir, rest_time=5, mvc_time=10, free_time=8, target_free_ratio=0.3):
     print("EMG Calibration Routine")
     emg = EMG()
     emg.startCommunication()
 
+    # ---------- 1. REST ----------
     print("1. Relax for baseline noise recording")
     time.sleep(2)
     emg_rawHistory = []
     rest_timestamps = []
     emg.exitEvent.clear()
 
-    # Record REST data
     t0 = time.time()
     while time.time() - t0 < rest_time:
         if hasattr(emg, 'rawEMG'):
@@ -65,31 +65,28 @@ def calibrate_emg(base_dir, rest_time=5, mvc_time=10):
         time.sleep(0.001)
     rest_data = np.vstack(emg_rawHistory)
     rest_timestamps = np.array(rest_timestamps)
-    # Store the data
     np.save(os.path.join(base_dir, "calib_rest_emg.npy"), rest_data)
     np.save(os.path.join(base_dir, "calib_rest_timestamps.npy"), rest_timestamps)
-    print(f"Save calib_rest_emg.npy and calib_rest_timestamps.npy in {base_dir}")
+    print(f"Saved calib_rest_emg.npy and calib_rest_timestamps.npy in {base_dir}")
 
-    print("Recording ended, filtering data now...")
+    print(f"Finished recording, filtering now...")
 
-    # --- FILTER REST DATA ---
-    if len(rest_timestamps) > 1:
-        sf_rest = (len(rest_timestamps) - 1) / (rest_timestamps[-1] - rest_timestamps[0])
-    else:
-        sf_rest = 1000  # fallback
-
-    # Filtering: do NOT subtract noise yet!
+    sf_rest = (len(rest_timestamps) - 1) / (rest_timestamps[-1] - rest_timestamps[0]) if len(rest_timestamps) > 1 else 1000
+    print(f"sf rest: {sf_rest}")
     filtered_rest = filter_emg_pipeline_bessel(rest_data.T, sf_rest)
-    noise_levels = np.mean(filtered_rest, axis=1)
 
-    # -- MVC COLLECTION --
+    # Removing artifact in the beginning of filtering
+    artifact_cut = 400
+    filtered_rest_cut = filtered_rest[:, artifact_cut:]
+    noise_levels = np.mean(filtered_rest_cut, axis=1)
+
+    # ---------- 2. MVC ----------
     input("2. Prepare for MVC (5x full fist and full hand open in 10s), press enter when ready")
     time.sleep(1)
     emg_rawHistory = []
     mvc_timestamps = []
     emg.exitEvent.clear()
 
-    # Record MVC data
     t0 = time.time()
     while time.time() - t0 < mvc_time:
         if hasattr(emg, 'rawEMG'):
@@ -98,40 +95,71 @@ def calibrate_emg(base_dir, rest_time=5, mvc_time=10):
         time.sleep(0.001)
     mvc_data = np.vstack(emg_rawHistory)
     mvc_timestamps = np.array(mvc_timestamps)
-    # Store the data
     np.save(os.path.join(base_dir, "calib_mvc_emg.npy"), mvc_data)
     np.save(os.path.join(base_dir, "calib_mvc_timestamps.npy"), mvc_timestamps)
-    print(f"Save calib_mvc_emg.npy and calib_mvc_timestamps.npy in {base_dir}")
+    print(f"Saved calib_mvc_emg.npy and calib_mvc_timestamps.npy in {base_dir}")
 
-    print("Recording ended, filtering data now...")
+    print(f"Finished recording, filtering now...")
 
-    if len(mvc_timestamps) > 1:
-        sf_mvc = (len(mvc_timestamps) - 1) / (mvc_timestamps[-1] - mvc_timestamps[0])
-    else:
-        sf_mvc = 1000
-
-    # --- FILTER MVC DATA and subtract noise floor ---
+    sf_mvc = (len(mvc_timestamps) - 1) / (mvc_timestamps[-1] - mvc_timestamps[0]) if len(mvc_timestamps) > 1 else 1000
+    print(f"sf mvc: {sf_mvc}")
     filtered_mvc = filter_emg_pipeline_bessel(mvc_data.T, sf_mvc)
-    filtered_mvc = np.clip(filtered_mvc - noise_levels[:, None], 0, None)
 
-    # --- Compute robust max (per channel) ---
-    max_vals = robust_mvc(filtered_mvc.T, percentile=80)
+    # Cut artifact in beginning of file
+    filtered_mvc_cut = filtered_mvc[:, artifact_cut:]
+    filtered_mvc_cut = np.clip(filtered_mvc_cut - noise_levels[:, None], 0, None)
+    np.save(os.path.join(base_dir, "calib_mvc_filtered.npy"), filtered_mvc_cut)
+    maxVals = np.max(filtered_mvc_cut, axis=1)
 
-    emg.exitEvent.set()
-    time.sleep(0.5)
-    emg.shutdown()
+    # 3. FREE-SPACE 
+    # input("3. Now perform NATURAL FREE-SPACE HAND MOVEMENTS (open/close as you would in daily use, no maximum force!) - press enter to start")
+    # time.sleep(1)
+    # emg_rawHistory = []
+    # free_timestamps = []
+    # emg.exitEvent.clear()
+# 
+    # t0 = time.time()
+    # while time.time() - t0 < free_time:
+    #     if hasattr(emg, 'rawEMG'):
+    #         emg_rawHistory.append(list(emg.rawEMG))
+    #         free_timestamps.append(time.time())
+    #     time.sleep(0.001)
+    # free_data = np.vstack(emg_rawHistory)
+    # free_timestamps = np.array(free_timestamps)
+    # np.save(os.path.join(base_dir, "calib_freespace_emg.npy"), free_data)
+    # np.save(os.path.join(base_dir, "calib_freespace_timestamps.npy"), free_timestamps)
+    # print(f"Saved calib_freespace_emg.npy and calib_freespace_timestamps.npy in {base_dir}")
+# 
+    # sf_free = (len(free_timestamps) - 1) / (free_timestamps[-1] - free_timestamps[0]) if len(free_timestamps) > 1 else 1000
+    # print(f"sf free: {sf_free}")
+    # filtered_free = filter_emg_pipeline_bessel(free_data.T, sf_free)
+# 
+    # # Cut artifact in beginning of file
+    # filtered_free_cut = filtered_free[:, artifact_cut:]
+    # filtered_free_cut = np.clip(filtered_free_cut - noise_levels[:, None], 0, None)
+    # np.save(os.path.join(base_dir, "calib_freespace_filtered.npy"), filtered_free_cut)
+    # free_max = np.max(filtered_free_cut, axis=1)
 
-    # --- Store result in scaling.yaml ---
+    # Compute maxVals so that the free-space max is 30% of the scale
+    # maxVals = free_max / target_free_ratio
+    maxVals = np.percentile(filtered_mvc_cut, 90, axis=1)
+
+    print(f"maxVals: {maxVals}")
+    print(f"noiseLevels: {noise_levels}")
+
+    # Save minimal scaling.yaml with all 16 channels (even if zeros)
     scaling_dict = {
-        'maxVals': max_vals.tolist(),
+        'maxVals': maxVals.tolist(),
         'noiseLevels': noise_levels.tolist()
     }
     yaml_path = os.path.join(base_dir, 'scaling.yaml')
     with open(yaml_path, 'w') as f:
         yaml.safe_dump(scaling_dict, f)
-
     print(f"Saved scaling.yaml to {yaml_path}")
-    print(f"Max vals and noise lvl: {max_vals},    {noise_levels}")
+
+    emg.exitEvent.set()
+    time.sleep(0.5)
+    emg.shutdown()
 
 def start_raw_emg_recorder(base_dir, enable_video=False, sync_event=None):
     """
