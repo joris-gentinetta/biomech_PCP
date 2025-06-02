@@ -13,6 +13,14 @@ from scipy.interpolate import CubicSpline
 from helpers.EMGClass import EMG
 from scipy.signal import butter, filtfilt
 from helpers.BesselFilter import BesselFilterArr
+
+def make_timestamps_unique(timestamps):
+    timestamps = np.array(timestamps)
+    for i in range(1, len(timestamps)):
+        if timestamps[i] <= timestamps[i - 1]:
+            timestamps[i] = timestamps[i - 1] + 1e-6  # add 1 microsecond
+    return timestamps
+
 def filter_emg_pipeline_bessel(raw_emg, fs, noise_level=None):
     # raw_emg: shape [channels, samples] (transpose if needed)
     num_channels = raw_emg.shape[0]
@@ -142,7 +150,7 @@ def calibrate_emg(base_dir, rest_time=5, mvc_time=10, free_time=8, target_free_r
 
     # Compute maxVals so that the free-space max is 30% of the scale
     # maxVals = free_max / target_free_ratio
-    maxVals = np.percentile(filtered_mvc_cut, 90, axis=1)
+    maxVals = np.percentile(filtered_mvc_cut, 95, axis=1)
 
     print(f"maxVals: {maxVals}")
     print(f"noiseLevels: {noise_levels}")
@@ -229,6 +237,7 @@ def start_raw_emg_recorder(base_dir, enable_video=False, sync_event=None):
 
     return stop_event, emg_thread, video_thread, raw_history, raw_timestamps, video_timestamps
 
+
 def main():
     parser = argparse.ArgumentParser(
         description="Record synchronized EMG + prosthetic hand pose data"
@@ -245,9 +254,9 @@ def main():
                         help="Disable prosthetic arm control; EMG-only recording")
     parser.add_argument("--hand_side", "-s", choices=["left", "right"],
                         default="left", help="Side of the prosthetic hand")
-    parser.add_argument("--sync_iterations", type=int, default=2,
+    parser.add_argument("--sync_iterations", type=int, default=4,
                         help="Warm-up sync iterations (default: 1)")
-    parser.add_argument("--record_iterations", "-r", type=int, default=5,
+    parser.add_argument("--record_iterations", "-r", type=int, default=15,
                         help="Number of recording iterations (default: 1)")
     parser.add_argument("--video", action="store_true",
                         help="Enable simultaneous webcam video recording")
@@ -412,7 +421,8 @@ def main():
     # Save all data: EMG = [N,16], timestamps = [N,], video timestamps if recorded
     if raw_history:
         np.save(join(base_dir, "raw_emg.npy"), np.vstack(raw_history))
-        np.save(join(base_dir, "raw_timestamps.npy"), np.array(raw_timestamps))
+        raw_timestamps_unique = make_timestamps_unique(raw_timestamps)
+        np.save(join(base_dir, "raw_timestamps.npy"), np.array(raw_timestamps_unique))
         print(f"Saved raw_emg.npy with {len(raw_history)} samples.")
     if video_timestamps:
         np.save(join(base_dir, "video_timestamps.npy"), np.array(video_timestamps))
@@ -424,7 +434,8 @@ def main():
         ts = rec[:, 0]
         ts -= ts[0]  # normalize timestamps
         np.save(join(base_dir, "angles.npy"), rec)
-        np.save(join(base_dir, "angle_timestamps.npy"), ts)
+        angle_timestamps_unique = make_timestamps_unique(ts)
+        np.save(join(base_dir, "angle_timestamps.npy"), angle_timestamps_unique)
         with open(join(base_dir, "angles_header.txt"), "w") as f:
             f.write(",".join(headers))
         print(f"Saved angles.npy with {len(rec)} frames.")
