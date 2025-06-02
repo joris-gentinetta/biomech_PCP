@@ -13,6 +13,8 @@ def get_used_channels_from_snr(scaling_yaml_path, snr_threshold=5.0):
         scalers = yaml.safe_load(file)
     maxVals = np.array(scalers['maxVals'])
     noiseLevel = np.array(scalers['noiseLevels'])
+    print("maxVals:", maxVals)
+    print("noiseLevel:", noiseLevel)
     snr = (maxVals - noiseLevel) / (noiseLevel + 1e-10)
     used_channels = [i for i, val in enumerate(snr) if val > snr_threshold]
     print(f"Calculated SNR per channel: {snr}")
@@ -278,7 +280,7 @@ if __name__ == "__main__":
     parser.add_argument('--person_id', required=True, help='Person ID (e.g. Emanuel_FirstTries)')
     parser.add_argument('--movement', required=False, help='Movement name (e.g. indexFlDigitsEx, optional)')
     parser.add_argument('--out_root', default='data', help='Root directory (default: data)')
-    parser.add_argument('--snr_threshold', type=float, default=0.3, help='SNR threshold for channel selection')
+    parser.add_argument('--snr_threshold', type=float, default=6, help='SNR threshold for channel selection')
     parser.add_argument("--hand_side", "-s", choices=["left", "right"], default="left", help="Side of the prosthetic hand")
     args = parser.parse_args()
     process_all_experiments(args.person_id, args.out_root, args.movement, args.snr_threshold, args.hand_side)
