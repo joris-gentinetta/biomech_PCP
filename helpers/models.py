@@ -305,9 +305,11 @@ class PhysJointModel(TimeSeriesRegressor):
 
     def get_starting_states(self, batch_size, y=None):
         """ these are the muscle states! """
+        # print(f"get_starting_states: y.shape = {y.shape}")
         theta = y[:, 0, :]
         d_theta = (y[:, 1, :] - y[:, 0, :]) * SR
         states = torch.stack([theta, d_theta], dim=2)
+        # print(f"get_starting_states: y.shape = {y.shape}")
         return [states.unsqueeze(3) * self.model.M.unsqueeze(0).unsqueeze(2), states, theta]  # todo dimensions
 
     def forward(self, x, joint_states):
@@ -584,6 +586,7 @@ class TimeSeriesRegressorWrapper:
         self.model.eval()
         x = torch.tensor(test_set.loc[:, features].values, dtype=torch.float32).unsqueeze(0).to(self.device)
         y = torch.tensor(test_set.loc[:, targets].values, dtype=torch.float32).unsqueeze(0).to(self.device)
+        # print(f"predict: input y shape = {y.shape}")
         with torch.no_grad():
             states = self.model.get_starting_states(1, y)
             y_pred, _ = self.model(x, states=states)

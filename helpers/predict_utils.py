@@ -55,15 +55,34 @@ def rescale_data(angles_df, intact_hand):
     if isinstance(angles_df, pd.Series):
         series = True
         angles_df = angles_df.to_frame().T
-    angles_df = angles_df.clip(-1, 1)
-    angles_df = (angles_df * math.pi + math.pi) / 2
-    angles_df.loc[:, (intact_hand, 'wristFlex')] = angles_df.loc[:, (intact_hand, 'wristFlex')] - math.pi / 2
-    angles_df.loc[:, (intact_hand, 'wristRot')] = (angles_df.loc[:, (intact_hand, 'wristRot')] * 2) - math.pi
-    angles_df.loc[:, (intact_hand, 'thumbInPlaneAng')] = angles_df.loc[:, (intact_hand, 'thumbInPlaneAng')] - math.pi
+
+    df = angles_df.copy()
+
+    # 1) Finger/joint angles originally in [0…120]°
+    angle_cols = [
+        (intact_hand, 'index_Pos'),
+        (intact_hand, 'middle_Pos'),
+        (intact_hand, 'ring_Pos'),
+        (intact_hand, 'pinky_Pos'),
+        (intact_hand, 'thumbFlex_Pos'),
+    ]
+    for col in angle_cols:
+        if col in df.columns:
+            x = df[col]                # x ∈ [–1…+1]
+            deg = 60 * x + 60          # invert (deg−60)/60 → deg = 60x + 60
+            df[col] = deg.clip(0, 120)
+
+    # 2) Thumb rotation originally in [–120…0]°
+    col_tr = (intact_hand, 'thumbRot_Pos')
+    if col_tr in df.columns:
+        x = df[col_tr]                # x ∈ [–1…+1]
+        deg = 60 * x - 60             # invert (deg+60)/60 → deg = 60x − 60
+        df[col_tr] = deg.clip(-120, 0)
+
     if series:
-        return angles_df.iloc[0]
+        return df.iloc[0]
     else:
-        return angles_df
+        return df
 
 def load_data(data_dir, intact_hand, features, targets, perturber=None):
     """
@@ -102,8 +121,16 @@ def load_data(data_dir, intact_hand, features, targets, perturber=None):
     # 5) Build DataFrame for angles, set index to timestamp for alignment
     df_angles = angles_df.set_index('timestamp')
 
+    # print("EMG index unique?", df_emg.index.is_unique)
+    # print("Angles index unique?", df_angles.index.is_unique)
+    # print("EMG index sample:", df_emg.index[:10])
+    # print("Angles index sample:", df_angles.index[:10])
+
+
     # 6) Concatenate EMG and angles on the timestamp index (inner join)
     data = pd.concat([df_emg, df_angles], axis=1, join='inner')
+
+    # print(f"→ load_data: after concat, {len(data)} rows × {len(data.columns)} columns")
 
     # 7) Apply perturbation if provided
     if perturber is not None:
@@ -149,59 +176,77 @@ def load_data(data_dir, intact_hand, features, targets, perturber=None):
 
 
 def get_data(config, data_dirs, intact_hand, visualize=False, test_dirs=None, perturb_file=None):
+    import numpy as np
+    import pandas as pd
+    import matplotlib.pyplot as plt
 
     trainsets = []
     valsets = []
     testsets = []
     combined_sets = []
+
+    # If a perturbation file was given, load it; otherwise perturber = None
     perturber = np.load(perturb_file) if perturb_file is not None else None
+
+    # ─── LOOP OVER “TRAIN/VAL” DIRECTORIES ────────────────────────────────────────
     for recording_id, data_dir in enumerate(data_dirs):
         data = load_data(data_dir, intact_hand, config.features, config.targets, perturber)
+        # print(f"Data length for recording {recording_id} ({data_dir}): {len(data)}")
 
         if visualize:
-            # debug prints:
-            print("=== get_data debug ===")
-            print("Available DataFrame columns:")
-            for col in data.columns:
-                print("   ", col)
-            print("Requested targets (config.targets):")
-            for tgt in config.targets:
-                print("   ", tgt)
-            missing = [t for t in config.targets if t not in data.columns]
-            print("Missing from DataFrame:", missing)
-            print("=======================")
+            # print("get_data debug ")
+            # print("Available DataFrame columns:")
+            # for col in data.columns:
+            #     print("   ", col)
+            # print("Requested targets (config.targets):")
+            # for tgt in config.targets:
+            #     print("   ", tgt)
+            # missing = [t for t in config.targets if t not in data.columns]
+            # print("Missing from DataFrame:", missing)
+
+            # Plot features and targets for visual debugging
             axs = data[config.features].plot(subplots=True, ylim=(-0.1, 1.1))
-            # axs = data[config.features].plot(subplots=True, ylim=(-1, -0.9))
-            for ax in axs: ax.legend(loc='upper right')
+            for ax in axs:
+                ax.legend(loc='upper right')
             plt.suptitle(f'Features {config.recordings[recording_id]}')
             plt.show()
 
             axs = data[config.targets].plot(subplots=True, ylim=(-1.1, 1.1))
-            for ax in axs: ax.legend(loc='upper right')
+            for ax in axs:
+                ax.legend(loc='upper right')
             plt.suptitle(f'Targets {config.recordings[recording_id]}')
             plt.show()
 
-        # if test_dirs is None:
-        test_set = data.loc[len(data) // 5 * 4:].copy()
-        train_set = data.loc[: len(data) // 5 * 4].copy()
-        trainsets.append(train_set)
-        valsets.append(test_set)
-        combined_sets.append(data.copy())
-        # else:
-        #     train_set = data.copy()
-        #     trainsets.append(train_set)
-        #     combined_sets.append(train_set)
+        # ─── SPLIT “TRAIN vs. VAL” USING .iloc ─────────────────────────────────────
+        split_idx = len(data) // 5 * 4
+        if split_idx <= 0 or split_idx >= len(data):
+            # If data is too small to form a proper 80/20 split, put everything in train and leave val empty
+            train_set = data.copy()
+            val_set = pd.DataFrame(columns=data.columns)
+        else:
+            train_set = data.iloc[:split_idx].copy()
+            val_set   = data.iloc[split_idx:].copy()
 
+        trainsets.append(train_set)
+        valsets.append(val_set)
+        combined_sets.append(data.copy())
+
+    # ─── LOOP OVER ANY “TEST” DIRECTORIES ────────────────────────────────────────
     if test_dirs is not None:
         for test_dir in test_dirs:
             data = load_data(test_dir, intact_hand, config.features, config.targets, perturber)
-            test_set = data.loc[len(data) // 5 * 4:].copy()
-            train_set = data.loc[: len(data) // 5 * 4].copy()
-            testsets.append(test_set)
-            # combined_sets.append(data)
 
+            split_idx = len(data) // 5 * 4
+            if split_idx <= 0 or split_idx >= len(data):
+                # Too few points → test_set remains empty
+                test_set = pd.DataFrame(columns=data.columns)
+            else:
+                test_set = data.iloc[split_idx:].copy()
+
+            testsets.append(test_set)
 
     return trainsets, valsets, combined_sets, testsets
+
 
 
 def train_model(trainsets, valsets, testsets, device, wandb_mode, wandb_project, wandb_name, config=None, person_dir='test'):
@@ -229,6 +274,7 @@ def train_model(trainsets, valsets, testsets, device, wandb_mode, wandb_project,
                     for param in model.model.joint_model.parameters():
                         param.requires_grad = False if epoch < config.joint_model['n_freeze_epochs'] else True
 
+                print(f"Starting epoch {epoch}...")
                 train_loss = model.train_one_epoch(dataloader)
 
                 val_loss, test_loss, val_losses = evaluate_model(model, valsets, testsets, device, config)
@@ -240,6 +286,8 @@ def train_model(trainsets, valsets, testsets, device, wandb_mode, wandb_project,
                     wandb.run.summary['best_test_loss'] = test_loss
                     wandb.run.summary['best_test_epoch'] = epoch
                 wandb.run.summary['used_epochs'] = epoch
+
+                print(f"Epoch {epoch} validation loss: {val_loss}, test loss: {test_loss}")
 
                 lr = model.scheduler.get_last_lr()[0]
                 if epoch > 15: # todo
@@ -262,29 +310,48 @@ def train_model(trainsets, valsets, testsets, device, wandb_mode, wandb_project,
 
 
 def evaluate_model(model, valsets, testsets, device, config):
-    warmup_steps = config.warmup_steps # todo
-    # warmup_steps = config.seq_len - 1
+    warmup_steps = config.warmup_steps  # todo
     val_losses = []
     for set_id, val_set in enumerate(valsets):
+        # print(f"Evaluating val_set {set_id}: length = {len(val_set)}")
+        # Print first few rows or shape to inspect data
+        # print(f"val_set columns: {val_set.columns.tolist()}")
+        # print(f"val_set head:\n{val_set.head()}")
+
+        # Predict
         val_pred = model.predict(val_set, config.features, config.targets).squeeze(0)
-        loss = model.criterion(val_pred[warmup_steps:],
-                                    torch.tensor(val_set[config.targets].values, dtype=torch.float32)[
-                                    warmup_steps:].to(device))
+        # print(f"val_pred shape: {val_pred.shape}")# 
+
+        # Calculate loss
+        target_tensor = torch.tensor(val_set[config.targets].values, dtype=torch.float32).to(device)
+        # print(f"target_tensor shape: {target_tensor.shape}")
+
+        loss = model.criterion(val_pred[warmup_steps:], target_tensor[warmup_steps:])
         loss = float(loss.to('cpu').detach())
         val_losses.append(loss)
+
     total_val_loss = sum(val_losses) / len(val_losses)
 
     test_losses = []
     for set_id, test_set in enumerate(testsets):
+        # print(f"Evaluating test_set {set_id}: length = {len(test_set)}")
+        # print(f"test_set columns: {test_set.columns.tolist()}")
+        # print(f"test_set head:\n{test_set.head()}")
+
         test_pred = model.predict(test_set, config.features, config.targets).squeeze(0)
-        loss = model.criterion(test_pred[warmup_steps:],
-                                    torch.tensor(test_set[config.targets].values, dtype=torch.float32)[
-                                    warmup_steps:].to(device))
+        # print(f"test_pred shape: {test_pred.shape}")
+
+        target_tensor = torch.tensor(test_set[config.targets].values, dtype=torch.float32).to(device)
+        # print(f"target_tensor shape: {target_tensor.shape}")
+
+        loss = model.criterion(test_pred[warmup_steps:], target_tensor[warmup_steps:])
         loss = float(loss.to('cpu').detach())
         test_losses.append(loss)
+
     total_test_loss = sum(test_losses) / len(test_losses)
 
     return total_val_loss, total_test_loss, val_losses + test_losses
+
 
 
 class EarlyStopper:
@@ -347,8 +414,12 @@ class TSDataset(Dataset):
                 break
             set_idx += 1
         idx = idx - self.starts[set_idx]
+        start_idx = idx * self.seq_len + self.index_shift
+        end_idx = (idx + 1) * self.seq_len + self.index_shift
+        # print(f"Fetching idx: {idx}, set_idx: {set_idx}, slice: {start_idx}:{end_idx}")
         x = torch.tensor(self.data_sources[set_idx].loc[idx * self.seq_len + self.index_shift: (idx + 1) * self.seq_len + self.index_shift - 1, self.features].values, dtype=torch.float32, device=self.device)
         y = torch.tensor(self.data_sources[set_idx].loc[idx * self.seq_len + self.index_shift: (idx + 1) * self.seq_len + self.index_shift - 1, self.targets].values, dtype=torch.float32, device=self.device)
+        # print(f"x shape: {x.shape}, y shape: {y.shape}")
         if self.dummy_labels:
             l = torch.ones_like(y, dtype=torch.float32, device=self.device)
             return x, y, l

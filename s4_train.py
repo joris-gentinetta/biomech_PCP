@@ -81,6 +81,9 @@ if __name__ == '__main__':
         perturb_file = None
 
     trainsets, valsets, combined_sets, testsets = get_data(config, data_dirs, args.intact_hand, visualize=args.visualize, test_dirs=test_dirs, perturb_file=perturb_file)
+    # print(f"Number of valsets: {len(valsets)}")
+    # for i, val_set in enumerate(valsets):
+    #     print(f"Val set {i} length: {len(val_set)}")
 
     if args.hyperparameter_search:  # training on training set, evaluation on test set
         sweep_id = wandb.sweep(wandb_config, project=config.wandb_project)
@@ -99,7 +102,20 @@ if __name__ == '__main__':
             val_pred = model.predict(test_set, config.features, config.targets).squeeze(0).to('cpu').detach().numpy()
             test_set[config.targets] = val_pred
 
+            # DEBUG: print column names and the first few rows
+            # print("=== test_set columns before rescale ===")
+            # print(test_set.columns.tolist())
+            # print("\n=== test_set.head() before rescale ===")
+            # print(test_set.head())
+
             test_set = rescale_data(test_set, args.intact_hand)
+
+            
+            # DEBUG: print column names and the first few rows
+            # print("=== test_set columns before rescale ===")
+            # print(test_set.columns.tolist())
+            # print("\n=== test_set.head() before rescale ===")
+            # print(test_set.head())
 
             test_set.to_parquet(join((data_dirs + test_dirs)[set_id], f'pred_angles-{config.name}.parquet'))
 

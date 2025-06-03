@@ -5,7 +5,7 @@ import numpy as np
 
 # ————— CONFIG —————
 SOCKET_ADDR = "tcp://127.0.0.1:1236"   # where your EMGStreamer is PUBlishing
-DURATION    = 5.0                     # seconds to record
+DURATION    = 10.0                     # seconds to record
 OUT_DATA    = "data/raw_stream.npy"
 OUT_TS      = "data/raw_timestamps.npy"
 
