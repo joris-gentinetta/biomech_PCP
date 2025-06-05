@@ -225,11 +225,36 @@ def process_emg_and_angles(
         for ch in range(filtered_emg.shape[0]):
             aligned_emg[:, ch] = np.interp(ref_t, emg_t, filtered_emg[ch, :])
 
-    np.save(os.path.join(data_dir, 'aligned_filtered_emg.npy'), aligned_emg)
-    np.save(os.path.join(data_dir, 'aligned_angles.npy'), aligned_angles)
-    np.save(os.path.join(data_dir, 'aligned_timestamps.npy'), ref_t)
-    save_angles_as_parquet(data_dir, aligned_angles, ref_t, hand_side=hand_side)
-    print(f"{os.path.basename(data_dir)}: {aligned_emg.shape[0]} synchronized EMG and angle datapoints saved.")
+    # np.save(os.path.join(data_dir, 'aligned_filtered_emg.npy'), aligned_emg)
+    # np.save(os.path.join(data_dir, 'aligned_angles.npy'), aligned_angles)
+    # np.save(os.path.join(data_dir, 'aligned_timestamps.npy'), ref_t)
+    # save_angles_as_parquet(data_dir, aligned_angles, ref_t, hand_side=hand_side)
+    # print(f"{os.path.basename(data_dir)}: {aligned_emg.shape[0]} synchronized EMG and angle datapoints saved.")
+
+    ds_freq = 60 # Hz
+    t_start = ref_t[0]
+    t_end = ref_t[-1]
+    n_samples = int(np.floor((t_end - t_start) * ds_freq)) + 1
+    downsampled_t = np.linspace(t_start, t_start + (n_samples - 1) / ds_freq, n_samples)
+
+    # Downsample to 60Hz
+    if aligned_emg.ndim == 1:
+        aligned_emg = aligned_emg[:, None]
+    emg_60Hz = np.empty((len(downsampled_t), aligned_emg.shape[1]))
+    for ch in range(aligned_emg.shape[1]):
+        emg_60Hz[:, ch] = np.interp(downsampled_t, ref_t, aligned_emg[:, ch])
+
+    angles_60Hz = np.empty((len(downsampled_t), aligned_angles.shape[1]))
+    for dof in range(aligned_angles.shape[1]):
+        angles_60Hz[:, dof] = np.interp(downsampled_t, ref_t, aligned_angles[:, dof])
+
+    np.save(os.path.join(data_dir, 'aligned_filtered_emg.npy'), emg_60Hz)
+    np.save(os.path.join(data_dir, 'aligned_angles.npy'), angles_60Hz)
+    np.save(os.path.join(data_dir, 'aligned_timestamps.npy'), downsampled_t)
+    save_angles_as_parquet(data_dir, angles_60Hz, downsampled_t, hand_side=hand_side)
+    print(f"{os.path.basename(data_dir)}: Downsampled to 60Hz ({len(downsampled_t)} datapoints)")
+
+    
 
 def process_all_experiments(person_id, out_root, movement=None, snr_threshold=3.0, hand_side='left'):
     recordings_dir = os.path.join(out_root, person_id, "recordings")
@@ -280,7 +305,7 @@ if __name__ == "__main__":
     parser.add_argument('--person_id', required=True, help='Person ID (e.g. Emanuel_FirstTries)')
     parser.add_argument('--movement', required=False, help='Movement name (e.g. indexFlDigitsEx, optional)')
     parser.add_argument('--out_root', default='data', help='Root directory (default: data)')
-    parser.add_argument('--snr_threshold', type=float, default=6, help='SNR threshold for channel selection')
+    parser.add_argument('--snr_threshold', type=float, default=1.5, help='SNR threshold for channel selection')
     parser.add_argument("--hand_side", "-s", choices=["left", "right"], default="left", help="Side of the prosthetic hand")
     args = parser.parse_args()
     process_all_experiments(args.person_id, args.out_root, args.movement, args.snr_threshold, args.hand_side)
