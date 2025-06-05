@@ -250,10 +250,14 @@ def get_data(config, data_dirs, intact_hand, visualize=False, test_dirs=None, pe
 
 
 def train_model(trainsets, valsets, testsets, device, wandb_mode, wandb_project, wandb_name, config=None, person_dir='test'):
-    with wandb.init(mode=wandb_mode, project=wandb_project, name=wandb_name, config=config):
+    # with wandb.init(mode=wandb_mode, project=wandb_project, name=wandb_name, config=config):
+    with wandb.init(mode=wandb_mode, project=wandb_project, name=wandb_name, config=config.to_dict()):
         config = wandb.config
 
-        model = TimeSeriesRegressorWrapper(device=device, input_size=len(config.features), output_size=len(config.targets), **config)
+        # weight_decay = getattr(config, "weight_decay", 0.0)
+        # model = TimeSeriesRegressorWrapper(device=device, input_size=len(config.features), output_size=len(config.targets), weight_decay=config.weight_decay,  **config)
+        model = TimeSeriesRegressorWrapper(device=device, input_size=len(config.features), output_size=len(config.targets),  **config)
+
         model.to(device)
 
         dataset = TSDataset(trainsets, config.features, config.targets, seq_len=config.seq_len, device=device)
@@ -274,7 +278,7 @@ def train_model(trainsets, valsets, testsets, device, wandb_mode, wandb_project,
                     for param in model.model.joint_model.parameters():
                         param.requires_grad = False if epoch < config.joint_model['n_freeze_epochs'] else True
 
-                print(f"Starting epoch {epoch}...")
+                print(f"\nStarting epoch {epoch}...")
                 train_loss = model.train_one_epoch(dataloader)
 
                 val_loss, test_loss, val_losses = evaluate_model(model, valsets, testsets, device, config)
@@ -282,6 +286,8 @@ def train_model(trainsets, valsets, testsets, device, wandb_mode, wandb_project,
                     best_val_loss = val_loss
                     wandb.run.summary['best_epoch'] = epoch
                     wandb.run.summary['best_val_loss'] = best_val_loss
+                    # Save best model
+                    model.save(join('data', person_dir, 'models', f'{wandb_name}_best.pt'))
                 if test_loss < wandb.run.summary.get('best_test_loss', float('inf')):
                     wandb.run.summary['best_test_loss'] = test_loss
                     wandb.run.summary['best_test_epoch'] = epoch
