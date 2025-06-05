@@ -665,6 +665,13 @@ class TimeSeriesRegressorWrapper:
     def eval(self):
         self.model.eval()
         return
+    
+    def weighted_mse_loss(self, pred, target, weights):
+        # pred/target: (batch, seq_len, output_size)
+        # weights: (output_size,) or broadcastable to pred/target shape
+        loss = (pred - target) ** 2
+        weighted_loss = loss * weights  # Will broadcast weights to last dim
+        return weighted_loss.mean()
 
     def train_one_epoch(self, dataloader):
         self.model.train()
@@ -672,6 +679,8 @@ class TimeSeriesRegressorWrapper:
 
         # 1) Create one global counter before either loop
         global_batch_idx = 0
+
+        output_weights = torch.tensor([1, 1, 1, 1, 1, 1], dtype=torch.float32, device=self.model.device)
 
         # 2) First pass: just check x/y for NaNs or Infs
         for x, y in dataloader:
@@ -691,8 +700,9 @@ class TimeSeriesRegressorWrapper:
             states = self.model.get_starting_states(dataloader.batch_size, y)
             outputs, states = self.model(x, states)
 
-            loss = self.criterion(outputs[:, self.warmup_steps:], y[:, self.warmup_steps:])
-
+            # loss = self.criterion(outputs[:, self.warmup_steps:], y[:, self.warmup_steps:])
+            # Weighted loss (only after warmup_steps)
+            loss = self.weighted_mse_loss(outputs[:, self.warmup_steps:], y[:, self.warmup_steps:], output_weights)
             self.optimizer.zero_grad(set_to_none=True)
             loss.backward()
             torch.nn.utils.clip_grad_norm_(self.model.parameters(), 1.0)
