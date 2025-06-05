@@ -66,6 +66,9 @@ if __name__ == '__main__':
         wandb_config = yaml.safe_load(file)
         config = Config(wandb_config)
 
+    print("Config dict BEFORE passing to wandb:", config.to_dict())
+
+
     data_dirs = [join('data', args.person_dir, 'recordings', recording, 'experiments', '1') for recording in
                  config.recordings]
 
@@ -172,9 +175,22 @@ if __name__ == '__main__':
         wandb.init(mode=config.wandb_mode, project=config.wandb_project, name=config.name, config=config)
         config = wandb.config
 
-        model = TimeSeriesRegressorWrapper(device=device, input_size=len(config.features),
-                                           output_size=len(config.targets),
-                                           **config)
+        # model = TimeSeriesRegressorWrapper(device=device, input_size=len(config.features),
+        #                                    output_size=len(config.targets),
+        #                                    **config)
+        model = TimeSeriesRegressorWrapper(
+            input_size=len(config.features),
+            output_size=len(config.targets),
+            device=device,
+            n_epochs=config.n_epochs,
+            learning_rate=config.learning_rate,
+            weight_decay=config.weight_decay,
+            warmup_steps=config.warmup_steps,
+            model_type=config.model_type,
+            **{k: v for k, v in config.__dict__.items() if k not in (
+                'n_epochs', 'learning_rate', 'weight_decay', 'warmup_steps', 'model_type'
+            )}
+        )
         model.to('cpu')
         model.eval()
         epoch = 0
