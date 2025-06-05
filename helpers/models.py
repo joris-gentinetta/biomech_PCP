@@ -68,8 +68,14 @@ class RNN(TimeSeriesRegressor):
             out = torch.zeros((x.shape[0], x.shape[1], self.output_size), dtype=torch.float, device=self.device)
             for i in range(x.shape[1]):
                 update, states[0] = self.rnn(x[:, i:i + 1, :], states[0])
+                if torch.isnan(update).any() or torch.isinf(update).any():
+                    print(f"→ [RNN.forward] NaN/Inf in RNN output at time step {i}")
                 update = self.fc(update)
+                if torch.isnan(update).any() or torch.isinf(update).any():
+                    print(f"→ [RNN.forward] NaN/Inf after fc() at time step {i}")
                 states[1] = states[1] + update
+                if torch.isnan(states[1]).any() or torch.isinf(states[1]).any():
+                    print(f"→ [RNN.forward] NaN/Inf in accumulated state at time step {i}")
                 out[:, i:i + 1, :] = states[1]
 
         elif self.state_mode == 'stateAware':
@@ -122,11 +128,67 @@ class CNN(TimeSeriesRegressor):
         return out, None
 
 
+# class DenseNet(TimeSeriesRegressor):
+#     def __init__(self, input_size, output_size, device, **kwargs):
+#         super().__init__(input_size, output_size, device)
+#         hidden_size = kwargs.get('hidden_size')
+#         n_layers = kwargs.get('n_layers')
+# 
+#         self.state_mode = kwargs.get('state_mode', None)
+#         if self.state_mode == 'stateAware':
+#             self.input_size += output_size
+# 
+#         self.tanh = nn.Tanh() if kwargs.get('tanh', False) else None
+# 
+#         layers = []
+#         layers.append(nn.Linear(self.input_size, hidden_size))
+#         layers.append(nn.LeakyReLU())
+#         layers.append(nn.Dropout(p=0.2))
+# 
+#         for _ in range(n_layers - 1):
+#             layers.append(nn.Linear(hidden_size, hidden_size))
+#             layers.append(nn.LeakyReLU())
+#             layers.append(nn.Dropout(p=0.2))
+# 
+#         layers.append(nn.Linear(hidden_size, self.output_size))
+# 
+#         self.model = nn.Sequential(*layers)
+# 
+#     def get_starting_states(self, batch_size, y=None):
+#         if self.state_mode == 'stateful' or self.state_mode == 'stateAware':
+#             return y[:, 0:1, :]
+#         else:
+#             return None
+# 
+#     def forward(self, x, states=None):
+#         if self.state_mode == 'stateful':
+#             out = torch.zeros((x.shape[0], x.shape[1], self.output_size), dtype=torch.float, device=self.device)
+#             for i in range(x.shape[1]):
+#                 update = self.model(x[:, i:i+1, :])
+#                 states = states + update
+#                 if self.tanh is not None:
+#                     states = self.tanh(states)
+#                 out[:, i:i+1, :] = states
+# 
+#         elif self.state_mode == 'stateAware':
+#             out = torch.zeros((x.shape[0], x.shape[1], self.output_size), dtype=torch.float, device=self.device)
+#             for i in range(x.shape[1]):
+#                 states = self.model(torch.cat((x[:, i:i+1, :], states), dim=2))
+#                 if self.tanh is not None:
+#                     states = self.tanh(states)
+#                 out[:, i:i+1, :] = states
+# 
+#         else:
+#             out = self.model(x)
+#             if self.tanh is not None:
+#                 out = self.tanh(out)
+# 
+#         return out, states
 class DenseNet(TimeSeriesRegressor):
     def __init__(self, input_size, output_size, device, **kwargs):
         super().__init__(input_size, output_size, device)
         hidden_size = kwargs.get('hidden_size')
-        n_layers = kwargs.get('n_layers')
+        n_layers    = kwargs.get('n_layers')
 
         self.state_mode = kwargs.get('state_mode', None)
         if self.state_mode == 'stateAware':
@@ -138,46 +200,51 @@ class DenseNet(TimeSeriesRegressor):
         layers.append(nn.Linear(self.input_size, hidden_size))
         layers.append(nn.LeakyReLU())
         layers.append(nn.Dropout(p=0.2))
-
         for _ in range(n_layers - 1):
             layers.append(nn.Linear(hidden_size, hidden_size))
             layers.append(nn.LeakyReLU())
             layers.append(nn.Dropout(p=0.2))
-
         layers.append(nn.Linear(hidden_size, self.output_size))
 
         self.model = nn.Sequential(*layers)
 
     def get_starting_states(self, batch_size, y=None):
-        if self.state_mode == 'stateful' or self.state_mode == 'stateAware':
+        if self.state_mode in ['stateful', 'stateAware']:
             return y[:, 0:1, :]
         else:
             return None
 
     def forward(self, x, states=None):
-        if self.state_mode == 'stateful':
-            out = torch.zeros((x.shape[0], x.shape[1], self.output_size), dtype=torch.float, device=self.device)
-            for i in range(x.shape[1]):
-                update = self.model(x[:, i:i+1, :])
-                states = states + update
-                if self.tanh is not None:
-                    states = self.tanh(states)
-                out[:, i:i+1, :] = states
+        # 1) First, check for NaN/Inf in the raw input
+        if torch.isnan(x).any() or torch.isinf(x).any():
+            print(f"→ [DenseNet.forward] Input x contains NaN/Inf, "
+                  f"x.min()={x.min():.3e}, x.max()={x.max():.3e}")
 
-        elif self.state_mode == 'stateAware':
-            out = torch.zeros((x.shape[0], x.shape[1], self.output_size), dtype=torch.float, device=self.device)
-            for i in range(x.shape[1]):
-                states = self.model(torch.cat((x[:, i:i+1, :], states), dim=2))
-                if self.tanh is not None:
-                    states = self.tanh(states)
-                out[:, i:i+1, :] = states
+        # 2) Check for extremely large values in x
+        max_abs = x.abs().max().item()
+        if max_abs > 1e3:
+            print(f"→ [DenseNet.forward] Input x is very large: "
+                  f"max abs(x) = {max_abs:.3e}")
 
-        else:
-            out = self.model(x)
-            if self.tanh is not None:
-                out = self.tanh(out)
+        # 3) Now clamp x so DenseNet never sees values beyond ±10
+        x = x.clamp(min=-10.0, max=10.0)
+
+        # 4) Run through each sub‐layer, printing if any produce NaN/Inf
+        out = x
+        for idx, layer in enumerate(self.model):
+            out = layer(out)
+            if torch.isnan(out).any() or torch.isinf(out).any():
+                print(f"→ [DenseNet.forward] NaN/Inf after layer {idx} "
+                      f"({layer.__class__.__name__})")
+
+        # 5) If you have a final tanh, check it too
+        if self.tanh is not None:
+            out = self.tanh(out)
+            if torch.isnan(out).any() or torch.isinf(out).any():
+                print("→ [DenseNet.forward] NaN/Inf after tanh()")
 
         return out, states
+
 
 
 class IdealModel(TimeSeriesRegressor):
@@ -356,6 +423,40 @@ class PhysJointModel(TimeSeriesRegressor):
 #         else:
 #             raise ValueError(f'Unknown model type for NNJointModel {config["model_type"]}')
 #         return modelclass(input_size, output_size, self.device, **config)
+class ActivationGRU(TimeSeriesRegressor):
+    def __init__(self, input_size, output_size, device, **kwargs):
+        super().__init__(input_size, output_size, device)
+        # Grab hyperparameters from kwargs:
+        self.hidden_size = kwargs.get('hidden_size', 64)
+        self.n_layers    = kwargs.get('n_layers', 1)
+        # Build a single‐layer GRU:
+        self.gru = nn.GRU(
+            input_size,                           # EMG channels (e.g. 8)
+            self.hidden_size,                     # size of the GRU hidden state
+            self.n_layers,                        # number of stacked GRU layers
+            batch_first=True                      # (batch, seq_len, input_size)
+        )
+        self.layernorm = nn.LayerNorm(self.hidden_size)
+        # Readout each time‐step from the last hidden dimension → joint angles:
+        self.fc  = nn.Linear(self.hidden_size, output_size)
+
+    def get_starting_states(self, batch_size, y=None):
+        # Initialize h₀ as zeros: shape = (n_layers, batch_size, hidden_size)
+        return torch.zeros(
+            self.n_layers, 
+            batch_size, 
+            self.hidden_size, 
+            dtype=torch.float,
+            device=self.device
+        )
+
+    def forward(self, x, h0):
+        # x:  (batch, seq_len, input_size)
+        # h0: (n_layers, batch, hidden_size)
+        out, h_n = self.gru(x, h0)      # out: (batch, seq_len, hidden_size)
+        out = self.fc(out)              # out: (batch, seq_len, output_size)
+        out = nn.functional.dropout(out, p=0.2, training=self.training)
+        return out, h_n
 
 
 class NNJointModel(TimeSeriesRegressor):
@@ -517,7 +618,7 @@ class CompensationModel(TimeSeriesRegressor):
 
 
 class TimeSeriesRegressorWrapper:
-    def __init__(self, input_size, output_size, device, n_epochs, learning_rate, warmup_steps, model_type, **kwargs):
+    def __init__(self, input_size, output_size, device, n_epochs, learning_rate, weight_decay, warmup_steps, model_type, **kwargs):
 
         kwargs.update({'model_type': model_type})
 
@@ -525,8 +626,10 @@ class TimeSeriesRegressorWrapper:
             self.model = DenseNet(input_size, output_size, device, **kwargs)
         elif model_type == 'CNN':
             self.model = CNN(input_size, output_size, device, **kwargs)
-        elif model_type in ['RNN', 'LSTM', 'GRU']:
-            self.model = RNN(input_size, output_size, device, **kwargs)
+        elif model_type == 'GRU':
+            self.model = ActivationGRU(input_size, output_size, device, **kwargs)
+        # elif model_type in ['RNN', 'LSTM', 'GRU']:
+        #     self.model = RNN(input_size, output_size, device, **kwargs)
         elif model_type == 'ModularModel':
             self.model = ModularModel(input_size, output_size, device, **kwargs)
         elif model_type == 'IdealModel':
@@ -537,7 +640,7 @@ class TimeSeriesRegressorWrapper:
             raise ValueError(f'Unknown model type {model_type}')
 
         self.criterion = nn.MSELoss(reduction='mean')
-        self.optimizer = optim.Adam(self.model.parameters(), lr=learning_rate)
+        self.optimizer = optim.Adam(self.model.parameters(), lr=learning_rate, weight_decay=weight_decay)
         # self.optimizer = optim.AdamW(self.model.parameters(), lr=learning_rate, amsgrad=True)
         self.scheduler = optim.lr_scheduler.ReduceLROnPlateau(self.optimizer, mode='min', factor=0.5, patience=3, threshold_mode='rel', threshold=0.01)
 
@@ -545,6 +648,7 @@ class TimeSeriesRegressorWrapper:
         self.n_epochs = n_epochs
         self.warmup_steps = warmup_steps # todo
         # self.warmup_steps = kwargs.get('seq_len') - 1
+
 
     def save(self, path):
         os.makedirs(os.path.dirname(path), exist_ok=True)
@@ -564,7 +668,25 @@ class TimeSeriesRegressorWrapper:
 
     def train_one_epoch(self, dataloader):
         self.model.train()
-        epoch_loss = 0
+        epoch_loss = 0.0
+
+        # 1) Create one global counter before either loop
+        global_batch_idx = 0
+
+        # 2) First pass: just check x/y for NaNs or Infs
+        for x, y in dataloader:
+            if torch.isnan(x).any() or torch.isinf(x).any():
+                print(f"[GlobalBatch {global_batch_idx}] NaN/Inf in x!  "
+                    f"x.min()={x.min():.3e}, x.max()={x.max():.3e}")
+                # we skip reporting any training on this batch
+            elif torch.isnan(y).any() or torch.isinf(y).any():
+                print(f"[GlobalBatch {global_batch_idx}] NaN/Inf in y!  "
+                    f"y.min()={y.min():.3e}, y.max()={y.max():.3e}")
+            # advance the global counter, even if we “skipped” training
+            global_batch_idx += 1
+
+        # 3) Second pass: actually do the forward/backward on the same data,
+        #    but continue incrementing the same global counter
         for x, y in dataloader:
             states = self.model.get_starting_states(dataloader.batch_size, y)
             outputs, states = self.model(x, states)
@@ -573,14 +695,19 @@ class TimeSeriesRegressorWrapper:
 
             self.optimizer.zero_grad(set_to_none=True)
             loss.backward()
-            torch.nn.utils.clip_grad_norm_(self.model.parameters(), 4)
+            torch.nn.utils.clip_grad_norm_(self.model.parameters(), 1.0)
             self.optimizer.step()
-            epoch_loss += loss
+            epoch_loss += loss.detach().item()
 
+            # print(f"[GlobalBatch {global_batch_idx}] loss={loss.item():.5e}  (OK)")
             if torch.any(torch.isnan(loss)):
-                print('NAN Loss!')
+                print(f"[GlobalBatch {global_batch_idx}] NAN Loss!")
 
-        return epoch_loss.item() / len(dataloader)
+            global_batch_idx += 1
+
+        return epoch_loss / len(dataloader)
+
+    
 
     def predict(self, test_set, features, targets):
         self.model.eval()
@@ -623,4 +750,3 @@ class TimeSeriesRegressorWrapper:
 #     states = model.get_starting_states(5, x)
 #     out, states = model(x, states) # x.shape = (batch_size, seq_len, n_joints, n_muscles_per_joint)
 #     print(out)
-
