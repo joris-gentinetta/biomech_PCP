@@ -74,7 +74,7 @@ class psyonicArm():
 
 		# setup communication with arm (serial port)
 		# self.serialSet = self.setupSerial(passedPort='/dev/psyonicHand')
-		self.serialSet = self.setupSerial(passedPort='COM5')
+		self.serialSet = self.setupSerial(passedPort='COM7')
 		if not self.serialSet:
 			sys.exit('Error: Serial Port not found')
 
@@ -116,7 +116,7 @@ class psyonicArm():
 		self.loopRate = 10 # this is how much faster this should run than the neural net
 
 		# lowpass filter joint commands
-		self.lowpassCommands = BesselFilterArr(numChannels=self.numMotors, order=4, critFreqs=[0.33], fs=self.Hz, filtType='lowpass')
+		self.lowpassCommands = BesselFilterArr(numChannels=self.numMotors, order=4, critFreqs=0.33, fs=self.Hz, filtType='lowpass')
 		# self.lowpassCommands = ExponentialFilterArr(numChannels=self.numMotors, smoothingFactor=0.9, defaultValue=0)
 
 		# exponential filter the force sensor readings
