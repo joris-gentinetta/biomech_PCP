@@ -7,10 +7,10 @@ from os.path import join
 import numpy as np
 import pandas as pd
 import torch
-import wandb
 import yaml
 from torch.utils.data import DataLoader
 
+import wandb
 from helpers.models import TimeSeriesRegressorWrapper
 from helpers.predict_utils import (
     Config,

@@ -6,6 +6,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 import torch
+from sklearn.metrics import r2_score
 from torch import nn
 from torch.utils.data import DataLoader, Dataset
 from tqdm import tqdm
@@ -51,8 +52,13 @@ def rescale_data(angles_df, intact_hand):
         return angles_df
 
 
-def load_data(data_dir, intact_hand, features, perturber=None):
-    angles = pd.read_parquet(join(data_dir, "cropped_smooth_angles.parquet"))
+def load_data(
+    data_dir, intact_hand, features, perturber=None, smooth=True, center_angles=True
+):
+    if smooth:
+        angles = pd.read_parquet(join(data_dir, "cropped_smooth_angles.parquet"))
+    else:
+        angles = pd.read_parquet(join(data_dir, "cropped_angles.parquet"))
     angles.index = range(len(angles))
     try:
         emg = np.load(join(data_dir, "cropped_aligned_emg.npy"))
@@ -60,7 +66,10 @@ def load_data(data_dir, intact_hand, features, perturber=None):
         emg = np.load(join(data_dir, "cropped_emg.npy"))
 
     data = angles.copy()
-    data = scale_data(data, intact_hand)
+    if center_angles:
+        data = scale_data(data, intact_hand)
+    else:
+        data = (data / math.pi).clip(-1, 1)
 
     int_features = [int(feature[1]) for feature in features]
     emg = emg[:, int_features]
@@ -74,7 +83,12 @@ def load_data(data_dir, intact_hand, features, perturber=None):
 
 
 def get_data(
-    config, data_dirs, intact_hand, visualize=False, test_dirs=None, perturb_file=None
+    config,
+    data_dirs,
+    intact_hand,
+    visualize=False,
+    test_dirs=None,
+    perturb_file=None,
 ):
     trainsets = []
     valsets = []
@@ -82,7 +96,15 @@ def get_data(
     combined_sets = []
     perturber = np.load(perturb_file) if perturb_file is not None else None
     for recording_id, data_dir in enumerate(data_dirs):
-        data = load_data(data_dir, intact_hand, config.features, perturber)
+        print(config)
+        data = load_data(
+            data_dir,
+            intact_hand,
+            config.features,
+            perturber,
+            smooth=getattr(config, "smooth_train_angles", True),
+            center_angles=getattr(config, "center_angles", True),
+        )
 
         if visualize:
             axs = data[config.features].plot(subplots=True, ylim=(-0.1, 1.1))
@@ -110,7 +132,15 @@ def get_data(
 
     if test_dirs is not None:
         for test_dir in test_dirs:
-            data = load_data(test_dir, intact_hand, config.features, perturber)
+            data = load_data(
+                test_dir,
+                intact_hand,
+                config.features,
+                perturber,
+                smooth=getattr(config, "smooth_test_angles", True),
+                center_angles=getattr(config, "center_angles", True),
+            )
+
             test_set = data.loc[len(data) // 5 * 4 :].copy()
             train_set = data.loc[: len(data) // 5 * 4].copy()
             testsets.append(test_set)
@@ -226,7 +256,7 @@ def train_model(
 
                 train_loss = model.train_one_epoch(dataloader)
 
-                val_loss, test_loss, val_losses = evaluate_model(
+                val_loss, test_loss, val_losses, additional_metrics = evaluate_model(
                     model, valsets, testsets, device, config
                 )
                 if val_loss < best_val_loss:
@@ -264,6 +294,7 @@ def train_model(
                 log["total_test_loss"] = test_loss
                 log["train_loss"] = train_loss
                 log["lr"] = lr
+                log.update(additional_metrics)
                 wandb.log(log, step=epoch)
 
                 if early_stopper.early_stop(val_loss):
@@ -279,36 +310,139 @@ def train_model(
         return model
 
 
+def cat_metrics(output, y, metrics):
+    with torch.no_grad():
+        if len(metrics) == 0:
+            mae = torch.mean(torch.abs(output - y), dim=1)  # mae
+            metrics += [np.array(torch.mean(mae).item())]  # mae
+            metrics += [
+                np.array(nn.MSELoss()(output, y).item())
+            ]  # .detach().cpu().numpy()        # mse
+            metrics += [np.array(torch.mean((mae < 10).float()).item())]  # accuracy 10°
+            metrics += [np.array(torch.mean((mae < 15).float()).item())]  # accuracy 15°
+            samples, dim_out, time = y.shape
+            r2 = np.zeros((samples, dim_out))
+            for i in range(samples):
+                for j in range(dim_out):
+                    r2[i, j] = r2_score(
+                        y[i, j].detach().cpu().numpy(),
+                        output[i, j].detach().cpu().numpy(),
+                    )
+            metrics += [np.array(np.mean(np.mean(r2)))]  # R²
+        else:
+            mae = torch.mean(torch.abs(output - y), dim=1)  # mae
+            metrics[0] = np.hstack(
+                (metrics[0], np.array(torch.mean(mae).item()))
+            )  # mae
+            metrics[1] = np.hstack(
+                (metrics[1], np.array(nn.MSELoss()(output, y).item()))
+            )  # .detach().cpu().numpy()        # mse
+            metrics[2] = np.hstack(
+                (metrics[2], np.array(torch.mean((mae < 10).float()).item()))
+            )  # accuracy 10°
+            metrics[3] = np.hstack(
+                (metrics[3], np.array(torch.mean((mae < 15).float()).item()))
+            )  # accuracy 15°
+            samples, dim_out, time = y.shape
+            r2 = np.zeros((samples, dim_out))
+            for i in range(samples):
+                for j in range(dim_out):
+                    r2[i, j] = r2_score(
+                        y[i, j].detach().cpu().numpy(),
+                        output[i, j].detach().cpu().numpy(),
+                    )
+            metrics[4] = np.hstack((metrics[4], np.array(np.mean(np.mean(r2)))))  # R²
+    return metrics
+
+
 def evaluate_model(model, valsets, testsets, device, config):
     warmup_steps = config.warmup_steps  # todo
     # warmup_steps = config.seq_len - 1
     val_losses = []
+    additional_metrics = {}
     for set_id, val_set in enumerate(valsets):
-        val_pred = model.predict(val_set, config.features, config.targets).squeeze(0)
+        pred = model.predict(val_set, config.features, config.targets).squeeze(0)[
+            warmup_steps:
+        ]
+        target = torch.tensor(val_set[config.targets].values, dtype=torch.float32).to(
+            device
+        )[warmup_steps:]
         loss = model.criterion(
-            val_pred[warmup_steps:],
-            torch.tensor(val_set[config.targets].values, dtype=torch.float32)[
-                warmup_steps:
-            ].to(device),
+            pred,
+            target,
         )
         loss = float(loss.to("cpu").detach())
         val_losses.append(loss)
+
+        pred = pred * 180  # TODO: works only for DB8 data
+        target = target * 180
+
+        mae = torch.mean(torch.abs(pred - target), dim=1).detach().cpu()
+        additional_metrics["val_loss/MAE/" + config.recordings[set_id]] = torch.mean(
+            mae
+        ).item()
+        additional_metrics["val_loss/MAE_10/" + config.recordings[set_id]] = torch.mean(
+            (mae < 10).float()
+        ).item()
+        additional_metrics["val_loss/MAE_15/" + config.recordings[set_id]] = torch.mean(
+            (mae < 15).float()
+        ).item()
+        additional_metrics["val_loss/R2/" + config.recordings[set_id]] = r2_score(
+            target.detach().cpu().numpy(),
+            pred.detach().cpu().numpy(),
+        )
+
     total_val_loss = sum(val_losses) / len(val_losses)
 
     test_losses = []
     for set_id, test_set in enumerate(testsets):
-        test_pred = model.predict(test_set, config.features, config.targets).squeeze(0)
+        pred = model.predict(test_set, config.features, config.targets).squeeze(0)[
+            warmup_steps:
+        ]
+        target = torch.tensor(test_set[config.targets].values, dtype=torch.float32).to(
+            device
+        )[warmup_steps:]
         loss = model.criterion(
-            test_pred[warmup_steps:],
-            torch.tensor(test_set[config.targets].values, dtype=torch.float32)[
-                warmup_steps:
-            ].to(device),
+            pred,
+            target,
         )
         loss = float(loss.to("cpu").detach())
         test_losses.append(loss)
+
+        pred = pred * 180  # TODO: works only for DB8 data
+        target = target * 180
+
+        mae = torch.mean(torch.abs(pred - target), dim=1).detach().cpu()
+        additional_metrics["test_loss/MAE/" + config.test_recordings[set_id]] = (
+            torch.mean(mae).item()
+        )
+        additional_metrics["test_loss/MAE_10/" + config.test_recordings[set_id]] = (
+            torch.mean((mae < 10).float()).item()
+        )
+        additional_metrics["test_loss/MAE_15/" + config.test_recordings[set_id]] = (
+            torch.mean((mae < 15).float()).item()
+        )
+        additional_metrics["test_loss/R2/" + config.test_recordings[set_id]] = r2_score(
+            target.detach().cpu().numpy(),
+            pred.detach().cpu().numpy(),
+        )
+        for i, target_feature in enumerate(config.targets):
+            additional_metrics[
+                f"test_loss/{target_feature[0]}_{target_feature[1]}/R2/"
+                + config.test_recordings[set_id]
+                + "/"
+                + target_feature[1]
+            ] = r2_score(
+                target[:, i].detach().cpu().numpy(),
+                pred[:, i].detach().cpu().numpy(),
+            )
+
+        np.save("predictions.npy", pred.detach().cpu().numpy())  # TODO: remove
+        np.save("targets.npy", target.detach().cpu().numpy())
+
     total_test_loss = sum(test_losses) / len(test_losses)
 
-    return total_val_loss, total_test_loss, val_losses + test_losses
+    return total_val_loss, total_test_loss, val_losses + test_losses, additional_metrics
 
 
 class EarlyStopper:

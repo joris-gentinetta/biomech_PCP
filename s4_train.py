@@ -191,7 +191,11 @@ if __name__ == "__main__":
             )
             test_set[config.targets] = val_pred
 
-            test_set = rescale_data(test_set, args.intact_hand)
+            center_angles = getattr(config, "center_angles", True)
+            if center_angles:
+                test_set = rescale_data(test_set, args.intact_hand)
+            else:
+                test_set = test_set.clip(-1, 1) * math.pi
 
             test_set.to_parquet(
                 join(
