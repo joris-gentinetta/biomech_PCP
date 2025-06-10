@@ -43,7 +43,7 @@ def filter_emg_pipeline_bessel(raw_emg, fs, noise_level=None):
     return emg  # same shape as input
 
 
-def robust_mvc(mvc_data, percentile=90):
+def robust_mvc(mvc_data, percentile=95):
     # mvc_data: [samples, channels]
     robust_max = []
     for ch in range(mvc_data.shape[1]):
@@ -58,8 +58,8 @@ def calibrate_emg(base_dir, rest_time=5, mvc_time=10, free_time=8, target_free_r
     emg = EMG()
     emg.startCommunication()
 
-    # ---------- 1. REST ----------
-    print("1. Relax for baseline noise recording")
+    # 1. REST 
+    print("1. Relax for 10s to record baseline noise")
     time.sleep(2)
     emg_rawHistory = []
     rest_timestamps = []
@@ -88,7 +88,7 @@ def calibrate_emg(base_dir, rest_time=5, mvc_time=10, free_time=8, target_free_r
     filtered_rest_cut = filtered_rest[:, artifact_cut:]
     noise_levels = np.mean(filtered_rest_cut, axis=1)
 
-    # ---------- 2. MVC ----------
+    # 2. MVC
     input("2. Prepare for MVC (5x full fist and full hand open in 10s), press enter when ready")
     time.sleep(1)
     emg_rawHistory = []
@@ -256,7 +256,7 @@ def main():
                         default="left", help="Side of the prosthetic hand")
     parser.add_argument("--sync_iterations", type=int, default=4,
                         help="Warm-up sync iterations (default: 1)")
-    parser.add_argument("--record_iterations", "-r", type=int, default=15,
+    parser.add_argument("--record_iterations", "-r", type=int, default=30,
                         help="Number of recording iterations (default: 1)")
     parser.add_argument("--video", action="store_true",
                         help="Enable simultaneous webcam video recording")
@@ -293,7 +293,7 @@ def main():
         video_timestamps = []
 
     if args.calibrate_emg:
-        calibrate_emg(base_dir, rest_time=5, mvc_time=10)
+        calibrate_emg(base_dir, rest_time=10, mvc_time=10)
         return
     
 
@@ -323,8 +323,8 @@ def main():
         print("Done.")
         return
 
-    # ----- PROSTHESIS MODE -----
-    # Initialize prosthetic arm, but DO NOT use EMG for control
+    # PROSTHESIS MODE
+    # Initialize prosthetic arm, but DO NOT use EMG
     arm = psyonicArm(hand=args.hand_side)
     arm.initSensors()
     arm.startComms()
@@ -380,7 +380,7 @@ def main():
             const_traj[i] = traj[i0] * (1 - alpha) + traj[i0 + 1] * alpha
         smooth_traj = const_traj
 
-    # --- CLIP THE TRAJECTORY TO SAFE RANGES ---
+    # CLIP THE TRAJECTORY TO SAFE RANGES
     joint_mins = np.array([0, 0, 0, 0, 0, -120])
     joint_maxs = np.array([120, 120, 120, 120, 120, 0])
     smooth_traj = np.clip(smooth_traj, joint_mins, joint_maxs)
@@ -389,7 +389,7 @@ def main():
     for _ in range(args.sync_iterations):
         arm.mainControlLoop(posDes=smooth_traj, period=10, emg=None)
 
-    # --- Start synchronized recording! ---
+    # Start synchronized recording! 
     if sync_event is not None:
         sync_event.set()  # Signal all threads to start actual recording
 
