@@ -56,30 +56,35 @@ def robust_mvc(mvc_data, percentile=95):
 def calibrate_emg(base_dir, rest_time=5, mvc_time=10, free_time=8, target_free_ratio=0.3):
     print("EMG Calibration Routine")
     emg = EMG()
-    emg.startCommunication()
+    # emg.startCommunication()
 
     # 1. REST 
     print("1. Relax for 10s to record baseline noise")
-    time.sleep(2)
-    emg_rawHistory = []
-    rest_timestamps = []
-    emg.exitEvent.clear()
+    # time.sleep(2)
+    emg.readEMG()
+    first_rest_time = emg.OS_time
 
+    rest_data_buf = []
+    rest_ts_buf = []
     t0 = time.time()
     while time.time() - t0 < rest_time:
-        if hasattr(emg, 'rawEMG'):
-            emg_rawHistory.append(list(emg.rawEMG))
-            rest_timestamps.append(time.time())
-        time.sleep(0.001)
-    rest_data = np.vstack(emg_rawHistory)
-    rest_timestamps = np.array(rest_timestamps)
+        emg.readEMG()
+        rest_data_buf.append(list(emg.rawEMG))
+        rest_ts_buf.append((emg.OS_time - first_rest_time) / 1e6) # convert from microseconds
+    rest_data = np.vstack(rest_data_buf)
+    rest_timestamps = np.array(rest_ts_buf)
     np.save(os.path.join(base_dir, "calib_rest_emg.npy"), rest_data)
     np.save(os.path.join(base_dir, "calib_rest_timestamps.npy"), rest_timestamps)
     print(f"Saved calib_rest_emg.npy and calib_rest_timestamps.npy in {base_dir}")
 
     print(f"Finished recording, filtering now...")
 
-    sf_rest = (len(rest_timestamps) - 1) / (rest_timestamps[-1] - rest_timestamps[0]) if len(rest_timestamps) > 1 else 1000
+    elapsed = rest_timestamps[-1] - rest_timestamps[0]
+    print(f"elapsed time: {elapsed}")
+    print(f"length rest timestamps: {len(rest_timestamps)}")
+    sf_rest = (len(rest_timestamps)-1)/ elapsed if elapsed > 1 else 1000
+
+    # sf_rest = (len(rest_timestamps) - 1) / (rest_timestamps[-1] - rest_timestamps[0]) if len(rest_timestamps) > 1 else 1000
     print(f"sf rest: {sf_rest}")
     filtered_rest = filter_emg_pipeline_bessel(rest_data.T, sf_rest)
 
@@ -90,19 +95,19 @@ def calibrate_emg(base_dir, rest_time=5, mvc_time=10, free_time=8, target_free_r
 
     # 2. MVC
     input("2. Prepare for MVC (5x full fist and full hand open in 10s), press enter when ready")
-    time.sleep(1)
-    emg_rawHistory = []
-    mvc_timestamps = []
-    emg.exitEvent.clear()
+    # time.sleep(1)
+    emg.readEMG()
+    first_mvc_time = emg.OS_time
 
+    mvc_data_buf = []
+    mvc_ts_buf = []
     t0 = time.time()
     while time.time() - t0 < mvc_time:
-        if hasattr(emg, 'rawEMG'):
-            emg_rawHistory.append(list(emg.rawEMG))
-            mvc_timestamps.append(time.time())
-        time.sleep(0.001)
-    mvc_data = np.vstack(emg_rawHistory)
-    mvc_timestamps = np.array(mvc_timestamps)
+        emg.readEMG()
+        mvc_data_buf.append(list(emg.rawEMG))
+        mvc_ts_buf.append((emg.OS_time - first_mvc_time) / 1e6) # Convert from microseconds
+    mvc_data = np.vstack(mvc_data_buf)
+    mvc_timestamps = np.array(mvc_ts_buf)
     np.save(os.path.join(base_dir, "calib_mvc_emg.npy"), mvc_data)
     np.save(os.path.join(base_dir, "calib_mvc_timestamps.npy"), mvc_timestamps)
     print(f"Saved calib_mvc_emg.npy and calib_mvc_timestamps.npy in {base_dir}")
@@ -167,7 +172,11 @@ def calibrate_emg(base_dir, rest_time=5, mvc_time=10, free_time=8, target_free_r
 
     emg.exitEvent.set()
     time.sleep(0.5)
-    emg.shutdown()
+    if hasattr(emg, 'emgThread'):
+        emg.shutdown()
+    else:
+        emg.sock.close()
+        emg.ctx.term()
 
 def start_raw_emg_recorder(base_dir, enable_video=False, sync_event=None):
     """
@@ -175,7 +184,7 @@ def start_raw_emg_recorder(base_dir, enable_video=False, sync_event=None):
     Returns: stop_event, emg_thread, video_thread (or None), raw_history, raw_timestamps, video_timestamps
     """
     emg = EMG()  # connect directly to ADS1299 via EMGClass (records all 16 channels by default)
-    emg.startCommunication()
+    # emg.startCommunication()
 
     raw_history = []
     raw_timestamps = []
@@ -217,19 +226,23 @@ def start_raw_emg_recorder(base_dir, enable_video=False, sync_event=None):
     def capture_loop():
         # wait for first EMG packet
         while getattr(emg, 'OS_time', None) is None:
-            time.sleep(1e-3)
-        # Wait for main event to start
+            emg.readEMG()
+
+        # Sync start
         if sync_event is not None:
             sync_event.wait()
+
+        raw_history.clear()
+        raw_timestamps.clear()
+
+        emg.readEMG()
         first_emg_time = emg.OS_time
-        last_time = emg.OS_time
+        
         while not stop_event.is_set():
-            t = emg.OS_time
-            if t is not None and t > last_time:
-                raw_history.append(list(emg.rawEMG))
-                raw_timestamps.append(t - first_emg_time)
-                last_time = t
-            time.sleep(1e-4)
+            emg.readEMG()
+            raw_history.append(list(emg.rawEMG))
+            raw_timestamps.append((emg.OS_time - first_emg_time) / 1e6)
+           
         emg.exitEvent.set()
 
     emg_thread = threading.Thread(target=capture_loop, daemon=True)
@@ -254,9 +267,9 @@ def main():
                         help="Disable prosthetic arm control; EMG-only recording")
     parser.add_argument("--hand_side", "-s", choices=["left", "right"],
                         default="left", help="Side of the prosthetic hand")
-    parser.add_argument("--sync_iterations", type=int, default=4,
+    parser.add_argument("--sync_iterations", type=int, default=2,
                         help="Warm-up sync iterations (default: 1)")
-    parser.add_argument("--record_iterations", "-r", type=int, default=30,
+    parser.add_argument("--record_iterations", "-r", type=int, default=5,
                         help="Number of recording iterations (default: 1)")
     parser.add_argument("--video", action="store_true",
                         help="Enable simultaneous webcam video recording")
