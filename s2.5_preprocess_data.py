@@ -3,6 +3,7 @@ import numpy as np
 import yaml
 import argparse
 import pandas as pd
+from scipy import signal
 from helpers.EMGClass import EMG
 
 SKIP_MOVEMENTS = {"calibration", "Calibration", "calib", "Calib"}
@@ -169,6 +170,75 @@ def save_angles_as_parquet(data_dir, angles_array, timestamps=None, hand_side='l
     print("Columns:", df.columns.tolist())
 
 
+def end_align_data(emg_data, emg_timestamps, angles_data, angles_timestamps):
+    """
+    End-align EMG to angles by shifting EMG timestamps so both datasets end at the same time.
+    Returns the aligned and cropped data.
+    """
+    # Calculate shift needed to align end times
+    shift = emg_timestamps[-1] - angles_timestamps[-1]
+    emg_timestamps_shifted = emg_timestamps - shift
+    
+    # Mask for EMG samples that overlap with angles timespan
+    mask = (emg_timestamps_shifted >= 0) & (emg_timestamps_shifted <= angles_timestamps[-1])
+    
+    # Apply mask to get overlapping data
+    emg_aligned = emg_data[:, mask] if emg_data.ndim == 2 else emg_data[mask]
+    emg_timestamps_aligned = emg_timestamps_shifted[mask]
+    
+    print(f"End-alignment: shifted EMG by {shift:.6f}s, kept {np.sum(mask)}/{len(mask)} EMG samples")
+    
+    return emg_aligned, emg_timestamps_aligned, angles_data, angles_timestamps
+
+def process_emg_zero_phase(emg_data, sampling_freq, maxVals, noiseLevel):
+    """
+    Process EMG data with zero-phase filtering (no delay) for training data generation.
+    Replicates the EMGClass filtering pipeline but uses filtfilt instead of causal filters.
+    """
+    from scipy import signal
+    import numpy as np
+    
+    # Create the same filters as in EMGClass but get their coefficients for filtfilt
+    numElectrodes = emg_data.shape[0]
+    
+    # 1. Power line filter (bandstop 58-62 Hz)
+    powerline_sos = signal.bessel(N=8, Wn=[58, 62], btype='bandstop', output='sos', fs=sampling_freq, analog=False)
+    
+    # 2. High pass filter (20 Hz) - removes motion artifacts and drift
+    highpass_sos = signal.bessel(N=4, Wn=20, btype='highpass', output='sos', fs=sampling_freq, analog=False)
+    
+    # 3. Low pass filter (3 Hz) - smooths the envelope
+    lowpass_sos = signal.bessel(N=4, Wn=3, btype='lowpass', output='sos', fs=sampling_freq, analog=False)
+    
+    # Apply zero-phase filtering
+    filtered_emg = np.copy(emg_data)
+    
+    # Apply bandstop filter (power line noise removal)
+    for ch in range(numElectrodes):
+        filtered_emg[ch, :] = signal.sosfiltfilt(powerline_sos, filtered_emg[ch, :])
+    
+    # Apply high pass filter (motion artifact removal)
+    for ch in range(numElectrodes):
+        filtered_emg[ch, :] = signal.sosfiltfilt(highpass_sos, filtered_emg[ch, :])
+    
+    # Take absolute value and clip noise (same as EMGClass)
+    filtered_emg = np.abs(filtered_emg)
+    filtered_emg = np.clip(filtered_emg - noiseLevel[:, None], 0, None)
+    
+    # Apply low pass filter for envelope smoothing
+    for ch in range(numElectrodes):
+        filtered_emg[ch, :] = signal.sosfiltfilt(lowpass_sos, filtered_emg[ch, :])
+    
+    # Clip to ensure non-negative values
+    filtered_emg = np.clip(filtered_emg, 0, None)
+    
+    # Normalize (same as EMGClass)
+    normalized_emg = filtered_emg / maxVals[:, None]
+    normalized_emg = np.clip(normalized_emg, 0, 1)
+    
+    return normalized_emg
+
+
 def process_emg_and_angles(
         data_dir, 
         person_id,
@@ -185,11 +255,10 @@ def process_emg_and_angles(
     angles = np.load(os.path.join(data_dir, angles_file))
     angles_timestamps = np.load(os.path.join(data_dir, angles_timestamps_file))
 
-    # Set "time zero" to the first angle measurement
-    # zero_time = angles_timestamps[0]
-
-    # angles_timestamps -= zero_time
-    # emg_timestamps -= zero_time
+    # END-ALIGN the data first (moved from s1.5)
+    emg, emg_timestamps, angles, angles_timestamps = end_align_data(
+        emg, emg_timestamps, angles, angles_timestamps
+    )
 
     scaling_yaml_path = os.path.join(
         out_root, person_id, "recordings", "Calibration", "experiments", "1", "scaling.yaml"
@@ -203,17 +272,11 @@ def process_emg_and_angles(
     maxVals = maxVals[used_channels]
     noiseLevel = noiseLevel[used_channels]
 
-    # print("Going into EMG Class !!!!!!!!!!!!!!")
-
     sf = (len(emg_timestamps) - 1) / (emg_timestamps[-1] - emg_timestamps[0])
     print(f"Sampling frequency sf: {sf}")
-    emg_proc = EMG(samplingFreq=sf, offlineData=emg, maxVals=maxVals, noiseLevel=noiseLevel, numElectrodes=len(used_channels))
-    # print("Going out of EMG Class !!!!!!!!!!!!!!")
-    emg_proc.startCommunication()
-    emg_proc.emgThread.join()
-
-    filtered_emg = emg_proc.emgHistory[:, emg_proc.numPackets * 100 + 1:]
-    filtered_emg = filtered_emg[:, :emg.shape[1]]
+    
+    # MODIFIED: Use zero-phase filtering instead of EMGClass pipeline
+    filtered_emg = process_emg_zero_phase(emg, sf, maxVals, noiseLevel)
 
     # Use angle timestamps as reference (EMG interpolated onto angle time base)
     ref_t = angles_timestamps
@@ -222,29 +285,32 @@ def process_emg_and_angles(
     for ch in range(filtered_emg.shape[0]):
         aligned_emg[:, ch] = np.interp(ref_t, emg_timestamps, filtered_emg[ch, :])
 
-
-    # np.save(os.path.join(data_dir, 'aligned_filtered_emg.npy'), aligned_emg)
-    # np.save(os.path.join(data_dir, 'aligned_angles.npy'), aligned_angles)
-    # np.save(os.path.join(data_dir, 'aligned_timestamps.npy'), ref_t)
-    # save_angles_as_parquet(data_dir, aligned_angles, ref_t, hand_side=hand_side)
-    # print(f"{os.path.basename(data_dir)}: {aligned_emg.shape[0]} synchronized EMG and angle datapoints saved.")
-
     ds_freq = 60 # Hz
     t_start = ref_t[0]
     t_end = ref_t[-1]
     n_samples = int(np.floor((t_end - t_start) * ds_freq)) + 1
     downsampled_t = np.linspace(t_start, t_start + (n_samples - 1) / ds_freq, n_samples)
 
-    # Downsample to 60Hz
+    # Downsample to 60Hz using windowed integration (like EMGClass)
+    ds_freq = 60 # Hz
+    window_size = int(sf / ds_freq)  # samples per 60Hz window (e.g., ~17 samples for 1000Hz->60Hz)
+    
+    # Calculate number of complete windows
+    n_windows = len(ref_t) // window_size
+    
+    # Reshape and integrate over windows for EMG
     if aligned_emg.ndim == 1:
         aligned_emg = aligned_emg[:, None]
-    emg_60Hz = np.empty((len(downsampled_t), aligned_emg.shape[1]))
-    for ch in range(aligned_emg.shape[1]):
-        emg_60Hz[:, ch] = np.interp(downsampled_t, ref_t, aligned_emg[:, ch])
-
-    angles_60Hz = np.empty((len(downsampled_t), aligned_angles.shape[1]))
-    for dof in range(aligned_angles.shape[1]):
-        angles_60Hz[:, dof] = np.interp(downsampled_t, ref_t, aligned_angles[:, dof])
+    
+    emg_windowed = aligned_emg[:n_windows * window_size, :].reshape(n_windows, window_size, aligned_emg.shape[1])
+    emg_60Hz = np.mean(emg_windowed, axis=1)  # or use np.sum for true integration
+    
+    # For angles, take the middle sample of each window (or mean)
+    angles_windowed = aligned_angles[:n_windows * window_size, :].reshape(n_windows, window_size, aligned_angles.shape[1])
+    angles_60Hz = angles_windowed[:, window_size//2, :]  # middle sample, or use np.mean(angles_windowed, axis=1)
+    
+    # Create corresponding timestamps (middle of each window)
+    downsampled_t = ref_t[window_size//2::window_size][:n_windows]
 
     # Drop the first 3 s because of the synchronization
     drop_secs = 5.0
@@ -260,7 +326,6 @@ def process_emg_and_angles(
     np.save(os.path.join(data_dir, 'aligned_timestamps.npy'), downsampled_t)
     save_angles_as_parquet(data_dir, angles_60Hz, downsampled_t, hand_side=hand_side)
     print(f"{os.path.basename(data_dir)}: Downsampled to 60Hz ({len(downsampled_t)} datapoints)")
-
     
 
 def process_all_experiments(person_id, out_root, movement=None, snr_threshold=3.0, hand_side='left'):
