@@ -185,6 +185,12 @@ def process_emg_and_angles(
     angles = np.load(os.path.join(data_dir, angles_file))
     angles_timestamps = np.load(os.path.join(data_dir, angles_timestamps_file))
 
+    # Set "time zero" to the first angle measurement
+    # zero_time = angles_timestamps[0]
+
+    # angles_timestamps -= zero_time
+    # emg_timestamps -= zero_time
+
     scaling_yaml_path = os.path.join(
         out_root, person_id, "recordings", "Calibration", "experiments", "1", "scaling.yaml"
     )
@@ -197,33 +203,25 @@ def process_emg_and_angles(
     maxVals = maxVals[used_channels]
     noiseLevel = noiseLevel[used_channels]
 
-    print("Going into EMG Class !!!!!!!!!!!!!!")
+    # print("Going into EMG Class !!!!!!!!!!!!!!")
 
-    sf = (len(emg_timestamps) - 1) * 1e6 / (emg_timestamps[-1] - emg_timestamps[0])
+    sf = (len(emg_timestamps) - 1) / (emg_timestamps[-1] - emg_timestamps[0])
     print(f"Sampling frequency sf: {sf}")
     emg_proc = EMG(samplingFreq=sf, offlineData=emg, maxVals=maxVals, noiseLevel=noiseLevel, numElectrodes=len(used_channels))
-    print("Going out of EMG Class !!!!!!!!!!!!!!")
+    # print("Going out of EMG Class !!!!!!!!!!!!!!")
     emg_proc.startCommunication()
     emg_proc.emgThread.join()
 
     filtered_emg = emg_proc.emgHistory[:, emg_proc.numPackets * 100 + 1:]
     filtered_emg = filtered_emg[:, :emg.shape[1]]
 
-    emg_t = emg_timestamps / 1e6  # seconds
-    angle_t = angles_timestamps
+    # Use angle timestamps as reference (EMG interpolated onto angle time base)
+    ref_t = angles_timestamps
+    aligned_angles = angles
+    aligned_emg = np.zeros((len(ref_t), filtered_emg.shape[0]))
+    for ch in range(filtered_emg.shape[0]):
+        aligned_emg[:, ch] = np.interp(ref_t, emg_timestamps, filtered_emg[ch, :])
 
-    if len(emg_t) >= len(angle_t):
-        ref_t = emg_t
-        aligned_emg = filtered_emg.T
-        aligned_angles = np.zeros((len(ref_t), angles.shape[1]))
-        for dof in range(angles.shape[1]):
-            aligned_angles[:, dof] = np.interp(ref_t, angle_t, angles[:, dof])
-    else:
-        ref_t = angle_t
-        aligned_angles = angles
-        aligned_emg = np.zeros((len(ref_t), filtered_emg.shape[0]))
-        for ch in range(filtered_emg.shape[0]):
-            aligned_emg[:, ch] = np.interp(ref_t, emg_t, filtered_emg[ch, :])
 
     # np.save(os.path.join(data_dir, 'aligned_filtered_emg.npy'), aligned_emg)
     # np.save(os.path.join(data_dir, 'aligned_angles.npy'), aligned_angles)
@@ -247,6 +245,15 @@ def process_emg_and_angles(
     angles_60Hz = np.empty((len(downsampled_t), aligned_angles.shape[1]))
     for dof in range(aligned_angles.shape[1]):
         angles_60Hz[:, dof] = np.interp(downsampled_t, ref_t, aligned_angles[:, dof])
+
+    # Drop the first 3 s because of the synchronization
+    drop_secs = 5.0
+    start_idx = np.searchsorted(downsampled_t, drop_secs)
+
+    # Slice off sync segments
+    emg_60Hz = emg_60Hz[start_idx:]
+    angles_60Hz = angles_60Hz[start_idx:]
+    downsampled_t = downsampled_t[start_idx:] - drop_secs
 
     np.save(os.path.join(data_dir, 'aligned_filtered_emg.npy'), emg_60Hz)
     np.save(os.path.join(data_dir, 'aligned_angles.npy'), angles_60Hz)
@@ -305,7 +312,7 @@ if __name__ == "__main__":
     parser.add_argument('--person_id', required=True, help='Person ID (e.g. Emanuel_FirstTries)')
     parser.add_argument('--movement', required=False, help='Movement name (e.g. indexFlDigitsEx, optional)')
     parser.add_argument('--out_root', default='data', help='Root directory (default: data)')
-    parser.add_argument('--snr_threshold', type=float, default=1.5, help='SNR threshold for channel selection')
+    parser.add_argument('--snr_threshold', type=float, default=6, help='SNR threshold for channel selection')
     parser.add_argument("--hand_side", "-s", choices=["left", "right"], default="left", help="Side of the prosthetic hand")
     args = parser.parse_args()
     process_all_experiments(args.person_id, args.out_root, args.movement, args.snr_threshold, args.hand_side)
