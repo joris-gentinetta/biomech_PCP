@@ -267,9 +267,9 @@ def main():
                         help="Disable prosthetic arm control; EMG-only recording")
     parser.add_argument("--hand_side", "-s", choices=["left", "right"],
                         default="left", help="Side of the prosthetic hand")
-    parser.add_argument("--sync_iterations", type=int, default=2,
+    parser.add_argument("--sync_iterations", type=int, default=0,
                         help="Warm-up sync iterations (default: 1)")
-    parser.add_argument("--record_iterations", "-r", type=int, default=5,
+    parser.add_argument("--record_iterations", "-r", type=int, default=15,
                         help="Number of recording iterations (default: 1)")
     parser.add_argument("--video", action="store_true",
                         help="Enable simultaneous webcam video recording")
@@ -452,6 +452,43 @@ def main():
         with open(join(base_dir, "angles_header.txt"), "w") as f:
             f.write(",".join(headers))
         print(f"Saved angles.npy with {len(rec)} frames.")
+
+        # End align the data
+        try:
+            # Load the just-saved files
+            raw_emg = np.load(join(base_dir, "raw_emg.npy"))
+            raw_emg_ts = np.load(join(base_dir, "raw_timestamps.npy"))
+            angles = np.load(join(base_dir, "angles.npy"))
+            angle_ts = np.load(join(base_dir, "angle_timestamps.npy"))
+
+            # End-align EMG to angles
+            shift = raw_emg_ts[-1] - angle_ts[-1]
+            raw_emg_ts_shifted = raw_emg_ts - shift
+
+            # Mask for EMG samples overlapping with angles
+            mask = (raw_emg_ts_shifted >= 0) & (raw_emg_ts_shifted <= angle_ts[-1])
+            emg_cut = raw_emg[mask]
+            emg_t_cut = raw_emg_ts_shifted[mask]
+
+            # Save new EMG/EMG timestamps (end-aligned)
+            np.save(join(base_dir, "raw_emg.npy"), emg_cut)
+            np.save(join(base_dir, "raw_timestamps.npy"), emg_t_cut)
+
+            # (Optional: re-save angles and angle_ts, but these are already correct)
+            np.save(join(base_dir, "angles.npy"), angles)
+            np.save(join(base_dir, "angle_timestamps.npy"), angle_ts)
+
+            print(f"Saved end-aligned raw EMG and angle data in {base_dir}")
+
+            # (Optional: interpolate EMG to angle timestamps for ML)
+            # emg_interp = np.zeros((len(angle_ts), emg_cut.shape[1]))
+            # for ch in range(emg_cut.shape[1]):
+            #     emg_interp[:, ch] = np.interp(angle_ts, emg_t_cut, emg_cut[:, ch])
+            # np.save(join(base_dir, "raw_emg_endaligned_interp.npy"), emg_interp)
+            # print(f"Saved interpolated end-aligned EMG to {base_dir}/raw_emg_endaligned_interp.npy")
+
+        except Exception as e:
+            print(f"End-aligned save failed: {e}")
 
     arm.close()
 
