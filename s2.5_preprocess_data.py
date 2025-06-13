@@ -238,6 +238,40 @@ def process_emg_zero_phase(emg_data, sampling_freq, maxVals, noiseLevel):
     
     return normalized_emg
 
+def process_angles_zero_phase(angles_data, sampling_freq, cutoff_freq=5.0):
+    """
+    Smooth angle data using zero-phase low-pass filtering to remove high-frequency noise.
+    
+    Args:
+        angles_data: numpy array of shape (n_samples, n_angles)
+        sampling_freq: sampling frequency in Hz
+        cutoff_freq: low-pass filter cutoff frequency in Hz (default: 5.0 Hz)
+    
+    Returns:
+        filtered_angles: smoothed angle data with same shape as input
+    """
+    
+    # Create low-pass filter for smoothing
+    # Using a 4th order Bessel filter for smooth response
+    lowpass_sos = signal.bessel(N=4, Wn=cutoff_freq, btype='lowpass', 
+                               output='sos', fs=sampling_freq, analog=False)
+    
+    # Apply zero-phase filtering to each angle channel
+    filtered_angles = np.copy(angles_data)
+    n_angles = angles_data.shape[1] if angles_data.ndim == 2 else 1
+    
+    if angles_data.ndim == 1:
+        # Single angle channel
+        filtered_angles = signal.sosfiltfilt(lowpass_sos, filtered_angles)
+    else:
+        # Multiple angle channels
+        for angle_idx in range(n_angles):
+            filtered_angles[:, angle_idx] = signal.sosfiltfilt(lowpass_sos, 
+                                                             filtered_angles[:, angle_idx])
+    
+    print(f"Applied zero-phase low-pass filter ({cutoff_freq} Hz) to angle data")
+    return filtered_angles
+
 
 def process_emg_and_angles(
         data_dir, 
@@ -249,6 +283,7 @@ def process_emg_and_angles(
         emg_timestamps_file='raw_timestamps.npy',
         angles_file='angles.npy',
         angles_timestamps_file='angle_timestamps.npy',
+        angle_filter_cutoff=5.0,
     ):
     emg = np.load(os.path.join(data_dir, emg_file)).T
     emg_timestamps = np.load(os.path.join(data_dir, emg_timestamps_file))
@@ -275,12 +310,16 @@ def process_emg_and_angles(
     sf = (len(emg_timestamps) - 1) / (emg_timestamps[-1] - emg_timestamps[0])
     print(f"Sampling frequency sf: {sf}")
     
-    # MODIFIED: Use zero-phase filtering instead of EMGClass pipeline
+    # Use zero-phase filtering instead of EMGClass pipeline
     filtered_emg = process_emg_zero_phase(emg, sf, maxVals, noiseLevel)
+
+    angle_sf = (len(angles_timestamps) - 1) / (angles_timestamps[-1] - angles_timestamps[0])
+    print(f"Angle sampling frequency: {angle_sf}")
+    filtered_angles = process_angles_zero_phase(angles, angle_sf, angle_filter_cutoff)
 
     # Use angle timestamps as reference (EMG interpolated onto angle time base)
     ref_t = angles_timestamps
-    aligned_angles = angles
+    aligned_angles = filtered_angles
     aligned_emg = np.zeros((len(ref_t), filtered_emg.shape[0]))
     for ch in range(filtered_emg.shape[0]):
         aligned_emg[:, ch] = np.interp(ref_t, emg_timestamps, filtered_emg[ch, :])
@@ -313,7 +352,7 @@ def process_emg_and_angles(
     downsampled_t = ref_t[window_size//2::window_size][:n_windows]
 
     # Drop the first 3 s because of the synchronization
-    drop_secs = 5.0
+    drop_secs = 3.0
     start_idx = np.searchsorted(downsampled_t, drop_secs)
 
     # Slice off sync segments
