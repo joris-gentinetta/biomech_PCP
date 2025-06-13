@@ -43,7 +43,7 @@ def filter_emg_pipeline_bessel(raw_emg, fs, noise_level=None):
     return emg  # same shape as input
 
 
-def robust_mvc(mvc_data, percentile=95):
+def robust_mvc(mvc_data, percentile=93):
     # mvc_data: [samples, channels]
     robust_max = []
     for ch in range(mvc_data.shape[1]):
@@ -53,7 +53,29 @@ def robust_mvc(mvc_data, percentile=95):
         robust_max.append(robust_val)
     return np.array(robust_max)
 
-def calibrate_emg(base_dir, rest_time=5, mvc_time=10, free_time=8, target_free_ratio=0.3):
+def measure_noise_levels(rest_data, sf_rest, artifact_cut=400):
+    """Measure noise at the same pipeline stage as live inference"""
+    num_channels = rest_data.shape[0]
+    
+    # Apply the same filtering as live inference up to noise measurement point
+    # 1. Bandstop (powerline)
+    notch = BesselFilterArr(numChannels=num_channels, order=8, critFreqs=[58,62], fs=sf_rest, filtType='bandstop')
+    emg = notch.filter(rest_data)
+    
+    # 2. Highpass (20 Hz)
+    hp = BesselFilterArr(numChannels=num_channels, order=4, critFreqs=20, fs=sf_rest, filtType='highpass')
+    emg = hp.filter(emg)
+    
+    # 3. Rectification (same as live: np.abs(emg))
+    emg = np.abs(emg)
+    
+    # 4. NOW measure noise - this matches where live inference uses it
+    emg_cut = emg[:, artifact_cut:]
+    noise_levels = np.std(emg_cut, axis=1)
+    
+    return noise_levels
+
+def calibrate_emg(base_dir, rest_time=10, mvc_time=10, free_time=8, target_free_ratio=0.3):
     print("EMG Calibration Routine")
     emg = EMG()
     # emg.startCommunication()
@@ -84,14 +106,11 @@ def calibrate_emg(base_dir, rest_time=5, mvc_time=10, free_time=8, target_free_r
     print(f"length rest timestamps: {len(rest_timestamps)}")
     sf_rest = (len(rest_timestamps)-1)/ elapsed if elapsed > 1 else 1000
 
-    # sf_rest = (len(rest_timestamps) - 1) / (rest_timestamps[-1] - rest_timestamps[0]) if len(rest_timestamps) > 1 else 1000
     print(f"sf rest: {sf_rest}")
-    filtered_rest = filter_emg_pipeline_bessel(rest_data.T, sf_rest)
-
-    # Removing artifact in the beginning of filtering
+    
+    # MODIFIED: Measure noise at the correct stage (after rectification, before lowpass)
     artifact_cut = 400
-    filtered_rest_cut = filtered_rest[:, artifact_cut:]
-    noise_levels = np.mean(filtered_rest_cut, axis=1)
+    noise_levels = measure_noise_levels(rest_data.T, sf_rest, artifact_cut=artifact_cut)
 
     # 2. MVC
     input("2. Prepare for MVC (5x full fist and full hand open in 10s), press enter when ready")
@@ -116,45 +135,13 @@ def calibrate_emg(base_dir, rest_time=5, mvc_time=10, free_time=8, target_free_r
 
     sf_mvc = (len(mvc_timestamps) - 1) / (mvc_timestamps[-1] - mvc_timestamps[0]) if len(mvc_timestamps) > 1 else 1000
     print(f"sf mvc: {sf_mvc}")
-    filtered_mvc = filter_emg_pipeline_bessel(mvc_data.T, sf_mvc)
+    filtered_mvc = filter_emg_pipeline_bessel(mvc_data.T, sf_mvc, noise_level=noise_levels)
 
     # Cut artifact in beginning of file
     filtered_mvc_cut = filtered_mvc[:, artifact_cut:]
-    filtered_mvc_cut = np.clip(filtered_mvc_cut - noise_levels[:, None], 0, None)
     np.save(os.path.join(base_dir, "calib_mvc_filtered.npy"), filtered_mvc_cut)
-    maxVals = np.max(filtered_mvc_cut, axis=1)
-
-    # 3. FREE-SPACE 
-    # input("3. Now perform NATURAL FREE-SPACE HAND MOVEMENTS (open/close as you would in daily use, no maximum force!) - press enter to start")
-    # time.sleep(1)
-    # emg_rawHistory = []
-    # free_timestamps = []
-    # emg.exitEvent.clear()
-# 
-    # t0 = time.time()
-    # while time.time() - t0 < free_time:
-    #     if hasattr(emg, 'rawEMG'):
-    #         emg_rawHistory.append(list(emg.rawEMG))
-    #         free_timestamps.append(time.time())
-    #     time.sleep(0.001)
-    # free_data = np.vstack(emg_rawHistory)
-    # free_timestamps = np.array(free_timestamps)
-    # np.save(os.path.join(base_dir, "calib_freespace_emg.npy"), free_data)
-    # np.save(os.path.join(base_dir, "calib_freespace_timestamps.npy"), free_timestamps)
-    # print(f"Saved calib_freespace_emg.npy and calib_freespace_timestamps.npy in {base_dir}")
-# 
-    # sf_free = (len(free_timestamps) - 1) / (free_timestamps[-1] - free_timestamps[0]) if len(free_timestamps) > 1 else 1000
-    # print(f"sf free: {sf_free}")
-    # filtered_free = filter_emg_pipeline_bessel(free_data.T, sf_free)
-# 
-    # # Cut artifact in beginning of file
-    # filtered_free_cut = filtered_free[:, artifact_cut:]
-    # filtered_free_cut = np.clip(filtered_free_cut - noise_levels[:, None], 0, None)
-    # np.save(os.path.join(base_dir, "calib_freespace_filtered.npy"), filtered_free_cut)
-    # free_max = np.max(filtered_free_cut, axis=1)
-
-    # Compute maxVals so that the free-space max is 30% of the scale
-    # maxVals = free_max / target_free_ratio
+    
+    # Use percentile for robust max values
     maxVals = np.percentile(filtered_mvc_cut, 95, axis=1)
 
     print(f"maxVals: {maxVals}")
@@ -269,7 +256,7 @@ def main():
                         default="left", help="Side of the prosthetic hand")
     parser.add_argument("--sync_iterations", type=int, default=0,
                         help="Warm-up sync iterations (default: 1)")
-    parser.add_argument("--record_iterations", "-r", type=int, default=15,
+    parser.add_argument("--record_iterations", "-r", type=int, default=40,
                         help="Number of recording iterations (default: 1)")
     parser.add_argument("--video", action="store_true",
                         help="Enable simultaneous webcam video recording")
