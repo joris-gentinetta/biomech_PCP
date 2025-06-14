@@ -232,83 +232,18 @@ def process_angles(data_dir: Path) -> None:
     smoothed_df.to_parquet(data_dir / "cropped_smooth_angles.parquet")
 
 
-def plot_all_angles_across_times(subject_dir: Path):
-    """
-    Plot all angles for all times for a given subject in one big plot.
-    """
-    plt.figure(figsize=(14, 7))
-    for time in range(3):
-        angles_path = (
-            subject_dir
-            / "recordings"
-            / f"time_{time}"
-            / "experiments"
-            / "1"
-            / "cropped_angles.parquet"
-        )
-        if angles_path.exists():
-            df = pd.read_parquet(angles_path)
-            # df[("Left", "index_flex")] = df[("Left", "index_flex")] - math.pi / 2
-            # df[("Left", "middle_flex")] = df[("Left", "middle_flex")] - math.pi / 2
-            # df[("Left", "ring_little_flex")] = (
-            #     df[("Left", "ring_little_flex")] - math.pi / 2
-            # )
-            for col in df.columns:
-                plt.plot(df[col], label=f"time_{time} {col[1]}")
-    plt.title(f"All Angles (Radians) for {subject_dir.name}")
-    plt.xlabel("Sample")
-    plt.ylabel("Angle (radians)")
-    plt.legend()
-    plt.tight_layout()
-    plt.show()
-
-
-def collect_emg_maxima(data_dir, n_subjects=12, n_times=3):
-    """
-    Collect the maximum value from emg.npy for each subject and time.
-    Returns a DataFrame with subjects as columns and times as rows.
-    """
-    maxima = np.full((n_times, n_subjects), np.nan)
-    for subject in range(n_subjects):
-        for time in range(n_times):
-            emg_path = (
-                data_dir
+if __name__ == "__main__":
+    for subject in tqdm(range(12), desc="Subjects"):
+        for time in tqdm(range(3), desc=f"Subject {subject} Times", leave=False):
+            save_path = (
+                DATA_DIR
                 / f"subject_{subject}"
                 / "recordings"
                 / f"time_{time}"
                 / "experiments"
                 / "1"
-                / "cropped_emg.npy"
             )
-            if emg_path.exists():
-                emg = np.load(emg_path)
-                # np.save(emg_path, emg / EMG_SCALER)  # Ensure the data is saved
-                maxima[time, subject] = np.max(np.abs(emg))
-    df = pd.DataFrame(
-        maxima,
-        columns=[f"subject_{i}" for i in range(n_subjects)],
-        index=[f"time_{i}" for i in range(n_times)],
-    )
-    return df
-
-
-if __name__ == "__main__":
-    # for subject in tqdm(range(12), desc="Subjects"):
-    #     for time in tqdm(range(3), desc=f"Subject {subject} Times", leave=False):
-    #         save_path = (
-    #             DATA_DIR
-    #             / f"subject_{subject}"
-    #             / "recordings"
-    #             / f"time_{time}"
-    #             / "experiments"
-    #             / "1"
-    #         )
-
-    # download_datasets(subject, time)
-    # transform_data(save_path)
-    # filter_emg(save_path)
-    # process_angles(save_path)
-    # subject = 0  # Change this to the desired subject number (0-11)
-    # plot_all_angles_across_times(DATA_DIR / f"subject_{subject}")
-    df = collect_emg_maxima(DATA_DIR)
-    print(df)
+            download_datasets(subject, time)
+            transform_data(save_path)
+            filter_emg(save_path)
+            process_angles(save_path)
