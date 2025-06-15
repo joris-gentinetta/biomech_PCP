@@ -211,7 +211,10 @@ def train_model(
         )
 
         ## this is for the initialization experiments
-        if config.model_type == "ModularModel":
+        if (
+            config.model_type == "ModularModel"
+            and config.activation_model["model_type"] == "DenseNet"
+        ):
             initialize_weights(
                 model.model.activation_model, config.activation_model["init"]
             )
