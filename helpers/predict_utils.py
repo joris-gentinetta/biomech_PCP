@@ -151,6 +151,11 @@ def get_data(
 
 def initialize_weights(model, method="default"):
     # [xavier_normal, kaiming_normal, orthogonal, default, default_0, default_all]
+    # reordered:
+    # [default_all, default_0, default, kaiming_normal, xavier_normal, orthogonal]
+    # LeakyReLu Initialization: [Default, Default, Default, Kaiming Normal, Xavier Normal, Orthogonal]
+    # Sigmoid Initialization: [Default, Default, Xavier Normal, Xavier Normal, Xavier Normal, Xavier Normal]
+    # Bias Initialization: [Default, Zero, Zero, Zero, Zero, Zero]
     linear_layers = [m for m in model.model if isinstance(m, nn.Linear)]
     for m in linear_layers[:-1]:
         if method == "kaiming_normal":
