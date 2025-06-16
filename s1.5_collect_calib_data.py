@@ -53,11 +53,13 @@ def robust_mvc(mvc_data, percentile=93):
         robust_max.append(robust_val)
     return np.array(robust_max)
 
-def measure_noise_levels(rest_data, sf_rest, artifact_cut=400):
-    """Measure noise at the same pipeline stage as live inference"""
+def measure_noise_levels_refined(rest_data, mvc_data, sf_rest, sf_mvc, artifact_cut=400):
+    """
+    Refined noise measurement with MVC-aware bounds and multiple estimation methods
+    """
     num_channels = rest_data.shape[0]
     
-    # Apply the same filtering as live inference up to noise measurement point
+    # First, process the rest data through the pipeline up to noise measurement point
     # 1. Bandstop (powerline)
     notch = BesselFilterArr(numChannels=num_channels, order=8, critFreqs=[58,62], fs=sf_rest, filtType='bandstop')
     emg = notch.filter(rest_data)
@@ -69,11 +71,100 @@ def measure_noise_levels(rest_data, sf_rest, artifact_cut=400):
     # 3. Rectification (same as live: np.abs(emg))
     emg = np.abs(emg)
     
-    # 4. NOW measure noise - this matches where live inference uses it
+    # Cut artifacts from beginning
     emg_cut = emg[:, artifact_cut:]
-    noise_levels = np.std(emg_cut, axis=1)
     
-    return noise_levels
+    # Process MVC data to get reference values
+    notch_mvc = BesselFilterArr(numChannels=num_channels, order=8, critFreqs=[58,62], fs=sf_mvc, filtType='bandstop')
+    mvc_filtered = notch_mvc.filter(mvc_data)
+    hp_mvc = BesselFilterArr(numChannels=num_channels, order=4, critFreqs=20, fs=sf_mvc, filtType='highpass')
+    mvc_filtered = hp_mvc.filter(mvc_filtered)
+    mvc_filtered = np.abs(mvc_filtered)
+    mvc_filtered_cut = mvc_filtered[:, artifact_cut:]
+    
+    # Get MVC reference values (95th percentile for each channel)
+    mvc_references = np.percentile(mvc_filtered_cut, 95, axis=1)
+    
+    noise_levels = []
+    
+    print("\n=== Refined Noise Measurement ===")
+    for ch in range(num_channels):
+        ch_signal = emg_cut[ch, :]
+        mvc_ref = mvc_references[ch]
+        
+        print(f"\nChannel {ch}:")
+        print(f"  Rest signal: mean={np.mean(ch_signal):.3f}, std={np.std(ch_signal):.3f}")
+        print(f"  MVC reference (95th percentile): {mvc_ref:.1f}")
+        
+        # Method 1: Percentile-based (find level that gives 88% zeros)
+        target_zero_percentage = 88
+        sorted_signal = np.sort(ch_signal)
+        noise_percentile = sorted_signal[int(len(sorted_signal) * target_zero_percentage / 100)]
+        
+        # Method 2: Statistical approach - mean + k*std where k varies by signal quality
+        signal_cv = np.std(ch_signal) / np.mean(ch_signal) if np.mean(ch_signal) > 0 else 10
+        if signal_cv < 2:  # Low variability - use 1.5 std
+            k_factor = 1.5
+        elif signal_cv < 4:  # Medium variability - use 1.0 std
+            k_factor = 1.0
+        else:  # High variability - use 0.8 std
+            k_factor = 0.8
+        noise_statistical = np.mean(ch_signal) + k_factor * np.std(ch_signal)
+        
+        # Method 3: Adaptive threshold based on signal distribution
+        hist, bin_edges = np.histogram(ch_signal, bins=100)
+        cumsum = np.cumsum(hist)
+        cumsum_norm = cumsum / cumsum[-1]
+        
+        # Find where cumulative distribution reaches 85%
+        idx_85 = np.where(cumsum_norm >= 0.85)[0]
+        if len(idx_85) > 0:
+            noise_adaptive = bin_edges[idx_85[0]]
+        else:
+            noise_adaptive = noise_percentile  # fallback
+        
+        print(f"  Noise estimates:")
+        print(f"    Percentile (88th): {noise_percentile:.3f}")
+        print(f"    Statistical (mean + {k_factor:.1f}*std): {noise_statistical:.3f}")
+        print(f"    Adaptive threshold: {noise_adaptive:.3f}")
+        
+        # Choose the median of the three methods
+        candidates = [noise_percentile, noise_statistical, noise_adaptive]
+        base_noise = np.median(candidates)
+        
+        print(f"    Base noise (median): {base_noise:.3f}")
+        
+        # CRITICAL: Cap noise level relative to MVC
+        # Noise should not exceed 10% of MVC value to preserve dynamic range
+        max_allowed_noise = mvc_ref * 0.10
+        
+        if base_noise > max_allowed_noise:
+            print(f"    Capping at 10% of MVC: {max_allowed_noise:.3f}")
+            final_noise = max_allowed_noise
+        else:
+            final_noise = base_noise
+        
+        # Verify the result
+        zero_percentage = np.sum(ch_signal < final_noise) / len(ch_signal) * 100
+        snr_estimate = 20 * np.log10(mvc_ref / final_noise) if final_noise > 0 else 999
+        
+        print(f"    Final noise level: {final_noise:.3f}")
+        print(f"    Expected zeros: {zero_percentage:.1f}%")
+        print(f"    Estimated SNR: {snr_estimate:.1f} dB")
+        
+        # Quality check
+        if zero_percentage < 70:
+            print(f"    ⚠️ Warning: Low zero percentage - may need adjustment")
+        elif zero_percentage > 95:
+            print(f"    ⚠️ Warning: High zero percentage - may lose weak signals")
+        else:
+            print(f"    ✓ Good balance")
+        
+        # Final bounds
+        final_noise = np.clip(final_noise, 0.5, 50.0)
+        noise_levels.append(final_noise)
+    
+    return np.array(noise_levels)
 
 def calibrate_emg(base_dir, rest_time=10, mvc_time=10, free_time=8, target_free_ratio=0.3):
     print("EMG Calibration Routine")
@@ -81,14 +172,18 @@ def calibrate_emg(base_dir, rest_time=10, mvc_time=10, free_time=8, target_free_
     # emg.startCommunication()
 
     # 1. REST 
-    print("1. Relax for 10s to record baseline noise")
-    # time.sleep(2)
+    print("\n=== Phase 1: REST Recording ===")
+    print("🟡 PLEASE RELAX COMPLETELY - Do not move or contract any muscles!")
+    print("This measures baseline noise levels.")
+    input("Press Enter when ready to start rest recording...")
+    
     emg.readEMG()
     first_rest_time = emg.OS_time
 
     rest_data_buf = []
     rest_ts_buf = []
     t0 = time.time()
+    print(f"Recording rest for {rest_time} seconds...")
     while time.time() - t0 < rest_time:
         emg.readEMG()
         rest_data_buf.append(list(emg.rawEMG))
@@ -97,30 +192,29 @@ def calibrate_emg(base_dir, rest_time=10, mvc_time=10, free_time=8, target_free_
     rest_timestamps = np.array(rest_ts_buf)
     np.save(os.path.join(base_dir, "calib_rest_emg.npy"), rest_data)
     np.save(os.path.join(base_dir, "calib_rest_timestamps.npy"), rest_timestamps)
-    print(f"Saved calib_rest_emg.npy and calib_rest_timestamps.npy in {base_dir}")
-
-    print(f"Finished recording, filtering now...")
+    print(f"✅ Rest recording complete! Recorded {len(rest_data)} samples")
 
     elapsed = rest_timestamps[-1] - rest_timestamps[0]
-    print(f"elapsed time: {elapsed}")
-    print(f"length rest timestamps: {len(rest_timestamps)}")
     sf_rest = (len(rest_timestamps)-1)/ elapsed if elapsed > 1 else 1000
-
-    print(f"sf rest: {sf_rest}")
-    
-    # MODIFIED: Measure noise at the correct stage (after rectification, before lowpass)
-    artifact_cut = 400
-    noise_levels = measure_noise_levels(rest_data.T, sf_rest, artifact_cut=artifact_cut)
+    print(f"Sampling frequency (rest): {sf_rest:.1f} Hz")
 
     # 2. MVC
-    input("2. Prepare for MVC (5x full fist and full hand open in 10s), press enter when ready")
-    # time.sleep(1)
+    print("\n=== Phase 2: MVC Recording ===")
+    print("🔴 PERFORM SUSTAINED MAXIMUM MUSCLE CONTRACTIONS:")
+    print("   - Make tight fists and HOLD for 3-4 seconds")
+    print("   - Flex all forearm muscles as hard as possible")
+    print("   - Take 2-3 second breaks between contractions")
+    print("   - Aim for 2-3 maximum effort periods during recording")
+    input("Press Enter when ready to start MVC recording...")
+    
     emg.readEMG()
     first_mvc_time = emg.OS_time
 
     mvc_data_buf = []
     mvc_ts_buf = []
     t0 = time.time()
+    print(f"Recording MVC for {mvc_time} seconds...")
+    print("🔴 CONTRACT AND HOLD! (3-4 seconds)")
     while time.time() - t0 < mvc_time:
         emg.readEMG()
         mvc_data_buf.append(list(emg.rawEMG))
@@ -129,33 +223,97 @@ def calibrate_emg(base_dir, rest_time=10, mvc_time=10, free_time=8, target_free_
     mvc_timestamps = np.array(mvc_ts_buf)
     np.save(os.path.join(base_dir, "calib_mvc_emg.npy"), mvc_data)
     np.save(os.path.join(base_dir, "calib_mvc_timestamps.npy"), mvc_timestamps)
-    print(f"Saved calib_mvc_emg.npy and calib_mvc_timestamps.npy in {base_dir}")
-
-    print(f"Finished recording, filtering now...")
+    print(f"✅ MVC recording complete! Recorded {len(mvc_data)} samples")
 
     sf_mvc = (len(mvc_timestamps) - 1) / (mvc_timestamps[-1] - mvc_timestamps[0]) if len(mvc_timestamps) > 1 else 1000
-    print(f"sf mvc: {sf_mvc}")
+    print(f"Sampling frequency (MVC): {sf_mvc:.1f} Hz")
+    
+    # COMPARISON: Simple vs Refined Noise Calculation
+    artifact_cut = 400
+    
+    # === SIMPLE NOISE CALCULATION (CORRECTED) ===
+    # Apply same preprocessing as refined method for fair comparison
+    num_channels = rest_data.shape[1]  # rest_data is [samples, channels]
+    
+    # 1. Process rest data through same initial filters
+    notch = BesselFilterArr(numChannels=num_channels, order=8, critFreqs=[58,62], fs=sf_rest, filtType='bandstop')
+    rest_filtered = notch.filter(rest_data.T)  # transpose to [channels, samples]
+    
+    hp = BesselFilterArr(numChannels=num_channels, order=4, critFreqs=20, fs=sf_rest, filtType='highpass')
+    rest_filtered = hp.filter(rest_filtered)
+    
+    rest_filtered = np.abs(rest_filtered)  # rectify
+    rest_filtered_cut = rest_filtered[:, artifact_cut:]  # remove artifacts
+    
+    # Simple method: mean + 2*std per channel
+    simple_noise_levels = []
+    for ch in range(num_channels):
+        ch_data = rest_filtered_cut[ch, :]
+        simple_noise = np.mean(ch_data) + 2 * np.std(ch_data)
+        simple_noise_levels.append(simple_noise)
+    simple_noise_levels = np.array(simple_noise_levels)
+    
+    # === REFINED NOISE CALCULATION ===
+    refined_noise_levels = measure_noise_levels_refined(rest_data.T, mvc_data.T, sf_rest, sf_mvc, artifact_cut=artifact_cut)
+    
+    # === COMPARISON RESULTS ===
+    print(f"\n=== NOISE CALCULATION COMPARISON ===")
+    print(f"{'Channel':<8} {'Simple':<10} {'Refined':<10} {'Difference':<12} {'Ratio':<8}")
+    print("-" * 55)
+    
+    for ch in range(len(simple_noise_levels)):
+        diff = refined_noise_levels[ch] - simple_noise_levels[ch]
+        ratio = refined_noise_levels[ch] / simple_noise_levels[ch] if simple_noise_levels[ch] > 0 else 0
+        print(f"{ch:<8} {simple_noise_levels[ch]:<10.3f} {refined_noise_levels[ch]:<10.3f} {diff:<+12.3f} {ratio:<8.2f}")
+    
+    print(f"\nSummary:")
+    print(f"Simple method mean:    {np.mean(simple_noise_levels):.3f}")
+    print(f"Refined method mean:   {np.mean(refined_noise_levels):.3f}")
+    print(f"Average ratio (R/S):   {np.mean(refined_noise_levels/simple_noise_levels):.2f}")
+    
+    # Use refined method for actual calibration
+    noise_levels = refined_noise_levels
+    
+    # Filter MVC for max values
     filtered_mvc = filter_emg_pipeline_bessel(mvc_data.T, sf_mvc, noise_level=noise_levels)
-
-    # Cut artifact in beginning of file
     filtered_mvc_cut = filtered_mvc[:, artifact_cut:]
     np.save(os.path.join(base_dir, "calib_mvc_filtered.npy"), filtered_mvc_cut)
     
     # Use percentile for robust max values
     maxVals = np.percentile(filtered_mvc_cut, 95, axis=1)
 
+    print(f"\n=== Calibration Results ===")
     print(f"maxVals: {maxVals}")
-    print(f"noiseLevels: {noise_levels}")
+    print(f"noiseLevels (refined): {noise_levels}")
+    
+    # Calculate and display SNR for each channel using both methods
+    print(f"\n=== Signal-to-Noise Ratio Comparison ===")
+    print(f"{'Channel':<8} {'SNR Simple':<12} {'SNR Refined':<12} {'Quality Simple':<15} {'Quality Refined':<15}")
+    print("-" * 80)
+    
+    for ch in range(len(noise_levels)):
+        if simple_noise_levels[ch] > 0 and noise_levels[ch] > 0:
+            snr_simple = 20 * np.log10(maxVals[ch] / simple_noise_levels[ch])
+            snr_refined = 20 * np.log10(maxVals[ch] / noise_levels[ch])
+            
+            def get_quality(snr):
+                return "EXCELLENT" if snr > 20 else "GOOD" if snr > 15 else "ACCEPTABLE" if snr > 10 else "POOR"
+            
+            qual_simple = get_quality(snr_simple)
+            qual_refined = get_quality(snr_refined)
+            
+            print(f"{ch:<8} {snr_simple:<12.1f} {snr_refined:<12.1f} {qual_simple:<15} {qual_refined:<15}")
 
-    # Save minimal scaling.yaml with all 16 channels (even if zeros)
+    # Save minimal scaling.yaml with refined values
     scaling_dict = {
         'maxVals': maxVals.tolist(),
-        'noiseLevels': noise_levels.tolist()
+        'noiseLevels': noise_levels.tolist(),
+        'noiseLevels_simple': simple_noise_levels.tolist()  # save for comparison
     }
     yaml_path = os.path.join(base_dir, 'scaling.yaml')
     with open(yaml_path, 'w') as f:
         yaml.safe_dump(scaling_dict, f)
-    print(f"Saved scaling.yaml to {yaml_path}")
+    print(f"\n✅ Calibration complete! Saved scaling.yaml to {yaml_path}")
 
     emg.exitEvent.set()
     time.sleep(0.5)
@@ -171,7 +329,6 @@ def start_raw_emg_recorder(base_dir, enable_video=False, sync_event=None):
     Returns: stop_event, emg_thread, video_thread (or None), raw_history, raw_timestamps, video_timestamps
     """
     emg = EMG()  # connect directly to ADS1299 via EMGClass (records all 16 channels by default)
-    # emg.startCommunication()
 
     raw_history = []
     raw_timestamps = []
@@ -209,34 +366,60 @@ def start_raw_emg_recorder(base_dir, enable_video=False, sync_event=None):
         video_thread = threading.Thread(target=video_loop, daemon=True)
         video_thread.start()
 
-    # EMG capture thread with sync_event
+    # EMG capture thread with sync_event - PROPERLY INDENTED
     def capture_loop():
-        # wait for first EMG packet
-        while getattr(emg, 'OS_time', None) is None:
-            emg.readEMG()
+        try:
+            # Start the EMG communication pipeline (like the original)
+            emg.startCommunication()  # This starts the internal emgThread
+            
+            # Wait for first data
+            while getattr(emg, 'OS_time', None) is None:
+                time.sleep(0.001)
 
-        # Sync start
-        if sync_event is not None:
-            sync_event.wait()
+            print("EMG thread: Keeping connection alive, waiting for sync event...")
+            
+            # Wait for sync while EMG pipeline runs in background
+            while sync_event is not None and not sync_event.is_set() and not stop_event.is_set():
+                time.sleep(0.001)
 
-        raw_history.clear()
-        raw_timestamps.clear()
+            if stop_event.is_set():
+                return
 
-        emg.readEMG()
-        first_emg_time = emg.OS_time
-        
-        while not stop_event.is_set():
-            emg.readEMG()
-            raw_history.append(list(emg.rawEMG))
-            raw_timestamps.append((emg.OS_time - first_emg_time) / 1e6)
-           
-        emg.exitEvent.set()
+            raw_history.clear()
+            raw_timestamps.clear()
 
+            # Get first timestamp like the original
+            first_emg_time = emg.OS_time
+            last_time = emg.OS_time
+            
+            while not stop_event.is_set():
+                time_sample = emg.OS_time
+                
+                # Add timing validation like the original
+                if (time_sample - last_time)/1e6 > 0.1:
+                    print(f'Read time: {time_sample}, expected time: {last_time}')
+                    raise ValueError('EMG alignment lost. Please restart the EMG board and the script.')
+                
+                # Only collect data when we have new timestamps
+                elif time_sample > last_time:
+                    emg_sample = np.asarray(emg.rawEMG)
+                    raw_history.append(list(emg_sample))
+                    raw_timestamps.append((time_sample - first_emg_time) / 1e6)
+                
+                last_time = time_sample
+                time.sleep(0.001)  # Small delay to prevent busy waiting
+                
+        except Exception as e:
+            print(f"EMG capture error: {e}")
+        finally:
+            emg.exitEvent.set()
+            time.sleep(0.1)
+
+    # Create and start the thread
     emg_thread = threading.Thread(target=capture_loop, daemon=True)
     emg_thread.start()
 
     return stop_event, emg_thread, video_thread, raw_history, raw_timestamps, video_timestamps
-
 
 def main():
     parser = argparse.ArgumentParser(
@@ -254,10 +437,10 @@ def main():
                         help="Disable prosthetic arm control; EMG-only recording")
     parser.add_argument("--hand_side", "-s", choices=["left", "right"],
                         default="left", help="Side of the prosthetic hand")
-    parser.add_argument("--sync_iterations", type=int, default=0,
-                        help="Warm-up sync iterations (default: 1)")
+    parser.add_argument("--sync_iterations", type=int, default=5,
+                        help="Warm-up sync iterations (default: 5)")
     parser.add_argument("--record_iterations", "-r", type=int, default=40,
-                        help="Number of recording iterations (default: 1)")
+                        help="Number of recording iterations (default: 40)")
     parser.add_argument("--video", action="store_true",
                         help="Enable simultaneous webcam video recording")
     parser.add_argument("--calibrate_emg", action="store_true",
@@ -279,10 +462,16 @@ def main():
     base_dir = os.path.join(exp_parent, str(exp_idx))
     os.makedirs(base_dir, exist_ok=True)
 
+    # Calibration mode
+    if args.calibrate_emg:
+        calibrate_emg(base_dir, rest_time=10, mvc_time=10)
+        return
+
     # Synchronization event for EMG and video threads
     sync_event = threading.Event() if (not args.no_emg or args.video) else None
 
-    # Start raw EMG (and optional video) recorder in background, pass sync_event
+    # Start raw EMG (and optional video) recorder in background
+    # IMPORTANT: They will wait for sync_event before recording
     if not args.no_emg:
         stop_event, raw_thread, video_thread, raw_history, raw_timestamps, video_timestamps = \
             start_raw_emg_recorder(base_dir, enable_video=args.video, sync_event=sync_event)
@@ -291,11 +480,6 @@ def main():
         raw_history = []
         raw_timestamps = []
         video_timestamps = []
-
-    if args.calibrate_emg:
-        calibrate_emg(base_dir, rest_time=10, mvc_time=10)
-        return
-    
 
     # Raw-EMG-only mode (no prosthesis movement, just record)
     if args.no_prosthesis:
@@ -324,7 +508,7 @@ def main():
         return
 
     # PROSTHESIS MODE
-    # Initialize prosthetic arm, but DO NOT use EMG
+    # Initialize prosthetic arm
     arm = psyonicArm(hand=args.hand_side)
     arm.initSensors()
     arm.startComms()
@@ -336,25 +520,22 @@ def main():
         return
     pose = hand_poses[args.movement]
 
+    # Build trajectory (your existing trajectory code)
     if args.movement == "indexFlDigitsEx" and isinstance(pose, list) and len(pose) == 2:
         pos1 = np.array(pose[0])
         pos2 = np.array(pose[1])
-        total_dur = 2.0  # total duration (seconds)
-        steps = 500      # number of trajectory steps
-
+        total_dur = 2.0
+        steps = 500
         key_poses = [pos1, pos2, pos1]
         times = [0, total_dur / 2, total_dur]
-
-        # Create symmetric, smooth out-and-back trajectory
         smooth_traj = CubicSpline(
             times, 
             np.vstack(key_poses), 
             axis=0, 
-            bc_type='clamped'  # ensures smooth (zero velocity) at endpoints
+            bc_type='clamped'
         )(np.linspace(0, total_dur, steps))
-
     else:
-        # Build and smooth trajectory
+        # Standard trajectory building
         neutral = np.array([2, 2, 2, 2, 2, -2])
         if isinstance(pose[0], (list, np.ndarray)):
             key_poses = [neutral] + [np.array(p) for p in pose] + [neutral]
@@ -380,25 +561,35 @@ def main():
             const_traj[i] = traj[i0] * (1 - alpha) + traj[i0 + 1] * alpha
         smooth_traj = const_traj
 
-    # CLIP THE TRAJECTORY TO SAFE RANGES
+    # Clip to safe ranges
     joint_mins = np.array([0, 0, 0, 0, 0, -120])
     joint_maxs = np.array([120, 120, 120, 120, 120, 0])
     smooth_traj = np.clip(smooth_traj, joint_mins, joint_maxs)
 
-    # Warm-up sync
-    for _ in range(args.sync_iterations):
+    # CRITICAL FIX: Warm-up iterations WITHOUT recording
+    print(f"\n=== Running {args.sync_iterations} warm-up iterations (NOT recording) ===")
+    print("User should synchronize with the hand movement during this phase...")
+    
+    for i in range(args.sync_iterations):
+        print(f"Warm-up iteration {i+1}/{args.sync_iterations}")
         arm.mainControlLoop(posDes=smooth_traj, period=10, emg=None)
 
-    # Start synchronized recording! 
+    print("\n=== Warm-up complete. Starting synchronized recording NOW ===")
+    
+    # CRITICAL FIX: Set sync event AFTER warm-up, RIGHT BEFORE recording iterations
+    recording_start_time = time.time()
     if sync_event is not None:
-        sync_event.set()  # Signal all threads to start actual recording
+        sync_event.set()  # Signal EMG/video threads to start recording NOW
+    
+    # Small delay to ensure threads have received the signal
+    time.sleep(0.001)
 
-    # Recording loop (prosthesis movement, EMG just records in background)
+    # Recording loop - EMG is now recording in sync
     all_records = []
     headers = None
 
     for itr in range(1, args.record_iterations + 1):
-        print(f"Starting iteration {itr}/{args.record_iterations}...")
+        print(f"Recording iteration {itr}/{args.record_iterations}...")
         arm.resetRecording()
         arm.recording = True
         arm.mainControlLoop(posDes=smooth_traj, period=10, emg=None)
@@ -411,6 +602,10 @@ def main():
         data_rows = raw_data[1:]
         all_records.extend(data_rows)
 
+    # Recording complete - stop EMG/video immediately
+    recording_end_time = time.time()
+    print(f"\nRecording complete. Duration: {recording_end_time - recording_start_time:.2f}s")
+
     # Stop raw EMG (and video) recorder
     if not args.no_emg:
         stop_event.set()
@@ -418,12 +613,14 @@ def main():
         if video_thread:
             video_thread.join()
 
-    # Save all data: EMG = [N,16], timestamps = [N,], video timestamps if recorded
+    # Save all data
     if raw_history:
         np.save(join(base_dir, "raw_emg.npy"), np.vstack(raw_history))
         raw_timestamps_unique = make_timestamps_unique(raw_timestamps)
         np.save(join(base_dir, "raw_timestamps.npy"), np.array(raw_timestamps_unique))
         print(f"Saved raw_emg.npy with {len(raw_history)} samples.")
+        print(f"EMG duration: {raw_timestamps[-1] - raw_timestamps[0]:.2f}s")
+    
     if video_timestamps:
         np.save(join(base_dir, "video_timestamps.npy"), np.array(video_timestamps))
         print(f"Saved video_timestamps.npy with {len(video_timestamps)} frames.")
@@ -439,6 +636,18 @@ def main():
         with open(join(base_dir, "angles_header.txt"), "w") as f:
             f.write(",".join(headers))
         print(f"Saved angles.npy with {len(rec)} frames.")
+        print(f"Angles duration: {ts[-1]:.2f}s")
+        
+        # Quick sync check
+        if raw_history:
+            emg_duration = raw_timestamps[-1] - raw_timestamps[0]
+            angles_duration = ts[-1]
+            print(f"\n=== Sync Quality ===")
+            print(f"Duration difference: {abs(emg_duration - angles_duration):.2f}s")
+            if abs(emg_duration - angles_duration) < 1.0:
+                print("YY Excellent synchronization!")
+            else:
+                print("XX  Check synchronization - durations differ significantly")
 
     arm.close()
 
