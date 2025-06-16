@@ -8,7 +8,7 @@ import torch.optim as optim
 # torch.autograd.set_detect_anomaly(True)
 from abc import ABC, abstractmethod
 from tqdm import tqdm
-from bilinear import Muscles, Joints, M as bilinear_M
+from dynamics.bilinear import Muscles, Joints, M as bilinear_M
 
 SR = 60
 

@@ -299,7 +299,9 @@ class psyonicArm():
 				# print(self.replyVariant, self.controlMode, hex(self.replyModeHeader))
 
 				msg = msg if not self.stuffing else self.byteStuff(msg)
+				# print("Sending bytes to hand:", msg)
 				bytesWritten = self.ser.write(msg)
+				# print(f"bytesWritten: {bytesWritten} of {len(msg)}")
 
 				assert bytesWritten == len(msg), f'Not all bytes sent - expected {len(msg)}, sent {bytesWritten}'
 
@@ -307,6 +309,7 @@ class psyonicArm():
 				try:
 					response = self.ser.read(self.responseBufferSize(self.replyVariant))
 					response = response if not self.stuffing else self.byteUnstuff(response)
+					# print("Raw response from hand:", response)
 
 					if not self.replyChangedFlag:# and len(response) > 0:
 						self.unpackResponse(response)
@@ -374,6 +377,7 @@ class psyonicArm():
 		# make sure the response is the right length
 		# if self.replyVariant in [0, 1] and not len(response) == 72: return # assert len(response) == 72, f'Response is not the correct length for variant {self.replyVariant} - expected 72, got {len(response)}'
 		# elif self.replyVariant == 2 and not len(response) == 29: return # assert len(response) == 39, f'Response is not the correct length for variant 2 - expected 39, got {len(response)}'
+		# print(f"DEBUG: Got response of length {len(response)}: {response.hex()}")
 		if self.replyVariant in [0, 1]: assert len(response) == 72, f'Response is not the correct length for variant {self.replyVariant} - expected 72, got {len(response)}'
 		elif self.replyVariant == 2: assert len(response) == 39, f'Response is not the correct length for variant 2 - expected 39, got {len(response)}'
 		# if self.replyVariant in [0, 1] and not len(response) == 72: print(f'Response is not the correct length for variant {self.replyVariant} - expected 72, got {len(response)}')

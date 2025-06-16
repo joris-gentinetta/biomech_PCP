@@ -46,7 +46,7 @@ class psyonicControllers():
 		self.freq_n = freq_n
 		self.numElectrodes = numElectrodes
 
-		self.probFilter = BesselFilterArr(numChannels=3, order=4, critFreqs=[3], fs=self.arm.Hz, filtType='lowpass')
+		self.probFilter = BesselFilterArr(numChannels=3, order=4, critFreqs=3, fs=self.arm.Hz, filtType='lowpass')
 
 		self.printRate = 5 # desired Hz
 		self.loopReset = int(self.arm.Hz/self.printRate)
@@ -73,7 +73,8 @@ class psyonicControllers():
 			self.states = self.model.model.get_starting_states(1, torch.zeros((1, 2,  len(config.targets)), device=self.device))
 
 		#NOTE todo?
-		self.targets = ['indexAng', 'midAng', 'ringAng', 'pinkyAng', 'thumbInPlaneAng', 'thumbOutPlaneAng', 'wristFlex']
+		# self.targets = ['indexAng', 'midAng', 'ringAng', 'pinkyAng', 'thumbInPlaneAng', 'thumbOutPlaneAng', 'wristFlex']
+		self.targets = ['index_Pos', 'middle_Pos', 'ring_Pos', 'pinky_Pos', 'thumbFlex_Pos', 'thumbRot_Pos']
 
 		self.output_dict = {target: 0 for target in self.targets}
 
@@ -165,46 +166,117 @@ class psyonicControllers():
 
 		return jointPos
 
+# 	def runModel(self):
+# 		jointPos = self.arm.lastPosCom
+# 		emg_timestep = np.asarray(self.emg.normedEMG)[self.emg.usedChannels]
+# 		emg_timestep = torch.tensor(emg_timestep, dtype=torch.float32).unsqueeze(0).unsqueeze(0).to(self.device)
+# 		with torch.no_grad():
+# 			output, self.states = self.model.model(emg_timestep, self.states)
+# 			output = output.squeeze().to('cpu').detach().numpy()
+# 			for j, target in enumerate(self.targets):
+# 				self.output_dict[target] = output[j]
+# 			# self.output_dict['thumbInPlaneAng'] = self.output_dict['thumbInPlaneAng'] - math.pi
+# 			# # self.output_dict['wristRot'] = (self.output_dict['wristRot'] * 2) - math.pi
+# 			# self.output_dict['wristFlex'] = (self.output_dict['wristFlex'] - math.pi / 2)
+# 			# # todo
+# 			# # emg.printNormedEMG()
+# 			#
+# 			# jointPos[0] = np.rad2deg(self.output_dict['indexAng'] * math.pi)
+# 			# jointPos[1] = np.rad2deg(self.output_dict['midAng'] * math.pi)
+# 			# jointPos[2] = np.rad2deg(self.output_dict['ringAng'] * math.pi)
+# 			# jointPos[3] = np.rad2deg(self.output_dict['pinkyAng'] * math.pi)
+# 			# jointPos[4] = np.rad2deg(self.output_dict['thumbOutPlaneAng'] * math.pi)
+# 			# jointPos[5] = np.rad2deg(self.output_dict['thumbInPlaneAng'] * math.pi)
+# 
+# 				self.output_dict[target] = self.output_dict[target].clip(-1, 1)
+# 				self.output_dict[target] = (self.output_dict[target] * math.pi + math.pi) / 2
+# 			# self.output_dict['wristFlex'] = self.output_dict['wristFlex'] - math.pi / 2
+# 			# self.output_dict['wristRot'] = (self.output_dict['wristRot'] * 2) - math.pi
+# 			# self.output_dict['thumbInPlaneAng'] = self.output_dict['thumbInPlaneAng'] - math.pi
+# 
+# 			# for i in range(6):
+# 			# 	jointPos[i] = (np.rad2deg(self.output_dict['indexAng'] * math.pi) - 60) * 5
+# 			jointPos[0] = np.min([70, np.rad2deg(self.output_dict['indexAng'])])# if np.rad2deg(self.output_dict['thumbOutPlaneAng']) > 50 else np.rad2deg(self.output_dict['indexAng'])
+# 			jointPos[1] = np.rad2deg(self.output_dict['midAng'])
+# 			jointPos[2] = np.rad2deg(self.output_dict['ringAng'])
+# 			jointPos[3] = np.rad2deg(self.output_dict['pinkyAng'])
+# 			# jointPos[4] = (np.rad2deg(self.output_dict['thumbOutPlaneAng']) - 30)*6
+# 			# jointPos[5] = (np.rad2deg(self.output_dict['thumbInPlaneAng']) + 30)*6
+# 			jointPos[4] = 1.5*np.rad2deg(self.output_dict['thumbOutPlaneAng'])
+# 			# jointPos[5] = np.rad2deg(self.output_dict['thumbInPlaneAng'])
+# 
+# 			jointPos[5] = -66
+# 		return jointPos
+
 	def runModel(self):
-		jointPos = self.arm.lastPosCom
+		jointPos = [0]*6
+		
+		# Get EMG input
 		emg_timestep = np.asarray(self.emg.normedEMG)[self.emg.usedChannels]
-		emg_timestep = torch.tensor(emg_timestep, dtype=torch.float32).unsqueeze(0).unsqueeze(0).to(self.device)
+		
+		# DEBUG: Print EMG input
+		if not hasattr(self, '_debug_counter'):
+			self._debug_counter = 0
+		
+		self._debug_counter += 1
+		# if self._debug_counter % 60 == 0:  # Every second
+			# print(f"\n=== CONTROLLER DEBUG ===")
+			# print(f"EMG input: {emg_timestep}")
+			# print(f"EMG max: {np.max(emg_timestep):.3f}, mean: {np.mean(emg_timestep):.3f}")
+		
+		# Process through model
+		emg_tensor = torch.tensor(emg_timestep, dtype=torch.float32).unsqueeze(0).unsqueeze(0).to(self.device)
+		
 		with torch.no_grad():
-			output, self.states = self.model.model(emg_timestep, self.states)
-			output = output.squeeze().to('cpu').detach().numpy()
-			for j, target in enumerate(self.targets):
-				self.output_dict[target] = output[j]
-			# self.output_dict['thumbInPlaneAng'] = self.output_dict['thumbInPlaneAng'] - math.pi
-			# # self.output_dict['wristRot'] = (self.output_dict['wristRot'] * 2) - math.pi
-			# self.output_dict['wristFlex'] = (self.output_dict['wristFlex'] - math.pi / 2)
-			# # todo
-			# # emg.printNormedEMG()
-			#
-			# jointPos[0] = np.rad2deg(self.output_dict['indexAng'] * math.pi)
-			# jointPos[1] = np.rad2deg(self.output_dict['midAng'] * math.pi)
-			# jointPos[2] = np.rad2deg(self.output_dict['ringAng'] * math.pi)
-			# jointPos[3] = np.rad2deg(self.output_dict['pinkyAng'] * math.pi)
-			# jointPos[4] = np.rad2deg(self.output_dict['thumbOutPlaneAng'] * math.pi)
-			# jointPos[5] = np.rad2deg(self.output_dict['thumbInPlaneAng'] * math.pi)
-
-				self.output_dict[target] = self.output_dict[target].clip(-1, 1)
-				self.output_dict[target] = (self.output_dict[target] * math.pi + math.pi) / 2
-			# self.output_dict['wristFlex'] = self.output_dict['wristFlex'] - math.pi / 2
-			# self.output_dict['wristRot'] = (self.output_dict['wristRot'] * 2) - math.pi
-			self.output_dict['thumbInPlaneAng'] = self.output_dict['thumbInPlaneAng'] - math.pi
-
-			# for i in range(6):
-			# 	jointPos[i] = (np.rad2deg(self.output_dict['indexAng'] * math.pi) - 60) * 5
-			jointPos[0] = np.min([70, np.rad2deg(self.output_dict['indexAng'])])# if np.rad2deg(self.output_dict['thumbOutPlaneAng']) > 50 else np.rad2deg(self.output_dict['indexAng'])
-			jointPos[1] = np.rad2deg(self.output_dict['midAng'])
-			jointPos[2] = np.rad2deg(self.output_dict['ringAng'])
-			jointPos[3] = np.rad2deg(self.output_dict['pinkyAng'])
-			# jointPos[4] = (np.rad2deg(self.output_dict['thumbOutPlaneAng']) - 30)*6
-			# jointPos[5] = (np.rad2deg(self.output_dict['thumbInPlaneAng']) + 30)*6
-			jointPos[4] = 1.5*np.rad2deg(self.output_dict['thumbOutPlaneAng'])
-			# jointPos[5] = np.rad2deg(self.output_dict['thumbInPlaneAng'])
-
-			jointPos[5] = -66
+			output, self.states = self.model.model(emg_tensor, self.states)
+			output = output.squeeze().cpu().numpy()
+			RESPONSIVENESS_SCALE = 2.0  # Increase this to make more responsive
+			output = output * RESPONSIVENESS_SCALE
+			output = np.clip(output, -1.0, 1.0)
+			
+			# DEBUG: Print model output
+			# if self._debug_counter % 60 == 0:
+			# 	print(f"Model output (raw): {output}")
+			# 	print(f"Model output range: [{output.min():.3f}, {output.max():.3f}]")
+			
+			# Convert to joint positions
+			jointPos[0] = output[0] * 60 + 60     # index_Pos
+			jointPos[1] = output[1] * 60 + 60     # middle_Pos
+			jointPos[2] = output[2] * 60 + 60     # ring_Pos
+			jointPos[3] = output[3] * 60 + 60     # pinky_Pos
+			jointPos[4] = output[4] * 60 + 60     # thumbFlex_Pos
+			jointPos[5] = output[5] * 60 - 60     # thumbRot_Pos
+			
+			# DEBUG: Print joint positions
+			# if self._debug_counter % 60 == 0:
+			# 	print(f"Joint positions: {jointPos}")
+			# 	print(f"Index should be at: {jointPos[0]:.1f} degrees")
+		
 		return jointPos
-
+# 	def runModel(self):
+# 		# Make a copy of the previous command (length 6)
+# 		jointPos = [0]*6
+# 
+# 		# Prepare EMG input
+# 		emg_timestep = np.asarray(self.emg.normedEMG)[self.emg.usedChannels]
+# 		emg_timestep = torch.tensor(emg_timestep, dtype=torch.float32).unsqueeze(0).unsqueeze(0).to(self.device)
+# 
+# 		with torch.no_grad():
+# 			output, self.states = self.model.model(emg_timestep, self.states)
+# 			output = output.squeeze().cpu().numpy()  # shape = (6,)
+# 
+# 			# Store by name (optional, but helpful)
+# 			for j, target in enumerate(self.targets):
+# 				self.output_dict[target] = output[j]
+# 
+# 			# Convert scaled outputs to raw joint angles (degrees)
+# 			# First five: [0,120], last: [-120,0]
+# 			jointPos[0] = output[0] * 60 + 60     # index_Pos
+# 			jointPos[1] = output[1] * 60 + 60     # middle_Pos
+# 			jointPos[2] = output[2] * 60 + 60     # ring_Pos
+# 			jointPos[3] = output[3] * 60 + 60     # pinky_Pos
+# 			jointPos[4] = output[4] * 60 + 60     # thumbFlex_Pos
+# 			jointPos[5] = output[5] * 60 - 60     # thumbRot_Pos
+# 
+# 		return jointPos
 

@@ -49,6 +49,9 @@ parameters:
   learning_rate:
     value: 0.001
 
+  weight_decay:
+    value: 0.00001
+
   n_epochs:
     value: 40
 

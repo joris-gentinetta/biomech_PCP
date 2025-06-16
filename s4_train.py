@@ -66,7 +66,7 @@ if __name__ == '__main__':
         wandb_config = yaml.safe_load(file)
         config = Config(wandb_config)
 
-    print("Config dict BEFORE passing to wandb:", config.to_dict())
+    # print("Config dict BEFORE passing to wandb:", config.to_dict())
 
 
     data_dirs = [join('data', args.person_dir, 'recordings', recording, 'experiments', '1') for recording in

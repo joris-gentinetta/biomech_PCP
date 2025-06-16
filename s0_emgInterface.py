@@ -334,10 +334,14 @@ class EMGStreamer():
     def stream(self):
         a = 0
         while not self.quitEvent.is_set():
+            # print("about to start time")
             start = time()
+            # print("Started time")
             self.sensor.updateSensorState()
+            # print("updated sensor")
 
             reading = self.sensor.m_emg.mEMGDataFull
+            # print(f"EMG packet timestamp: {reading.osTime_ms:08d} ms")
             packedData = self.pack(reading)
 
             self.sock.send(packedData)
