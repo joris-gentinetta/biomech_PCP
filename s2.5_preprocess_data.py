@@ -396,34 +396,29 @@ def process_emg_and_angles(
         aligned_emg[:, ch] = np.interp(ref_t, emg_timestamps, filtered_emg[ch, :])
 
     # Downsample to 60Hz using windowed integration (like EMGClass)
-    ds_freq = 60 # Hz
-    window_size = int(sf / ds_freq)  # samples per 60Hz window (e.g., ~17 samples for 1000Hz->60Hz)
+    current_sf = (len(ref_t) - 1) / (ref_t[-1] - ref_t[0])  # Current sampling frequency
+    target_sf = 60.0  # Target 60Hz
+    downsample_ratio = current_sf / target_sf # Hz
+    downsample_step = int(round(downsample_ratio))
     
-    # Calculate number of complete windows
-    n_windows = len(ref_t) // window_size
-    
-    # Reshape and integrate over windows for EMG
-    if aligned_emg.ndim == 1:
-        aligned_emg = aligned_emg[:, None]
-    
-    emg_windowed = aligned_emg[:n_windows * window_size, :].reshape(n_windows, window_size, aligned_emg.shape[1])
-    emg_60Hz = np.mean(emg_windowed, axis=1)  # or use np.sum for true integration
-    
-    # For angles, take the middle sample of each window (or mean)
-    angles_windowed = aligned_angles[:n_windows * window_size, :].reshape(n_windows, window_size, aligned_angles.shape[1])
-    angles_60Hz = angles_windowed[:, window_size//2, :]  # middle sample, or use np.mean(angles_windowed, axis=1)
-    
-    # Create corresponding timestamps (middle of each window)
-    downsampled_t = ref_t[window_size//2::window_size][:n_windows]
+    emg_60Hz = aligned_emg[::downsample_step, :]
+    angles_60Hz = aligned_angles[::downsample_step, :]
+    downsampled_t = ref_t[::downsample_step]
+
+    downsampled_t = downsampled_t - downsampled_t[0]
+
+    final_sf = (len(downsampled_t) - 1) / (downsampled_t[-1] - downsampled_t[0]) if len(downsampled_t) > 1 else 0
+    print(f"Final sampling frequency: {final_sf:.1f} Hz")
+    print(f"Final data length: {len(downsampled_t)} samples")
 
     # Drop the first few seconds because of synchronization
     drop_secs = 0.0
     start_idx = np.searchsorted(downsampled_t, drop_secs)
-
-    # Slice off sync segments
-    emg_60Hz = emg_60Hz[start_idx:]
-    angles_60Hz = angles_60Hz[start_idx:]
-    downsampled_t = downsampled_t[start_idx:] - drop_secs
+    if drop_secs > 0:
+        start_idx = np.searchsorted(downsampled_t, drop_secs)
+        emg_60Hz = emg_60Hz[start_idx:]
+        angles_60Hz = angles_60Hz[start_idx:]
+        downsampled_t = downsampled_t[start_idx:] - drop_secs
 
     # Save results
     np.save(os.path.join(data_dir, 'aligned_filtered_emg.npy'), emg_60Hz)
@@ -495,7 +490,7 @@ if __name__ == "__main__":
     parser.add_argument('--person_id', required=True, help='Person ID (e.g. Emanuel_FirstTries)')
     parser.add_argument('--movement', required=False, help='Movement name (e.g. indexFlDigitsEx, optional)')
     parser.add_argument('--out_root', default='data', help='Root directory (default: data)')
-    parser.add_argument('--snr_threshold', type=float, default=6, help='SNR threshold for channel selection')
+    parser.add_argument('--snr_threshold', type=float, default=2, help='SNR threshold for channel selection')
     parser.add_argument("--hand_side", "-s", choices=["left", "right"], default="left", help="Side of the prosthetic hand")
     parser.add_argument('--no_timestamp_scaling', action='store_true', help='Disable timestamp scaling (use original timestamps)')
     args = parser.parse_args()
