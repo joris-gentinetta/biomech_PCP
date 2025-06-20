@@ -180,6 +180,8 @@ if __name__ == "__main__":
     cap = cv2.VideoCapture(input_video_path)
     scales = (vid_size[0], vid_size[1], vid_size[0])
     n_frames = cap.get(cv2.CAP_PROP_FRAME_COUNT) if args.video_end == -1 else args.video_end
+    assert n_frames <= numFrames, f"Video has only {numFrames} frames, but you requested {n_frames} frames."
+
     frames = range(0, int(n_frames))
     video_timestamps = [int(frame * 1000 / fps) for frame in frames]
     joints_df = run_mediapipe(cap, frames, video_timestamps, sides, scales, args.hand_roi_size, args.process)
@@ -251,6 +253,9 @@ if __name__ == "__main__":
     smooth_angles_df = smooth_angles_df.loc[start:]
     smooth_angles_df.to_parquet(join(experiment_dir, "cropped_smooth_angles.parquet"))
     emg = np.load(join(args.data_dir, "emg.npy"))
+
+    ##### JUST FOR SHAUN - MULTIPLY CHANNEL 12 by 2
+    # emg[:, 12] = emg[:, 12] * 2
     np.save(join(experiment_dir, "cropped_emg.npy"), emg[start:end])
 
     if args.visualize:

@@ -7,7 +7,7 @@ import matplotlib.pyplot as plt
 # folders = [
 #     "indexFlDigitsEx",
 #     "wristFlHandCl",
-#     "keyOpCl",
+#     "keyOpCl_old",
 #     "pointOpCl",
 #     "pinchOpCl",
 #     "handOpCl",
@@ -29,7 +29,7 @@ folders = [
     'handOpCl',
     'pinchOpCl',
     'pointOpCl',
-    'keyOpCl',
+    'keyOpCl_old',
     'indexFlDigitsEx',
     'wristFlEx',
     'wristFlHandCl'

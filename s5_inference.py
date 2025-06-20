@@ -875,6 +875,7 @@ class psyonicArm():
 
 				# self.printSensors()
 				if not interpCount % self.loopRate:
+					#### TAG PRINT
 					# self.printSensors()
 					if self.controlMode == 'position': print(f'{(time.time() - self.startTimestamp):07.3f}', [f'{com:07.3f}' for com in handCom]) # position
 					# if self.controlMode == 'velocity': print(f'{(time.time() - self.startTimestamp):07.3f}', [f'{com:07.3f}' for com in handCom]) # velocity
@@ -925,6 +926,7 @@ class psyonicArm():
 			self.lastposCom = self.NetCom
 			# posCom = controller.forwardDynamics() # todo biophysical model
 			posCom = controller.runModel()
+			# self.NetCom = posCom
 			self.NetCom = np.asarray(self.lowpassCommands.filter(np.asarray([posCom]).T).T[0])
 
 			if self.exitEvent.is_set():

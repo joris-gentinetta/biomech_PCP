@@ -7,4 +7,6 @@ __pycache__
 /dynamics/.DS_Store
 wandb
 .DS_Store
-
+OMEN/
+omen*
+hand_config.yaml

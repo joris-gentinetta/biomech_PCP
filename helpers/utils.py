@@ -84,6 +84,11 @@ class AnglesHelper:
 
         return max(pipAng, mcpAng)
 
+    # Project thumb vector onto plane orthogonal to palm
+    @staticmethod
+    def project_to_plane(v, normal):
+        return v - np.dot(v, normal) * normal
+
     def get_mapping(self):
         if os.path.exists('helpers/mapping.npz'):
             mapping = np.load('helpers/mapping.npz')
@@ -190,25 +195,149 @@ class AnglesHelper:
                 ### Thumb ###########
                 try:
                     if not joris:
-                        thumb = thumb_tip - thumb_cmc  # defines the line of the thumb
-                        thumb_index = index - thumb_mcp
-                        index_wrist = index - hand_wrist
-                        thumb_cmc_angle = thumb_cmc - hand_wrist
-                        thumb_base = thumb_mcp - thumb_cmc
-                        thumb_link = thumb_tip - thumb_mcp
-                        pinky_to_index = index - pinky
-                        cmc_to_ring = ring - thumb_cmc  # defines the axis of rotation for the thumb
+                        # === THUMB OPPOSITION ANGLE ===
+                        # Vector from CMC to MCP defines base thumb rotation
+                        # thumb_cmc_mcp = thumb_mcp - thumb_cmc
+                        thumb_cmc_mcp = thumb_mcp - hand_wrist
+                        thumb_cmc_mcp /= np.linalg.norm(thumb_cmc_mcp)
 
-                        thumb_plane_normal = -np.cross(cmc_to_ring,
-                                                      thumb_cmc_angle)  # normal to the plane formed by the thumb and the axis of rotation
-                        thumb_plane_normal = thumb_plane_normal / np.linalg.norm(thumb_plane_normal)
-                        thumb_rot_angle = -3 * (self.angleBetweenVectors(thumb_plane_normal,
-                                                                         palmNormal) - 20)  # angle between the normal to the thumb plane and the normal to the palm plane (negate for psyonic)
+                        # Vector across the palm (index to pinky)
+                        across_palm = pinky - index
+                        across_palm /= -np.linalg.norm(across_palm)
 
-                        thumb_flex_angle = 3 * (np.max(90 - np.asarray(
-                            [self.angleBetweenVectors(thumb_tip - thumb_ip, thumb_mcp - thumb_ip),
-                             self.angleBetweenVectors(thumb_link, index_wrist), self.angleBetweenVectors(thumb_base,
-                                                                                                         index_wrist)])) - 50)  # angle between the thumb and the index finger
+                        # Project both into the palm plane
+                        thumb_proj = thumb_cmc_mcp - np.dot(thumb_cmc_mcp, palmNormal) * palmNormal
+                        thumb_proj /= np.linalg.norm(thumb_proj)
+
+                        ref_proj = across_palm - np.dot(across_palm, palmNormal) * palmNormal
+                        ref_proj /= np.linalg.norm(ref_proj)
+
+                        # Opposition angle: negative when thumb sweeps across palm
+                        thumb_rot_angle = -self.angleBetweenVectors(thumb_proj, ref_proj)
+
+                        # === THUMB FLEXION ANGLE ===
+                        # 1. IP joint flexion
+                        ip_flexion_vec1 = thumb_tip - thumb_ip
+                        ip_flexion_vec2 = thumb_ip - thumb_mcp
+                        angle_ip = self.angleBetweenVectors(ip_flexion_vec1, ip_flexion_vec2)
+
+                        # 2. MCP/IP folding relative to extended hand (index to wrist)
+                        thumb_link = thumb_mcp - thumb_ip
+                        thumb_link_proj = thumb_link - np.dot(thumb_link, palmNormal) * palmNormal
+                        thumb_link_proj /= np.linalg.norm(thumb_link_proj)
+
+                        index_wrist = hand_wrist - index  # reversed to match anatomical outward direction
+                        index_wrist_proj = index_wrist - np.dot(index_wrist, palmNormal) * palmNormal
+                        index_wrist_proj /= np.linalg.norm(index_wrist_proj)
+
+                        # MCP flexion/adduction angle in palm plane
+                        angle_thumb_folding = self.angleBetweenVectors(thumb_link_proj, index_wrist_proj)
+
+                        # Final compound flexion angle
+                        thumb_flex_angle = max(angle_ip, angle_thumb_folding)
+                        # # === THUMB OPPOSITION ANGLE ===
+                        # # Vector from MCP to IP
+                        # thumb_mcp_ip = thumb_ip - thumb_mcp
+                        #
+                        # # Define palm transverse plane basis
+                        # palm_x = index - pinky
+                        # palm_x /= np.linalg.norm(palm_x)
+                        # palm_z = palmNormal
+                        # palm_y = np.cross(palm_z, palm_x)
+                        # palm_y /= np.linalg.norm(palm_y)
+                        #
+                        # # Project thumb vector into 2D plane (palm_x, palm_y)
+                        # thumb_proj = AnglesHelper.project_to_plane(thumb_mcp_ip, palm_z)
+                        # x_comp = np.dot(thumb_proj, palm_x)
+                        # y_comp = np.dot(thumb_proj, palm_y)
+                        #
+                        # # Compute angle in palm plane
+                        # thumb_rot_angle = -np.degrees(np.arctan2(y_comp, x_comp))  # Negative: opposition is clockwise across palm
+
+                        # === THUMB OPPOSITION ANGLE ===
+                        # Use MCP → IP vector
+                        # thumb_mcp_ip = thumb_ip - thumb_mcp
+                        #
+                        # thumb_proj = AnglesHelper.project_to_plane(thumb_mcp_ip, palmNormal)
+                        # thumb_proj /= np.linalg.norm(thumb_proj)
+                        #
+                        # # Reference vector across the palm (pinky to index)
+                        # ref_vec = AnglesHelper.project_to_plane(index - pinky, palmNormal)
+                        # ref_vec /= np.linalg.norm(ref_vec)
+                        #
+                        # # Opposition angle: 0 when in-plane, negative when opposed
+                        # thumb_rot_angle = -self.angleBetweenVectors(thumb_proj, ref_vec)
+
+                        # === THUMB FLEXION ANGLE ===
+                        # 1. IP joint flexion
+                        # ip_flexion_vec1 = thumb_tip - thumb_ip
+                        # ip_flexion_vec2 = thumb_mcp - thumb_ip
+                        # angle_ip = self.angleBetweenVectors(ip_flexion_vec1, ip_flexion_vec2)
+                        #
+                        # # 2. MCP-IP vector vs index-wrist (functional flexion direction)
+                        # index_wrist = index - hand_wrist
+                        # angle_thumb_mcp_ip = 120 - self.angleBetweenVectors(thumb_mcp_ip, index_wrist)
+                        #
+                        # # 3. MCP-IP vector vs index-CMC
+                        # index_CMC = index - thumb_cmc
+                        # angle_thumb_cmc_ip = 120 - self.angleBetweenVectors(thumb_mcp_ip, index_CMC)
+                        #
+                        # # Final flexion angle: maximum of IP flexion and MCP-IP directions
+                        # thumb_flex_angle = max(angle_ip, angle_thumb_mcp_ip, angle_thumb_cmc_ip)
+
+                        # # === THUMB OPPOSITION ANGLE ===
+                        # # Thumb vector: CMC → MCP
+                        # thumb_cmc_mcp = thumb_mcp - thumb_cmc
+                        #
+                        # thumb_proj = AnglesHelper.project_to_plane(thumb_cmc_mcp, palmNormal)
+                        # thumb_proj /= np.linalg.norm(thumb_proj)
+                        #
+                        # # Reference vector across the palm (e.g., pinky to index)
+                        # ref_vec = AnglesHelper.project_to_plane(index - pinky, palmNormal)
+                        # ref_vec /= np.linalg.norm(ref_vec)
+                        #
+                        # # Opposition angle: 0 when in-plane, negative when opposing
+                        # thumb_rot_angle = -self.angleBetweenVectors(thumb_proj, ref_vec)
+                        #
+                        # # === THUMB FLEXION ANGLE ===
+                        # # 1. IP joint flexion
+                        # ip_flexion_vec1 = thumb_tip - thumb_ip
+                        # ip_flexion_vec2 = thumb_mcp - thumb_ip
+                        # angle_ip = self.angleBetweenVectors(ip_flexion_vec1, ip_flexion_vec2)
+                        #
+                        # # 2. MCP adduction: angle between MCP vector and palm plane
+                        # thumb_base_unit = thumb_cmc_mcp / np.linalg.norm(thumb_cmc_mcp)
+                        # angle_mcp_add = 90 - np.degrees(np.arcsin(np.clip(np.dot(thumb_base_unit, palmNormal), -1.0, 1.0)))
+                        #
+                        # # 3. Overall thumb folding direction relative to palm (e.g., vs. index-wrist)
+                        # thumb_link = thumb_tip - thumb_mcp
+                        # index_wrist = index - hand_wrist
+                        # angle_thumb_index = self.angleBetweenVectors(thumb_link, index_wrist)
+                        # angle_thumb_base = self.angleBetweenVectors(thumb_cmc_mcp, index_wrist)
+                        #
+                        # # Final flexion angle: positive, unscaled
+                        # # thumb_flex_angle = max(angle_ip, angle_mcp_add, angle_thumb_index, angle_thumb_base)
+                        # thumb_flex_angle = max(angle_ip, angle_thumb_index, angle_thumb_base)
+
+                        # thumb = thumb_tip - thumb_cmc  # defines the line of the thumb
+                        # thumb_index = index - thumb_mcp
+                        # index_wrist = index - hand_wrist
+                        # thumb_cmc_angle = thumb_cmc - hand_wrist
+                        # thumb_base = thumb_mcp - thumb_cmc
+                        # thumb_link = thumb_tip - thumb_mcp
+                        # pinky_to_index = index - pinky
+                        # cmc_to_ring = ring - thumb_cmc  # defines the axis of rotation for the thumb
+                        #
+                        # thumb_plane_normal = -np.cross(cmc_to_ring,
+                        #                               thumb_cmc_angle)  # normal to the plane formed by the thumb and the axis of rotation
+                        # thumb_plane_normal = thumb_plane_normal / np.linalg.norm(thumb_plane_normal)
+                        # thumb_rot_angle = -3 * (self.angleBetweenVectors(thumb_plane_normal,
+                        #                                                  palmNormal) - 20)  # angle between the normal to the thumb plane and the normal to the palm plane (negate for psyonic)
+                        #
+                        # thumb_flex_angle = 3 * (np.max(90 - np.asarray(
+                        #     [self.angleBetweenVectors(thumb_tip - thumb_ip, thumb_mcp - thumb_ip),
+                        #      self.angleBetweenVectors(thumb_link, index_wrist), self.angleBetweenVectors(thumb_base,
+                        #                                                                                  index_wrist)])) - 50)  # angle between the thumb and the index finger
                         # thumb_flex_angle = 3 * (np.max(90 - np.asarray(
                         #     [self.angleBetweenVectors(thumb_tip - thumb_ip, thumb_mcp - thumb_ip),
                         #      self.angleBetweenVectors(thumb_link, index_wrist)])) - 50)  # angle between the thumb and the index finger

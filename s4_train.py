@@ -126,6 +126,7 @@ if __name__ == '__main__':
         model.to('cpu')
         model.load(join('data', args.person_dir, 'online_trials', experiment_name, 'models',
                         f'{args.person_dir}-online_last.pt'))
+
         model.eval()
         for set_id, test_set in enumerate(valsets + testsets):
             val_pred = model.predict(test_set, config.features, config.targets).squeeze(0).to('cpu').detach().numpy()

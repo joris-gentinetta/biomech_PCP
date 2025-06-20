@@ -27,7 +27,7 @@
 - 'wristFlHandCl'
 
 ## Preaparation
-Copy the <person_ID> folder, rename it with the actual person_ID. Adapt the <person_ID in this file and in the name field of all the config files.
+Copy the <person_ID> folder, rename it with the actual person_ID. Adapt the <person_ID> in this file and in the name field of all the config files.
 
 ## Recording Data
 Ask the participant to start the movement, then start the recording (makes cropping easier). After the first recording, check the data. There is no in plane calibration for the first 10 recordings (no wrist), record for 70 seconds. For the last two (wrist) recordings, ask them to move in plane, start the recording and after 5 seconds move to forward orientation of the lower arms / start movement. Record for 80 seconds total.
