@@ -89,6 +89,20 @@ python s4_train.py --person_dir <person_ID> --intact_hand Right --config_name mo
 ```
   
 ## Online Training
+Create a perturbation file for the online training:
+```
+import numpy as np
+import os
+
+pert_path = 'data/<person_ID>/online_trials/perturb/perturber.npy'
+
+if not os.path.exists(pert_path):
+    os.makedirs(os.path.dirname(pert_path), exist_ok=True)
+    perturber = np.abs(np.eye(8) + np.random.normal(0, .25, (8, 8)))
+    np.save(pert_path, perturber)
+else:
+    print('Perturbation file already exists.')
+```
 Run online training without perturbation for 6 minutes. 15 seconds per movement following the order above, then repeat in inverted order.
 ```
 python s7_online_learning.py --person_dir <person_ID> --intact_hand Right --config_name modular_online --save_model --experiment_name non_perturb --camera 0 --calibration_frames 60 --allow_tf32
@@ -113,6 +127,47 @@ python s4_train.py --person_dir <person_ID> --intact_hand Right --config_name Et
 python s5_inference.py -e --person_dir <person_ID> --config_name EtE.yaml --model_path /home/haptix/haptix/biomech_PCP/data/<person_ID>/models/<person_ID>_EtE.pt
 ```
 
+## Evaluation:
+### Run evaluation for true online learning:
+
+- run evaluation:
+```
+python s4_train.py --intact_hand Right --config_name modular_online --evaluate --person_dir <person_ID>
+python s4_train.py --intact_hand Right --config_name modular_online --evaluate --person_dir <person_ID> --perturb
+
+```
+
+### Prepare streaming data:
+- Process second half of the recordings:
+```
+    python s3_process_video.py --data_dir data/<person_ID>/recordings/thumbFlEx --experiment_name 2  --intact_hand Right --plane_frames_start 10 --plane_frames_end 110 --video_start 1810 --video_end 3610 --process
+    python s3_process_video.py --data_dir data/<person_ID>/recordings/thumbAbAd --experiment_name 2  --intact_hand Right --plane_frames_start 10 --plane_frames_end 110 --video_start 1810 --video_end 3610 --process
+    python s3_process_video.py --data_dir data/<person_ID>/recordings/indexFlEx --experiment_name 2  --intact_hand Right --plane_frames_start 10 --plane_frames_end 110 --video_start 1810 --video_end 3610 --process 
+    python s3_process_video.py --data_dir data/<person_ID>/recordings/mrpFlEx --experiment_name 2  --intact_hand Right --plane_frames_start 10 --plane_frames_end 110 --video_start 1810 --video_end 3610 --process
+    python s3_process_video.py --data_dir data/<person_ID>/recordings/fingersFlEx --experiment_name 2  --intact_hand Right --plane_frames_start 10 --plane_frames_end 110 --video_start 1810 --video_end 3610 --process 
+    python s3_process_video.py --data_dir data/<person_ID>/recordings/handOpCl --experiment_name 2  --intact_hand Right --plane_frames_start 10 --plane_frames_end 110 --video_start 1810 --video_end 3610 --process 
+    python s3_process_video.py --data_dir data/<person_ID>/recordings/pinchOpCl --experiment_name 2  --intact_hand Right --plane_frames_start 10 --plane_frames_end 110 --video_start 1810 --video_end 3610 --process 
+    python s3_process_video.py --data_dir data/<person_ID>/recordings/pointOpCl --experiment_name 2  --intact_hand Right --plane_frames_start 10 --plane_frames_end 110 --video_start 1810 --video_end 3610 --process 
+    python s3_process_video.py --data_dir data/<person_ID>/recordings/keyOpCl --experiment_name 2  --intact_hand Right --plane_frames_start 10 --plane_frames_end 110 --video_start 1810 --video_end 3610 --process 
+    python s3_process_video.py --data_dir data/<person_ID>/recordings/indexFlDigitsEx --experiment_name 2  --intact_hand Right --plane_frames_start 10 --plane_frames_end 110 --video_start 1810 --video_end 3610 --process 
+    python s3_process_video.py --data_dir data/<person_ID>/recordings/wristFlEx --experiment_name 2  --intact_hand Right --plane_frames_start 10 --plane_frames_end 110 --video_start 2550 --video_end 4350 --process 
+    python s3_process_video.py --data_dir data/<person_ID>/recordings/wristFlHandCl --experiment_name 2  --intact_hand Right --plane_frames_start 10 --plane_frames_end 110 --video_start 2035 --video_end 3835 --process 
+```
+- Create the streaming files:
+```
+python prep_online_data.py --person_id <person_ID>
+```
+
+### Run streamed online:
+- update parameters/person_dir and parameters/targets (intact hand) in 'data/offline_configs/pert-non_pert.yaml' and 
+
+- run training:
+```
+python online_HS.py --intact_hand Right --config_name pert-non_pert --allow_tf32
+python online_HS.py --intact_hand Right --config_name pert-non_pert-comp --allow_tf32
+python online_HS.py --intact_hand Right --config_name pert-non_pert-inverse --allow_tf32
+python online_HS.py --intact_hand Right --config_name pert-non_pert-comp-interpolate --allow_tf32
+```
 
 
 

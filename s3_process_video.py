@@ -174,7 +174,6 @@ if __name__ == "__main__":
     vid = imageio.get_reader(input_video_path, 'ffmpeg')
     vid_size = vid.get_meta_data()['size']
     fps = vid.get_meta_data()['fps'] # todo check
-    numFrames = sum(1 for _ in vid)
     vid.close()
 
     cap = cv2.VideoCapture(input_video_path)
@@ -237,14 +236,14 @@ if __name__ == "__main__":
     corrected = pd.read_parquet(join(experiment_dir, "corrected.parquet"))
     anglesHelper = AnglesHelper()
 
-    angles_df = anglesHelper.getArmAngles(corrected, sides, joris=args.jorisThumb)
+    angles_df = anglesHelper.getArmAngles(corrected, sides)
     angles_df.to_parquet(join(experiment_dir, "angles.parquet"))
 
     smooth_angles_df = anglesHelper.apply_gaussian_smoothing(angles_df, sigma=1.5, radius=2)
     smooth_angles_df.to_parquet(join(experiment_dir, "smooth_angles.parquet"))
-    #
+
     start = args.video_start
-    end = args.video_end if args.video_end != -1 else numFrames # len(angles_df)
+    end = args.video_end if args.video_end != -1 else len(angles_df)
 
     angles_df = pd.read_parquet(join(experiment_dir, "angles.parquet"))
     angles_df = angles_df.loc[start:]

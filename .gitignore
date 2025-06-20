@@ -1,12 +1,13 @@
 /data/
 /models/
-__pycache__
+__pycache__/
 /model_files/
 /.idea/
 /dynamics/dynamics.egg-info/
-/dynamics/.DS_Store
-wandb
+wandb/
 .DS_Store
 OMEN/
 omen*
 hand_config.yaml
+
+.ipynb_checkpoints/
