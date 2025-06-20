@@ -421,6 +421,286 @@ def start_raw_emg_recorder(base_dir, enable_video=False, sync_event=None):
 
     return stop_event, emg_thread, video_thread, raw_history, raw_timestamps, video_timestamps
 
+def get_movement_sequences(movement_name):
+    """
+    Get movement sequence(s) for individual or combined movements
+    Returns: (sequences, is_combined)
+    """
+    if movement_name not in hand_poses:
+        available = [k for k in hand_poses.keys() if not isinstance(hand_poses[k][0], str)]
+        combined = [k for k in hand_poses.keys() if isinstance(hand_poses[k][0], str)]
+        raise ValueError(f"Movement '{movement_name}' not found.\nAvailable individual: {available}\nAvailable combined: {combined}")
+    
+    movement_data = hand_poses[movement_name]
+    
+    # Check if this is a combined movement (list of strings)
+    if isinstance(movement_data, list) and len(movement_data) > 0 and isinstance(movement_data[0], str):
+        print(f"🔄 Combined movement '{movement_name}' → {movement_data}")
+        sequences = []
+        for sub_movement in movement_data:
+            if sub_movement in hand_poses:
+                sequences.append(hand_poses[sub_movement])
+            else:
+                raise ValueError(f"Sub-movement '{sub_movement}' not found")
+        return sequences, True
+    else:
+        # Regular single movement
+        return [movement_data], False
+
+def calculate_angular_distance(pos1, pos2):
+    """
+    Calculate the total angular distance between two joint positions
+    """
+    return np.linalg.norm(np.array(pos2) - np.array(pos1))
+
+def create_constant_velocity_trajectory(positions, num_steps):
+    """
+    Create trajectory with constant angular velocity (same angle change per step)
+    """
+    if len(positions) < 2:
+        return np.array(positions)
+    
+    positions = [np.array(p) for p in positions]
+    
+    # Calculate cumulative distances along the path
+    distances = [0.0]
+    for i in range(1, len(positions)):
+        dist = calculate_angular_distance(positions[i-1], positions[i])
+        distances.append(distances[-1] + dist)
+    
+    total_distance = distances[-1]
+    
+    if total_distance == 0:
+        # All positions are the same, just return repeated positions
+        return np.tile(positions[0], (num_steps, 1))
+    
+    # Create evenly spaced points along the total distance
+    target_distances = np.linspace(0, total_distance, num_steps)
+    
+    # Interpolate positions at these evenly spaced distances
+    trajectory = []
+    
+    for target_dist in target_distances:
+        # Find which segment this distance falls into
+        segment_idx = 0
+        for i in range(len(distances) - 1):
+            if distances[i] <= target_dist <= distances[i + 1]:
+                segment_idx = i
+                break
+        
+        # Interpolate within this segment
+        if segment_idx == len(distances) - 1:
+            # We're at the end
+            trajectory.append(positions[-1])
+        else:
+            # Linear interpolation based on distance
+            seg_start_dist = distances[segment_idx]
+            seg_end_dist = distances[segment_idx + 1]
+            seg_length = seg_end_dist - seg_start_dist
+            
+            if seg_length > 0:
+                alpha = (target_dist - seg_start_dist) / seg_length
+            else:
+                alpha = 0
+            
+            pos_start = positions[segment_idx]
+            pos_end = positions[segment_idx + 1]
+            
+            interpolated_pos = pos_start * (1 - alpha) + pos_end * alpha
+            trajectory.append(interpolated_pos)
+    
+    return np.array(trajectory)
+
+def build_constant_velocity_trajectory(pose, movement_name):
+    """
+    Build trajectory with constant angular velocity for multi-step movements
+    """
+    if not isinstance(pose, list):
+        raise ValueError(f"Movement {movement_name} should be a list of positions")
+    
+    positions = [np.array(p) for p in pose]
+    total_steps = 600  # 1 second at 600Hz
+    
+    if len(positions) == 2:
+        # Simple 2-position movement: use regular linear interpolation
+        pos1, pos2 = positions
+        steps_movement = 400
+        steps_pause = 200
+        
+        movement_traj = create_smooth_segment(pos1, pos2, steps_movement)
+        pause_traj = np.tile(pos2, (steps_pause, 1))
+        complete_traj = np.vstack([movement_traj, pause_traj])
+        
+        print(f"{movement_name}: {steps_movement} move + {steps_pause} pause = {complete_traj.shape[0]} steps → 1.0s")
+        
+    else:
+        # Multi-step movement: use constant angular velocity
+        pause_steps = 150
+        movement_steps = total_steps - pause_steps
+        
+        # Create constant velocity trajectory through all positions
+        movement_traj = create_constant_velocity_trajectory(positions, movement_steps)
+        
+        # Pause at final position
+        pause_traj = np.tile(positions[-1], (pause_steps, 1))
+        
+        complete_traj = np.vstack([movement_traj, pause_traj])
+        
+        # Calculate actual distances for verification
+        total_angular_distance = sum(calculate_angular_distance(positions[i], positions[i+1]) 
+                                   for i in range(len(positions)-1))
+        angular_velocity = total_angular_distance / (movement_steps / 600.0)  # degrees per second
+        
+        print(f"{movement_name}: {len(positions)} positions, {movement_steps} steps + {pause_steps} pause")
+        print(f"  Total angular distance: {total_angular_distance:.1f}°")
+        print(f"  Angular velocity: {angular_velocity:.1f}°/s")
+        print(f"  Distance per step: {total_angular_distance/movement_steps:.3f}°")
+    
+    return complete_traj
+
+def build_combined_constant_velocity_trajectory(sequences, movement_name):
+    """
+    Build combined trajectory where each part has constant angular velocity
+    """
+    print(f"📋 Building combined movement '{movement_name}' with constant angular velocity...")
+    
+    all_trajectories = []
+    
+    for i, seq in enumerate(sequences):
+        part_name = f"{movement_name}_part{i+1}"
+        print(f"\n   Part {i+1}/{len(sequences)}: {len(seq)} positions")
+        
+        # Build constant velocity trajectory for this part
+        traj = build_constant_velocity_trajectory(seq, part_name)
+        all_trajectories.append(traj)
+        
+        # Add pause between movements
+        if i < len(sequences) - 1:
+            pause_between = 120  # 0.2s pause
+            pause_traj = np.tile(traj[-1], (pause_between, 1))
+            all_trajectories.append(pause_traj)
+            print(f"   + 0.2s pause")
+    
+    combined_traj = np.vstack(all_trajectories)
+    total_time = combined_traj.shape[0] / 600.0
+    
+    print(f"\n🎯 Total combined trajectory: {combined_traj.shape[0]} steps → {total_time:.1f}s")
+    print("✅ Each movement part has constant angular velocity")
+    
+    return combined_traj
+
+def create_smooth_segment(start_pos, end_pos, num_steps):
+    """
+    Create smooth trajectory segment between two positions with constant speed
+    """
+    if num_steps <= 1:
+        return np.array([end_pos])
+    
+    # Simple linear interpolation for consistent timing
+    trajectory = []
+    for i in range(num_steps):
+        alpha = i / (num_steps - 1)  # 0 to 1
+        pos = start_pos * (1 - alpha) + end_pos * alpha
+        trajectory.append(pos)
+    
+    return np.array(trajectory)
+
+def build_movement_trajectory(pose, movement_name):
+    """
+    Build trajectory - executes the pose as designed WITHOUT forcing return to start
+    """
+    if not isinstance(pose, list):
+        raise ValueError(f"Movement {movement_name} should be a list of positions")
+    
+    # Convert all positions to numpy arrays
+    positions = [np.array(p) for p in pose]
+    
+    # FIXED TIMING: Always create exactly 600 steps (1 second)
+    total_steps = 600
+    
+    if len(positions) == 2:
+        # Simple 2-position movement: JUST execute pos1 → pos2 with pause
+        pos1, pos2 = positions
+        
+        # Split into 2 parts: movement (400 steps) + pause (200 steps)
+        steps_movement = 400  # 2/3 of time for movement
+        steps_pause = 200     # 1/3 of time for pause at end
+        
+        # Part 1: pos1 → pos2 (smooth movement)
+        movement_traj = create_smooth_segment(pos1, pos2, steps_movement)
+        
+        # Part 2: pause at pos2 (hold final position)
+        pause_traj = np.tile(pos2, (steps_pause, 1))
+        
+        # Combine (total = 600 steps)
+        complete_traj = np.vstack([movement_traj, pause_traj])
+        
+        print(f"{movement_name}: {steps_movement} move + {steps_pause} pause = {complete_traj.shape[0]} steps → 1.0s")
+        
+    else:
+        # Multi-step movement: go through all positions sequentially with pause at end
+        num_segments = len(positions) - 1
+        
+        # Reserve steps for final pause
+        pause_steps = 150  # 0.25s pause at end
+        movement_steps = total_steps - pause_steps
+        steps_per_segment = movement_steps // num_segments
+        
+        trajectory_parts = []
+        
+        # Go through all positions in sequence (no return journey)
+        for i in range(num_segments):
+            segment = create_smooth_segment(positions[i], positions[i+1], steps_per_segment)
+            trajectory_parts.append(segment)
+        
+        # Pause at final position
+        pause_traj = np.tile(positions[-1], (pause_steps, 1))
+        trajectory_parts.append(pause_traj)
+        
+        # Combine all parts
+        complete_traj = np.vstack(trajectory_parts)
+        
+        # Ensure exactly 600 steps
+        if complete_traj.shape[0] < total_steps:
+            padding_needed = total_steps - complete_traj.shape[0]
+            padding = np.tile(complete_traj[-1], (padding_needed, 1))
+            complete_traj = np.vstack([complete_traj, padding])
+        elif complete_traj.shape[0] > total_steps:
+            complete_traj = complete_traj[:total_steps]
+        
+        print(f"{movement_name}: {num_segments} segments + pause = {complete_traj.shape[0]} steps → 1.0s")
+    
+    return complete_traj
+
+def build_combined_trajectory(sequences, movement_name):
+    """
+    Build trajectory for combined movements with smooth transitions
+    """
+    print(f"📋 Building combined movement '{movement_name}' with {len(sequences)} parts...")
+    
+    all_trajectories = []
+    
+    for i, seq in enumerate(sequences):
+        print(f"   Part {i+1}/{len(sequences)}: {len(seq)} positions")
+        
+        # Build trajectory for this part
+        traj = build_movement_trajectory(seq, f"{movement_name}_part{i+1}")
+        all_trajectories.append(traj)
+        
+        # Add SHORT pause between movements (except after last one)
+        if i < len(sequences) - 1:
+            pause_between = 120  # 0.2s pause between movements (shorter!)
+            pause_traj = np.tile(traj[-1], (pause_between, 1))
+            all_trajectories.append(pause_traj)
+            print(f"   + 0.2s pause")
+    
+    combined_traj = np.vstack(all_trajectories)
+    total_time = combined_traj.shape[0] / 600.0
+    
+    print(f"🎯 Total combined trajectory: {combined_traj.shape[0]} steps → {total_time:.1f}s")
+    
+    return combined_traj
+
 def main():
     parser = argparse.ArgumentParser(
         description="Record synchronized EMG + prosthetic hand pose data"
@@ -513,58 +793,29 @@ def main():
     arm.initSensors()
     arm.startComms()
 
-    # Validate movement
-    if args.movement not in hand_poses:
-        print(f"Unknown movement '{args.movement}'. Available: {list(hand_poses.keys())}")
+    # Get movement sequences (handles both single and combined movements)
+    try:
+        sequences, is_combined = get_movement_sequences(args.movement)
+    except ValueError as e:
+        print(f"Error: {e}")
         arm.close()
         return
-    pose = hand_poses[args.movement]
 
-    # Build trajectory (your existing trajectory code)
-    if args.movement == "indexFlDigitsEx" and isinstance(pose, list) and len(pose) == 2:
-        pos1 = np.array(pose[0])
-        pos2 = np.array(pose[1])
-        total_dur = 2.0
-        steps = 500
-        key_poses = [pos1, pos2, pos1]
-        times = [0, total_dur / 2, total_dur]
-        smooth_traj = CubicSpline(
-            times, 
-            np.vstack(key_poses), 
-            axis=0, 
-            bc_type='clamped'
-        )(np.linspace(0, total_dur, steps))
+    if is_combined:
+        smooth_traj = build_combined_constant_velocity_trajectory(sequences, args.movement)
     else:
-        # Standard trajectory building
-        neutral = np.array([2, 2, 2, 2, 2, -2])
-        if isinstance(pose[0], (list, np.ndarray)):
-            key_poses = [neutral] + [np.array(p) for p in pose] + [neutral]
-        else:
-            key_poses = [neutral, np.array(pose), neutral]
-        total_dur = 2.0
-        steps = 600
-        times = np.linspace(0, total_dur, len(key_poses))
-        interp = np.linspace(0, total_dur, steps)
-        traj = CubicSpline(times, np.vstack(key_poses), axis=0)(interp)
+        smooth_traj = build_constant_velocity_trajectory(sequences[0], args.movement)
 
-        # Enforce constant speed
-        diffs = np.diff(traj, axis=0)
-        dist = np.linalg.norm(diffs, axis=1)
-        s = np.concatenate([[0], np.cumsum(dist)])
-        s_u = np.linspace(0, s[-1], len(s))
-        const_traj = np.zeros_like(traj)
-        idx = np.clip(np.searchsorted(s, s_u) - 1, 0, len(s) - 2)
-        for i, su in enumerate(s_u):
-            i0 = idx[i]
-            ds = s[i0 + 1] - s[i0]
-            alpha = (su - s[i0]) / ds if ds > 0 else 0
-            const_traj[i] = traj[i0] * (1 - alpha) + traj[i0 + 1] * alpha
-        smooth_traj = const_traj
-
-    # Clip to safe ranges
+    # Apply safety clipping
     joint_mins = np.array([0, 0, 0, 0, 0, -120])
     joint_maxs = np.array([120, 120, 120, 120, 120, 0])
     smooth_traj = np.clip(smooth_traj, joint_mins, joint_maxs)
+
+    # Display trajectory info
+    print(f"Final trajectory shape: {smooth_traj.shape}")
+    print(f"Estimated execution time: {smooth_traj.shape[0]/600:.2f}s")
+    print(f"Start pose: {smooth_traj[0]}")
+    print(f"End pose: {smooth_traj[-1]}")
 
     # CRITICAL FIX: Warm-up iterations WITHOUT recording
     print(f"\n=== Running {args.sync_iterations} warm-up iterations (NOT recording) ===")
@@ -572,7 +823,7 @@ def main():
     
     for i in range(args.sync_iterations):
         print(f"Warm-up iteration {i+1}/{args.sync_iterations}")
-        arm.mainControlLoop(posDes=smooth_traj, period=10, emg=None)
+        arm.mainControlLoop(posDes=smooth_traj, period=1, emg=None)
 
     print("\n=== Warm-up complete. Starting synchronized recording NOW ===")
     
@@ -592,7 +843,7 @@ def main():
         print(f"Recording iteration {itr}/{args.record_iterations}...")
         arm.resetRecording()
         arm.recording = True
-        arm.mainControlLoop(posDes=smooth_traj, period=10, emg=None)
+        arm.mainControlLoop(posDes=smooth_traj, period=1, emg=None)
         arm.recording = False
 
         # Store angle data
@@ -645,9 +896,9 @@ def main():
             print(f"\n=== Sync Quality ===")
             print(f"Duration difference: {abs(emg_duration - angles_duration):.2f}s")
             if abs(emg_duration - angles_duration) < 1.0:
-                print("YY Excellent synchronization!")
+                print("✅ Excellent synchronization!")
             else:
-                print("XX  Check synchronization - durations differ significantly")
+                print("⚠️  Check synchronization - durations differ significantly")
 
     arm.close()
 
