@@ -5,8 +5,8 @@ library(tidyr)
 library(gridExtra)
 
 # Directories
-plot_folder <- "/Users/jg/Desktop/upper_limb/paper_figures-4"
-data_folder <- "/Users/jg/Desktop/upper_limb/paper_data-2"
+plot_folder <- "/Users/jorisg/Desktop/upper_limb/paper_figures_revision-R"
+data_folder <- "/Users/jorisg/Desktop/upper_limb/paper_data-2"
 
 df <- read.csv(file.path(data_folder, 'dataAmount.csv'))
 df$"Online Training Time [s]" <- df$X
@@ -81,7 +81,7 @@ combined_plot <- ggplot(df, aes(x = `Online Training Time [s]`, y = `Total MSE`,
     axis.ticks.length = unit(0, "pt"), 
     panel.background = element_rect(fill = "gray98", color = NA), 
     panel.grid.minor = element_blank(), 
-    panel.grid.major = element_line(size = 0.3)
+    panel.grid.major = element_line(size = 0.3, color = "gray90")
   )
 
 
