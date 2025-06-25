@@ -5,8 +5,9 @@ library(tidyr)
 library(gridExtra)
 
 # Directories
-plot_folder <- "/Users/jg/Desktop/upper_limb/paper_figures-4"
-data_folder <- "/Users/jg/Desktop/upper_limb/paper_data-2"
+plot_folder <- "/Users/jorisg/Desktop/upper_limb/paper_figures_revision-R"
+data_folder <- "/Users/jorisg/Desktop/upper_limb/paper_data-2"
+
 dir.create(plot_folder, recursive = TRUE, showWarnings = FALSE)
 ptc = c('P_149', 'P_238', 'P_407', 'P_426', 'P_577', 'P_668', 'P_711', 'P_950', 'P7_453', 'P6_820')
 ptcID = c('P_149' = 'P1', 'P_238' = 'P2', 'P_407' = 'P3', 'P_426' = 'P4', 'P_577' = 'P5', 'P_668' = 'P6', 'P_711' = 'P7', 'P_950' = 'P8', 'P7_453' = 'A1', 'P6_820' = 'A2')
@@ -75,7 +76,7 @@ combined_plot <- ggplot(plot_data, aes(x = Phase, y = MSE, color = Participant, 
     axis.ticks.length = unit(0, "pt"), 
     panel.background = element_rect(fill = "gray98", color = NA), 
     panel.grid.minor = element_blank(), 
-    panel.grid.major = element_line(size = 0.3)
+    panel.grid.major = element_line(size = 0.3, color = "gray90")
   ) +
   guides(
     color = guide_legend(title = "Participants", ncol = 2, title.position = "top", title.hjust = 0.5),

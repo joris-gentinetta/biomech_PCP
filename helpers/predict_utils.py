@@ -149,7 +149,7 @@ def get_data(
     return trainsets, valsets, combined_sets, testsets
 
 
-def initialize_weights(model, method="default"):
+def initialize_weights(model, method="default_all"):
     # [xavier_normal, kaiming_normal, orthogonal, default, default_0, default_all]
     # reordered:
     # [default_all, default_0, default, kaiming_normal, xavier_normal, orthogonal]
@@ -218,6 +218,8 @@ def train_model(
             initialize_weights(
                 model.model.activation_model, config.activation_model["init"]
             )
+        elif config.model_type == "DenseNet":
+            initialize_weights(model.model, config.init)
 
         model.to(device)
 
