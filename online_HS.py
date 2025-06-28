@@ -202,9 +202,10 @@ def online_train_model():
         print("Training model...")
         # with tqdm(range(1, config.n_epochs + 1)) as pbar:
         epoch = 0
-        val_loss, test_loss, all_losses = evaluate_model(
+        val_loss, test_loss, all_losses, target_numpys, pred_numpys = evaluate_model(
             model, valsets, testsets, device, config
         )
+
         if val_loss < best_val_loss:
             best_val_loss = val_loss
             wandb.run.summary["best_epoch"] = epoch
@@ -213,9 +214,33 @@ def online_train_model():
             wandb.run.summary["best_test_loss"] = test_loss
             wandb.run.summary["best_test_epoch"] = epoch
         wandb.run.summary["used_epochs"] = epoch
+
         test_recording_names = (
             config.test_recordings if config.test_recordings is not None else []
         )
+        from pathlib import Path
+
+        all_recording_names = config.recordings + test_recording_names
+        all_target_names = [target[1] for target in config.targets]
+        os.makedirs(Path("data/predictions") / config.person_dir, exist_ok=True)
+        for set_id, (target_numpy, pred_numpy) in enumerate(
+            zip(target_numpys, pred_numpys)
+        ):
+            print(config.targets)
+            target_df = pd.DataFrame(target_numpy, columns=all_target_names)
+            pred_df = pd.DataFrame(pred_numpy, columns=all_target_names)
+
+            target_df.to_parquet(
+                Path("data/predictions")
+                / config.person_dir
+                / f"target_{all_recording_names[set_id]}_before.parquet"
+            )
+            pred_df.to_parquet(
+                Path("data/predictions")
+                / config.person_dir
+                / f"perturbed_{config.perturb}-pred_{all_recording_names[set_id]}_before.parquet"
+            )
+
         log = {
             f"val_loss/{(config.recordings + test_recording_names)[set_id]}": loss
             for set_id, loss in enumerate(all_losses)
@@ -401,8 +426,8 @@ def online_train_model():
                 if torch.any(torch.isnan(loss)):
                     print("NAN Loss!")
 
-            val_loss, test_loss, all_losses = evaluate_model(
-                model, valsets, testsets, device, config
+            val_loss, test_loss, all_losses, target_numpys, pred_numpys = (
+                evaluate_model(model, valsets, testsets, device, config)
             )
             if val_loss < best_val_loss:
                 best_val_loss = val_loss
@@ -422,6 +447,28 @@ def online_train_model():
             test_recording_names = (
                 config.test_recordings if config.test_recordings is not None else []
             )
+
+            ##
+
+            all_recording_names = config.recordings + test_recording_names
+            os.makedirs(Path("data/predictions") / config.person_dir, exist_ok=True)
+            for set_id, (target_numpy, pred_numpy) in enumerate(
+                zip(target_numpys, pred_numpys)
+            ):
+                target_df = pd.DataFrame(target_numpy, columns=all_target_names)
+                pred_df = pd.DataFrame(pred_numpy, columns=all_target_names)
+
+                target_df.to_parquet(
+                    Path("data/predictions")
+                    / config.person_dir
+                    / f"target_{all_recording_names[set_id]}_after.parquet"
+                )
+                pred_df.to_parquet(
+                    Path("data/predictions")
+                    / config.person_dir
+                    / f"perturbed_{config.perturb}-pred_{all_recording_names[set_id]}_after.parquet"
+                )
+            ##
             log = {
                 f"val_loss/{(config.recordings + test_recording_names)[set_id]}": loss
                 for set_id, loss in enumerate(all_losses)
@@ -448,7 +495,7 @@ if __name__ == "__main__":
         config = Config(wandb_config)
 
     sweep_id = wandb.sweep(wandb_config, project=config.wandb_project)
-    # wandb.agent(sweep_id, online_train_model)
+    wandb.agent(sweep_id, online_train_model)
 
-    pool = multiprocessing.Pool(processes=4)
-    pool.map(wandb_process, [sweep_id for i in range(4)])
+    # pool = multiprocessing.Pool(processes=4)
+    # pool.map(wandb_process, [sweep_id for i in range(4)])

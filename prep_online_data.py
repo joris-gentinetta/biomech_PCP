@@ -30,7 +30,7 @@ def concatenate_files(data_dir, folders, experiment):
     angles_data_second_half = []
 
     for folder in folders:
-        folder_path = Path(data_dir) / folder / "experiments/2"
+        folder_path = Path(data_dir) / folder / "experiments/1"
         emg_file_path = folder_path / "cropped_emg.npy"
         angles_file_path = folder_path / "cropped_smooth_angles.parquet"
 

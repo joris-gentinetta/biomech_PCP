@@ -57,3 +57,20 @@ python online_HS.py --intact_hand Left --config_name pert-non_pert-comp-interpol
 
 python online_HS.py --intact_hand Left --config_name pert-non_pert-adaptLR --allow_tf32
 
+# revision: 
+python prep_online_data.py --person_id P_577 
+python prep_online_data.py --person_id P_407
+python prep_online_data.py --person_id P_711
+python prep_online_data.py --person_id P_238
+python prep_online_data.py --person_id P_426
+python prep_online_data.py --person_id P_950
+python prep_online_data.py --person_id P_149
+python prep_online_data.py --person_id P_668
+
+python prep_online_data.py --person_id P6_820
+python prep_online_data.py --person_id P7_453 # right
+
+python online_HS.py --intact_hand Right --config_name pert-non_pert-revision-R --allow_tf32
+python online_HS.py --intact_hand Left --config_name pert-non_pert-revision --allow_tf32
+
+-> study_participants_offline, sweep pert-non_pert-revision

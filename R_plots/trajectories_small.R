@@ -99,19 +99,22 @@ for (setting in plot_settings) {
 # Set factor levels for correct plotting order
 plot_data <- plot_data %>%
   mutate(
-    Phase = factor(Phase, levels = c("After Initial Training", "After Perturbation", "After Online Training")), # nolint: line_length_linter.
+    Phase = factor(Phase, levels = c("After Initial Training", "After Perturbation", "After Online Training")),
     Recording_Name = factor(Recording_Name, levels = unique(Recording_Name))
   )
 
-# Define data subsets for plotting
-data_first_set <- plot_data %>% filter(Recording_Name %in% levels(Recording_Name)[1:4])
-data_second_set <- plot_data %>% filter(Recording_Name %in% levels(Recording_Name)[5:8])
-data_last_set <- plot_data %>% filter(!Recording_Name %in% levels(Recording_Name)[1:8])
+# Only show the first two plot recordings for each set
+first_set_recordings <- levels(plot_data$Recording_Name)[1:2]
+second_set_recordings <- levels(plot_data$Recording_Name)[5:6]
+last_set_recordings <- levels(plot_data$Recording_Name)[9:10]
+
+data_first_set <- plot_data %>% filter(Recording_Name %in% first_set_recordings)
+data_second_set <- plot_data %>% filter(Recording_Name %in% second_set_recordings)
+data_last_set <- plot_data %>% filter(Recording_Name %in% last_set_recordings)
 
 
 
-  
-  
+
 create_plot <- function(data) {
   ggplot(data, aes(x = Time, y = Value, color = Color, linetype = Line_Type)) +
     geom_line(size = 1, alpha = 0.8) + # Slightly thicker lines with transparency
@@ -146,7 +149,7 @@ create_plot <- function(data) {
       labels = c(0, 2, 4, 6)           # Label these breaks as 0 to 6
     ) +    
     theme(
-      legend.position = c(0.9853, 0.795), # Adjust to move it right and up slightly
+      legend.position = c(0.9853, 0.59), # Adjust to move it right and up slightly
       legend.justification = c("right", "top"), # Aligns legend top-right corner to position
       legend.direction = "vertical", # Horizontal legend
       legend.title = element_blank(), # Remove legend title
@@ -188,11 +191,11 @@ p3 <- create_plot(data_last_set)
 combined_plot <- grid.arrange(p1, p2, p3, ncol = 1)
 
 width <- 18
-height <- 18 * 1.2
+height <- 18 * 1.2 / 1.8
 
 
 ggsave(
-  filename = file.path(plot_folder, "trajectories.pdf"),
+  filename = file.path(plot_folder, "trajectories_small.pdf"),
   plot = combined_plot,
   width = width,
   height = height,
