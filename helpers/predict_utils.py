@@ -369,7 +369,9 @@ def evaluate_model(model, valsets, testsets, device, config):
     warmup_steps = config.warmup_steps  # todo
     # warmup_steps = config.seq_len - 1
     val_losses = []
-    additional_metrics = {}
+    # additional_metrics = {}
+    target_numpys = []
+    pred_numpys = []
     for set_id, val_set in enumerate(valsets):
         pred = model.predict(val_set, config.features, config.targets).squeeze(0)[
             warmup_steps:
@@ -384,23 +386,26 @@ def evaluate_model(model, valsets, testsets, device, config):
         loss = float(loss.to("cpu").detach())
         val_losses.append(loss)
 
-        pred = pred * 180  # TODO: works only for DB8 data
-        target = target * 180
+        target_numpys.append(target.cpu().detach().numpy())
+        pred_numpys.append(pred.cpu().detach().numpy())
 
-        mae = torch.mean(torch.abs(pred - target), dim=1).detach().cpu()
-        additional_metrics["val_loss/MAE/" + config.recordings[set_id]] = torch.mean(
-            mae
-        ).item()
-        additional_metrics["val_loss/MAE_10/" + config.recordings[set_id]] = torch.mean(
-            (mae < 10).float()
-        ).item()
-        additional_metrics["val_loss/MAE_15/" + config.recordings[set_id]] = torch.mean(
-            (mae < 15).float()
-        ).item()
-        additional_metrics["val_loss/R2/" + config.recordings[set_id]] = r2_score(
-            target.detach().cpu().numpy(),
-            pred.detach().cpu().numpy(),
-        )
+        # pred = pred * 180  # TODO: works only for DB8 data
+        # target = target * 180
+
+        # mae = torch.mean(torch.abs(pred - target), dim=1).detach().cpu()
+        # additional_metrics["val_loss/MAE/" + config.recordings[set_id]] = torch.mean(
+        #     mae
+        # ).item()
+        # additional_metrics["val_loss/MAE_10/" + config.recordings[set_id]] = torch.mean(
+        #     (mae < 10).float()
+        # ).item()
+        # additional_metrics["val_loss/MAE_15/" + config.recordings[set_id]] = torch.mean(
+        #     (mae < 15).float()
+        # ).item()
+        # additional_metrics["val_loss/R2/" + config.recordings[set_id]] = r2_score(
+        #     target.detach().cpu().numpy(),
+        #     pred.detach().cpu().numpy(),
+        # )
 
     total_val_loss = sum(val_losses) / len(val_losses)
 
@@ -419,40 +424,49 @@ def evaluate_model(model, valsets, testsets, device, config):
         loss = float(loss.to("cpu").detach())
         test_losses.append(loss)
 
-        pred = pred * 180  # TODO: works only for DB8 data
-        target = target * 180
+        target_numpys.append(target.cpu().detach().numpy())
+        pred_numpys.append(pred.cpu().detach().numpy())
 
-        mae = torch.mean(torch.abs(pred - target), dim=1).detach().cpu()
-        additional_metrics["test_loss/MAE/" + config.test_recordings[set_id]] = (
-            torch.mean(mae).item()
-        )
-        additional_metrics["test_loss/MAE_10/" + config.test_recordings[set_id]] = (
-            torch.mean((mae < 10).float()).item()
-        )
-        additional_metrics["test_loss/MAE_15/" + config.test_recordings[set_id]] = (
-            torch.mean((mae < 15).float()).item()
-        )
-        additional_metrics["test_loss/R2/" + config.test_recordings[set_id]] = r2_score(
-            target.detach().cpu().numpy(),
-            pred.detach().cpu().numpy(),
-        )
-        for i, target_feature in enumerate(config.targets):
-            additional_metrics[
-                f"test_loss/{target_feature[0]}_{target_feature[1]}/R2/"
-                + config.test_recordings[set_id]
-                + "/"
-                + target_feature[1]
-            ] = r2_score(
-                target[:, i].detach().cpu().numpy(),
-                pred[:, i].detach().cpu().numpy(),
-            )
+        # pred = pred * 180  # TODO: works only for DB8 data
+        # target = target * 180
 
-        np.save("predictions.npy", pred.detach().cpu().numpy())  # TODO: remove
-        np.save("targets.npy", target.detach().cpu().numpy())
+        # mae = torch.mean(torch.abs(pred - target), dim=1).detach().cpu()
+        # additional_metrics["test_loss/MAE/" + config.test_recordings[set_id]] = (
+        #     torch.mean(mae).item()
+        # )
+        # additional_metrics["test_loss/MAE_10/" + config.test_recordings[set_id]] = (
+        #     torch.mean((mae < 10).float()).item()
+        # )
+        # additional_metrics["test_loss/MAE_15/" + config.test_recordings[set_id]] = (
+        #     torch.mean((mae < 15).float()).item()
+        # )
+        # additional_metrics["test_loss/R2/" + config.test_recordings[set_id]] = r2_score(
+        #     target.detach().cpu().numpy(),
+        #     pred.detach().cpu().numpy(),
+        # )
+        # for i, target_feature in enumerate(config.targets):
+        #     additional_metrics[
+        #         f"test_loss/{target_feature[0]}_{target_feature[1]}/R2/"
+        #         + config.test_recordings[set_id]
+        #         + "/"
+        #         + target_feature[1]
+        #     ] = r2_score(
+        #         target[:, i].detach().cpu().numpy(),
+        #         pred[:, i].detach().cpu().numpy(),
+        #     )
+
+        # np.save("predictions.npy", pred.detach().cpu().numpy())  # TODO: remove
+        # np.save("targets.npy", target.detach().cpu().numpy())
 
     total_test_loss = sum(test_losses) / len(test_losses)
 
-    return total_val_loss, total_test_loss, val_losses + test_losses, additional_metrics
+    return (
+        total_val_loss,
+        total_test_loss,
+        val_losses + test_losses,
+        target_numpys,
+        pred_numpys,
+    )  # , additional_metrics
 
 
 class EarlyStopper:
