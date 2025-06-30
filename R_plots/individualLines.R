@@ -5,8 +5,8 @@ library(tidyr)
 library(gridExtra)
 
 # Directories
-plot_folder <- "/Users/jorisg/Desktop/upper_limb/paper_figures_revision-R"
-data_folder <- "/Users/jorisg/Desktop/upper_limb/paper_data-2"
+plot_folder <- "/home/haptix/haptix/biomech_PCP/R_plots/plots"
+data_folder <- "/home/haptix/haptix/biomech_PCP/paper_utils"
 
 dir.create(plot_folder, recursive = TRUE, showWarnings = FALSE)
 ptc = c('P_149', 'P_238', 'P_407', 'P_426', 'P_577', 'P_668', 'P_711', 'P_950', 'P7_453', 'P6_820')
