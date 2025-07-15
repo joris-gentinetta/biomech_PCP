@@ -106,6 +106,7 @@ def run_mediapipe(cap, frames, video_timestamps, sides, scales, hand_roi_size, p
 
             hands_results = hand_models[side].detect_for_video(mp_image, video_timestamps[frame_id]).hand_landmarks
             if len(hands_results) == 0:
+                # print(f"No hands detected in frame {frame_id}. Skipping frame.")
                 continue
             elif len(hands_results) == 1:
                 hand_id = 0
@@ -168,9 +169,6 @@ if __name__ == "__main__":
 
     input_video_path = join(args.data_dir, "video.mp4")
 
-
-
-
     vid = imageio.get_reader(input_video_path, 'ffmpeg')
     vid_size = vid.get_meta_data()['size']
     fps = vid.get_meta_data()['fps'] # todo check
@@ -179,7 +177,7 @@ if __name__ == "__main__":
     cap = cv2.VideoCapture(input_video_path)
     scales = (vid_size[0], vid_size[1], vid_size[0])
     n_frames = cap.get(cv2.CAP_PROP_FRAME_COUNT) if args.video_end == -1 else args.video_end
-    assert n_frames <= numFrames, f"Video has only {numFrames} frames, but you requested {n_frames} frames."
+    # assert n_frames <= numFrames, f"Video has only {numFrames} frames, but you requested {n_frames} frames."
 
     frames = range(0, int(n_frames))
     video_timestamps = [int(frame * 1000 / fps) for frame in frames]

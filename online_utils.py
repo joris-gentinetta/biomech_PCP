@@ -49,11 +49,60 @@ frame_id = 0
 system_name = platform.system()
 PRINT = False
 
+# class VideoCapture(cv2.VideoCapture):
+#     def __init__(self, cameraIndex=0):
+#         super().__init__(cameraIndex)
+#
+#         if not self.isOpened():
+#             raise RuntimeError(f"Camera at index {cameraIndex} could not be opened.")
+#
+#         # Force MJPEG codec
+#         self.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*'MJPG'))
+#
+#         # Set resolution and FPS
+#         self.set(cv2.CAP_PROP_FRAME_WIDTH, 1920)
+#         self.set(cv2.CAP_PROP_FRAME_HEIGHT, 1080)
+#         self.set(cv2.CAP_PROP_FPS, 60)
+#
+#         sleep(0.5)
+#         for _ in range(5):
+#             self.read()
+
+
+class VideoCapture(cv2.VideoCapture):
+    def __init__(self, cameraIndex=0, codecs=('MJPG', 'YUYV', 'YUY2', 'H264', 'RGB3'), width=1920, height=1080, fps=60):
+        super().__init__(cameraIndex)
+
+        if not self.isOpened():
+            raise RuntimeError(f"Camera at index {cameraIndex} could not be opened.")
+
+        success = False
+        for codec in codecs:
+            self.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*codec))
+            self.set(cv2.CAP_PROP_FRAME_WIDTH, width)
+            self.set(cv2.CAP_PROP_FRAME_HEIGHT, height)
+            self.set(cv2.CAP_PROP_FPS, fps)
+            sleep(0.2)
+            ret, _ = self.read()
+            actual_fourcc = int(self.get(cv2.CAP_PROP_FOURCC))
+            if ret and actual_fourcc == cv2.VideoWriter_fourcc(*codec):
+                success = True
+                break
+
+        if not success:
+            self.release()
+            raise RuntimeError(f"No supported codec found from {codecs} for camera at index {cameraIndex}.")
+
+        # Flush a few frames to clear buffer
+        for _ in range(5):
+            self.read()
 
 class InputThread(Thread):
     def __init__(self, src=0, queueSize=0, save=True, kE=None):
         super().__init__()
-        self.stream = cv2.VideoCapture(src)
+        # self.stream = cv2.VideoCapture(src)
+        self.stream = VideoCapture(src)
+
         self.outputQ = Queue(maxsize=queueSize)
         self.initialized = Event()
         self.emg = EMG()
@@ -159,7 +208,8 @@ class JointsProcess(Process):
         return joints_df
 
     def run(self):
-        temp_vc = cv2.VideoCapture(self.camera)
+        # temp_vc = cv2.VideoCapture(self.camera)
+        temp_vc = VideoCapture(self.camera)
         width = temp_vc.get(cv2.CAP_PROP_FRAME_WIDTH)
         height = temp_vc.get(cv2.CAP_PROP_FRAME_HEIGHT)
         temp_vc.release()
@@ -626,9 +676,8 @@ if __name__ == '__main__':
     args = parser.parse_args()
     mediapipe_test = True
     if mediapipe_test:
-        print(system_name)
-        cap = cv2.VideoCapture(args.camera_id)  # 0 for the default camera, or provide a video file path
-
+        # print(system_name)
+        cap = VideoCapture(args.camera_id)
 
         body_model_path = 'models/mediapipe/pose_landmarker_lite.task'
         hands_model_path = 'models/mediapipe/hand_landmarker.task'
@@ -703,7 +752,7 @@ if __name__ == '__main__':
             # Capture frame-by-frame
             ret, frame = cap.read()
 
-            frame = frame[:, :frame.shape[1]//2, :]  # right hand
+            # frame = frame[:, :frame.shape[1]//2, :]  # right hand
             frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
             if system_name != 'Darwin':
                 frame = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
@@ -725,4 +774,3 @@ if __name__ == '__main__':
         # Release the capture object and close all OpenCV windows
         cap.release()
         cv2.destroyAllWindows()
-

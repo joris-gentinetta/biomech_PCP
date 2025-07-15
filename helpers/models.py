@@ -15,7 +15,7 @@ from abc import ABC, abstractmethod
 from tqdm import tqdm
 from bilinear import Muscles, Joints, M as bilinear_M
 
-from omen.realtime import RealtimeOMEN
+# from omen.realtime import RealtimeOMEN
 # from omen.postprocessing import inverse_transform_predictions
 
 SR = 60
@@ -186,6 +186,22 @@ class DenseNet(TimeSeriesRegressor):
                 out = self.tanh(out)
 
         return out, states
+
+class PassThroughModel(TimeSeriesRegressor):
+    def __init__(self, input_size, output_size, device, **kwargs):
+        super().__init__(input_size, output_size, device)
+        emg_mapping = kwargs.get('emg_mapping', None)
+        self.weights = torch.zeros((output_size, input_size), dtype=torch.float, device=device)
+        for i, j in enumerate(emg_mapping):
+            self.weights[i, j] = 1.0
+
+    def get_starting_states(self, batch_size, y=None):
+        return None
+
+    def forward(self, x, states=None):
+        out = torch.einsum("bsi,oi->bso", x, self.weights)  # b: batch, s: seq_len, o: outputs, i: inputs
+        out = torch.logit(out, eps=1e-6)  # apply logit to the output so when it goes through the sigmoid it is in the range [0, 1]
+        return out, None
 
 class ParallelDenseNet(TimeSeriesRegressor):
     def __init__(self, input_size, output_size, device, **kwargs):
@@ -442,6 +458,8 @@ class ModularModel(TimeSeriesRegressor):
             modelclass = PhysJointModel
         elif config['model_type'] == 'NNJointModel':
             modelclass = NNJointModel
+        elif config['model_type'] == 'PassThrough':
+            modelclass = PassThroughModel
         else:
             raise ValueError(f'Unknown model type {config["model_type"]}')
         return modelclass(input_size, output_size, self.device, **config)
@@ -646,7 +664,7 @@ class TimeSeriesRegressorWrapper:
         if self.model_type == 'OMEN':  # ? CHANGE
             self.model.load(path)
         else:
-            self.model.load_state_dict(torch.load(path, map_location=torch.device('cpu')))  # note that we load to cpu
+            self.model.load_state_dict(torch.load(path, map_location=torch.device('cpu'), weights_only=True))  # note that we load to cpu
         return self
 
     def train(self):

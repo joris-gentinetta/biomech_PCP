@@ -1185,7 +1185,7 @@ if __name__ == '__main__':
 		# model_path = join('data', args.person_dir, 'models', f'{model_name}.pt')
 		model_path = args.model_path
 
-		controller = psyonicControllers(numMotors=arm.numMotors, arm=arm, freq_n=3, emg=emg, config=config, model_path=model_path)
+		controller = psyonicControllers(arm=arm, emg=emg, config=config, model_path=model_path)
 		arm.runNetThread(controller)
 
 	elif args.tracker:

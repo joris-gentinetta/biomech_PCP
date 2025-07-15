@@ -7,8 +7,15 @@ from tqdm import tqdm
 from os.path import join
 import numpy as np
 import pandas as pd
+
+import matplotlib
+matplotlib.use('TkAgg')
+
 import matplotlib.pyplot as plt
 import math
+
+from helpers.utils import restore_multiindex_columns
+
 
 def scale_data(data, intact_hand):
     data.loc[:, (intact_hand, 'thumbInPlaneAng')] = data.loc[:,(intact_hand, 'thumbInPlaneAng')] + math.pi
@@ -35,7 +42,9 @@ def rescale_data(angles_df, intact_hand):
 
 def load_data(data_dir, intact_hand, features, perturber=None):
     angles = pd.read_parquet(join(data_dir, 'cropped_smooth_angles.parquet'))
+    angles = restore_multiindex_columns(angles)
     angles.index = range(len(angles))
+
     try:
         emg = np.load(join(data_dir, 'cropped_aligned_emg.npy'))
     except:

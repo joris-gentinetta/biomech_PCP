@@ -41,17 +41,6 @@ if __name__ == '__main__':
     if torch.cuda.is_available():
         device = torch.device("cuda")
         print('Using CUDA')
-    #
-    #     # List available GPUs
-    #     if args.multi_gpu:
-    #         n_gpus = torch.cuda.device_count()
-    #         print(f'Number of available GPUs: {n_gpus}')
-    #         for i in range(n_gpus):
-    #             print(f'GPU{i}: {torch.cuda.get_device_name(i)}')
-
-    # elif torch.backends.mps.is_available():
-    #     device = torch.device("mps")
-    #     print('Using MPS')
     else:
         device = torch.device("cpu")
         print('Using CPU')
@@ -86,8 +75,6 @@ if __name__ == '__main__':
         pool = multiprocessing.Pool(processes=4)
         pool.map(wandb_process, [{'id': i, 'config': config, 'sweep_id': sweep_id, 'trainsets': trainsets, 'valsets': valsets, 'testsets': testsets, 'device': device} for i in range(4)])
 
-
-
     if args.test:  # trains on the training set and saves the test set predictions
         os.makedirs(join('data', args.person_dir, 'models'), exist_ok=True)
 
@@ -100,7 +87,6 @@ if __name__ == '__main__':
             test_set = rescale_data(test_set, args.intact_hand)
 
             test_set.to_parquet(join((data_dirs + test_dirs)[set_id], f'pred_angles-{config.name}.parquet'))
-
 
         if args.save_model:  # trains on the whole dataset and saves the model
             # model = train_model(combined_sets, valsets, testsets, device, config.wandb_mode, config.wandb_project, config.name, config)

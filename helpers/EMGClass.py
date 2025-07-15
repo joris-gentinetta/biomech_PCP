@@ -2,7 +2,7 @@
 #
 # EMGClass.py
 # Define the EMG class for use with the LUKE arm
-import matplotlib.pyplot as plt
+# import matplotlib.pyplot as plt
 
 import struct, os, sys, zmq, math
 import numpy as np
@@ -366,35 +366,35 @@ class EMG():
                 self.emgHistory = np.concatenate((self.emgHistory, self.normedEMG), axis=1)
 
 
-def plot_emg(emg, min_vals, max_vals, title='EMG'):
-
-    for i in range(emg.shape[0]):
-        plt.figure(figsize=(10, 6))
-        plt.plot(emg[i, :], label=f'Channel {i}')
-        plt.title(f'Channel {i}, min: {min_vals[i]:.2f}, max: {max_vals[i]:.2f}')
-        plt.legend()
-        plt.show()
-
-if __name__ == '__main__':
-    emg_data = np.load('/Users/jg/projects/biomech/DataGen/data/joris/trigger_1/triggered_emg.npy').T
-    emg_timestamps = np.load('/Users/jg/projects/biomech/DataGen/data/joris/trigger_1/triggered_emg_timestamps.npy')
-    sf = (emg_data.shape[1] - 1) / (emg_timestamps[-1] - emg_timestamps[0])
-    emg = EMG(samplingFreq=sf, offlineData=emg_data)
-    emg.startCommunication()
-    emg.emgThread.join()
-    filtered_emg = emg.emgHistory[:, emg.numPackets*100 + 1:]
-    filtered_emg = filtered_emg[:, :emg_data.shape[1]//emg.numPackets]
-    emg_timestamps = np.load('/Users/jg/projects/biomech/DataGen/data/joris/trigger_1/triggered_emg_timestamps.npy')
-    filtered_emg_timestamps = [emg_timestamps[i*emg.numPackets + emg.numPackets//2] for i in range(filtered_emg.shape[1])]
-
-    # min_vals = np.percentile(filtered_emg, 1, axis=1)
-    # max_vals = np.percentile(filtered_emg, 99, axis=1)
-    min_vals = filtered_emg.min(axis=1)
-    max_vals = filtered_emg.max(axis=1)
-    normalized_emg = np.clip((filtered_emg - min_vals[:, None])/(max_vals - min_vals)[:, None], 0, 1)
-    plot_emg(normalized_emg[:, :], min_vals, max_vals, 'Filtered EMG')
-
-    print()
+# def plot_emg(emg, min_vals, max_vals, title='EMG'):
+#
+#     for i in range(emg.shape[0]):
+#         plt.figure(figsize=(10, 6))
+#         plt.plot(emg[i, :], label=f'Channel {i}')
+#         plt.title(f'Channel {i}, min: {min_vals[i]:.2f}, max: {max_vals[i]:.2f}')
+#         plt.legend()
+#         plt.show()
+#
+# if __name__ == '__main__':
+#     emg_data = np.load('/Users/jg/projects/biomech/DataGen/data/joris/trigger_1/triggered_emg.npy').T
+#     emg_timestamps = np.load('/Users/jg/projects/biomech/DataGen/data/joris/trigger_1/triggered_emg_timestamps.npy')
+#     sf = (emg_data.shape[1] - 1) / (emg_timestamps[-1] - emg_timestamps[0])
+#     emg = EMG(samplingFreq=sf, offlineData=emg_data)
+#     emg.startCommunication()
+#     emg.emgThread.join()
+#     filtered_emg = emg.emgHistory[:, emg.numPackets*100 + 1:]
+#     filtered_emg = filtered_emg[:, :emg_data.shape[1]//emg.numPackets]
+#     emg_timestamps = np.load('/Users/jg/projects/biomech/DataGen/data/joris/trigger_1/triggered_emg_timestamps.npy')
+#     filtered_emg_timestamps = [emg_timestamps[i*emg.numPackets + emg.numPackets//2] for i in range(filtered_emg.shape[1])]
+#
+#     # min_vals = np.percentile(filtered_emg, 1, axis=1)
+#     # max_vals = np.percentile(filtered_emg, 99, axis=1)
+#     min_vals = filtered_emg.min(axis=1)
+#     max_vals = filtered_emg.max(axis=1)
+#     normalized_emg = np.clip((filtered_emg - min_vals[:, None])/(max_vals - min_vals)[:, None], 0, 1)
+#     plot_emg(normalized_emg[:, :], min_vals, max_vals, 'Filtered EMG')
+#
+#     print()
 
 
 

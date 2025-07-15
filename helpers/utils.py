@@ -4,13 +4,19 @@ import math
 import zmq
 from tqdm import tqdm
 import pandas as pd
+import cv2
+
 pd.options.mode.copy_on_write = True
 from scipy.ndimage import gaussian_filter1d
 from scipy.signal import gaussian
+# import matplotlib
+# matplotlib.use('TkAgg')
 import matplotlib.pyplot as plt
 import pickle
 from pathlib import Path
 from sklearn.preprocessing import minmax_scale
+import ast
+from time import sleep
 
 class Comms:
     def __init__(self, sendSocketAddr):
@@ -27,7 +33,6 @@ class Comms:
 
         except Exception as e:
             print(f'__del__: Socket closing error {e}')
-
 
 class AnglesHelper:
     def __init__(self):
@@ -429,14 +434,11 @@ class AnglesHelper:
 
         return angles_df
 
-
-
     def apply_gaussian_smoothing(self, df, sigma, radius):
         smoothed_df = df.copy()
         for column in df.columns:
             smoothed_df[column] = gaussian_filter1d(df[column], sigma=sigma, radius=radius)
         return smoothed_df
-
 
     def print_gaussian_kernel(self, sigma, radius):
         kernel = gaussian(2*radius+1, std=sigma)
@@ -446,6 +448,26 @@ class AnglesHelper:
         plt.plot(kernel)
         plt.title(f'Gaussian Kernel with sigma={sigma} and radius={radius}')
         plt.show()
+
+def restore_multiindex_columns(df, level_names=('Side', 'Joint')):
+    """
+    Converts stringified tuple column names into a proper MultiIndex and assigns level names.
+
+    Parameters:
+    - df: DataFrame with stringified tuple column names
+    - level_names: names to assign to the MultiIndex levels
+
+    Returns:
+    - df with MultiIndex columns
+    """
+    if isinstance(df.columns[0], str) and df.columns[0].startswith("("):
+        try:
+            new_columns = [ast.literal_eval(col) for col in df.columns]
+            df.columns = pd.MultiIndex.from_tuples(new_columns)
+            df.columns.names = level_names
+        except Exception as e:
+            raise ValueError(f"Failed to parse columns into tuples: {e}")
+    return df
 
 class PklConverter:
     def __init__(self, dataFolder, outputFolder, jointNames, emgChannels, side='Left'):
@@ -546,10 +568,32 @@ class PklConverter:
         self.save(saveEMG, saveAngles)
 
     def pipelinePkl(self):
-
         for file in tqdm(os.listdir(self.dataFolder)):
             if file.endswith('.pkl'):
                 self.convertPkl(file)
+
+# def VideoCapture(cameraIndex=0):
+#     stream = cv2.VideoCapture(cameraIndex)
+#
+#     if not stream.isOpened():
+#         raise RuntimeError(f"Camera at index {cameraIndex} could not be opened.")
+#
+#     # Force MJPEG codec
+#     stream.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*'MJPG'))
+#
+#     # Set resolution and FPS
+#     stream.set(cv2.CAP_PROP_FRAME_WIDTH, 1920)
+#     stream.set(cv2.CAP_PROP_FRAME_HEIGHT, 1080)
+#     stream.set(cv2.CAP_PROP_FPS, 60)
+#
+#     # Allow time to settle
+#     sleep(0.5)
+#
+#     # Read a few dummy frames to flush buffers
+#     for _ in range(5):
+#         stream.read()
+#
+#     return stream
 
 if __name__ == '__main__':
     # A = AnglesHelper()

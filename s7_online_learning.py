@@ -7,7 +7,7 @@ idx = pd.IndexSlice
 
 import warnings
 
-warnings.filterwarnings("ignore")
+# warnings.filterwarnings("ignore")
 from time import time
 import argparse
 import os
@@ -27,7 +27,7 @@ torch.autograd.set_detect_anomaly(True)
 from multiprocessing import Queue as MPQueue
 
 from helpers.predict_utils import Config, OLDataset, evaluate_model, EarlyStopper, get_data
-from online_utils import JointsProcess, AnglesProcess, VisualizeProcess, ProcessManager, InputThread, SaveThread
+from online_utils import JointsProcess, AnglesProcess, VisualizeProcess, ProcessManager, InputThread, SaveThread, VideoCapture
 
 
 if __name__ == '__main__':
@@ -101,13 +101,16 @@ if __name__ == '__main__':
     np.save(perturb_file, perturber)
     # perturber = torch.tensor(perturber, device=device, dtype=torch.float32)
 
-    with open(join('data', args.person_dir, 'configs', f'{args.config_name}.yaml'), 'r') as file:
-        wandb_config = yaml.safe_load(file)
-        config = Config(wandb_config)
+    # with open(join('data', args.person_dir, 'configs', f'{args.config_name}.yaml'), 'r') as file:
+    #     wandb_config = yaml.safe_load(file)
+    #     config = Config(wandb_config)
 
 
     if args.save_input:
-        temp_vc = cv2.VideoCapture(args.camera)
+        # temp_vc = cv2.VideoCapture(args.camera)
+        temp_vc = VideoCapture(args.camera)
+        # temp_vc = VideoCapture(args.camera) if args.capture_card else cv2.VideoCapture(args.camera)
+
         width = temp_vc.get(cv2.CAP_PROP_FRAME_WIDTH)
         height = temp_vc.get(cv2.CAP_PROP_FRAME_HEIGHT)
         temp_vc.release()

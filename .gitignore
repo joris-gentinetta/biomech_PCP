@@ -9,5 +9,7 @@ wandb/
 OMEN/
 omen*
 hand_config.yaml
+/helpers/__pycache__/
+/paper_utils/paper_data
 
 .ipynb_checkpoints/

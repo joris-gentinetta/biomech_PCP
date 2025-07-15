@@ -1,5 +1,5 @@
 mediapipe
-opencv-python
+opencv-contrib-python
 imageio[ffmpeg]
 numpy
 pandas
