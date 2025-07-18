@@ -23,6 +23,7 @@ from matplotlib.figure import Figure
 # Import your prosthetic hand class
 sys.path.append('C:/Users/Emanuel Wicki/Documents/MIT/biomech_PCP/helpers')
 from psyonicHand import psyonicArm
+from helpers.EMGClass import EMG
 
 # Grip configurations
 GRIP_CONFIGURATIONS = {
@@ -64,6 +65,14 @@ GRIP_CONFIGURATIONS = {
     }
 }
 
+def make_timestamps_unique(timestamps):
+    """Make timestamps unique by adding small increments to duplicates"""
+    timestamps = np.array(timestamps)
+    for i in range(1, len(timestamps)):
+        if timestamps[i] <= timestamps[i - 1]:
+            timestamps[i] = timestamps[i - 1] + 1e-6  # add 1 microsecond
+    return timestamps
+
 class AdaptiveGripController:
     """Controller for adaptive grip force control"""
     
@@ -79,16 +88,28 @@ class AdaptiveGripController:
         self.contact_position = None
         self.current_position = np.array(grip_config["neutral_position"], dtype=np.float64)
         
-        # PID parameters - conservative for smooth control
-        self.kp = 1.5
-        self.ki = 0.05
-        self.kd = 0.3
+        # PID parameters - More aggressive for higher forces
+        self.kp = 3.0   # Increased from 1.5
+        self.ki = 0.1   # Increased from 0.05
+        self.kd = 0.5   # Increased from 0.3
         self.integral_error = 0.0
         self.previous_error = 0.0
         
-        # Control limits
-        self.max_position_change = 1.0
-        self.control_rate = 60.0
+        # Control limits - Smaller changes for smoother high-frequency control
+        self.max_position_change = 0.5  # Much smaller for high-frequency updates
+        self.control_rate = 200.0  # Target 200 Hz control rate
+        
+        # Force control parameters
+        self.force_buildup_mode = False
+        self.force_buildup_threshold = 3.0
+        
+        # Data filtering for smooth display (longer buffer for high-freq data)
+        self.force_filter_buffer = deque(maxlen=20)  # More samples for smoothing
+        self.filtered_force = 0.0
+        
+        # High-frequency control parameters
+        self.last_control_time = 0.0
+        self.control_dt_target = 1.0 / self.control_rate  # 5ms target
         
     def get_finger_forces(self):
         """Get force for each of the 5 fingers"""
@@ -102,17 +123,25 @@ class AdaptiveGripController:
             finger_forces[finger] = finger_total
         return finger_forces
     
-    def get_grip_force(self):
-        """Get current total grip force from active fingers"""
+    def get_grip_force(self, filtered=True):
+        """Get current total grip force from active fingers with optional filtering"""
         finger_forces = self.get_finger_forces()
         total_force = 0.0
         for finger in self.grip_config["active_fingers"]:
             total_force += finger_forces.get(finger, 0.0)
-        return total_force
+        
+        if filtered:
+            # Apply rolling average filter for smoother display
+            self.force_filter_buffer.append(total_force)
+            self.filtered_force = np.mean(list(self.force_filter_buffer))
+            return self.filtered_force
+        else:
+            # Return raw force for control
+            return total_force
     
     def detect_contact(self):
         """Detect contact with object"""
-        current_force = self.get_grip_force()
+        current_force = self.get_grip_force(filtered=False)  # Use raw force for detection
         if not self.contact_detected:
             if current_force > self.grip_config["contact_threshold"]:
                 self.contact_detected = True
@@ -160,52 +189,82 @@ class AdaptiveGripController:
         return False
     
     def force_control_phase(self, target_force, dt):
-        """Control force with conservative adjustments"""
-        current_force = self.get_grip_force()
+        """High-frequency smooth force control with smaller incremental changes"""
+        current_force = self.get_grip_force(filtered=False)  # Use raw force for control
         force_error = target_force - current_force
         
-        # PID control
+        # Scale PID gains for high-frequency control (smaller gains, more frequent updates)
+        if target_force > self.force_buildup_threshold:
+            self.force_buildup_mode = True
+            # Reduce gains for high-frequency control to prevent oscillation
+            kp_active = self.kp * 0.8  # Lower gains for stability
+            ki_active = self.ki * 0.5
+            kd_active = self.kd * 0.6
+            max_change_active = self.max_position_change * 1.2  # Slightly larger for force buildup
+            fine_control_scale = 0.4
+            deadband = 0.3
+        else:
+            self.force_buildup_mode = False
+            # Standard gains scaled for high frequency
+            kp_active = self.kp * 0.6  # Lower gains for smooth high-freq control
+            ki_active = self.ki * 0.3
+            kd_active = self.kd * 0.4
+            max_change_active = self.max_position_change
+            fine_control_scale = 0.2
+            deadband = 0.15
+        
+        # PID control with high-frequency tuning
         self.integral_error += force_error * dt
-        max_integral = 10.0
+        max_integral = 8.0 if self.force_buildup_mode else 5.0  # Smaller integral limits
         self.integral_error = np.clip(self.integral_error, -max_integral, max_integral)
         
         derivative_error = (force_error - self.previous_error) / dt if dt > 0 else 0
         self.previous_error = force_error
         
-        pid_output = (self.kp * force_error + 
-                     self.ki * self.integral_error + 
-                     self.kd * derivative_error)
+        pid_output = (kp_active * force_error + 
+                     ki_active * self.integral_error + 
+                     kd_active * derivative_error)
         
-        # Deadband and scaling
-        deadband = 0.2
+        # Adaptive deadband
         if abs(force_error) < deadband:
             pid_output = 0.0
         
+        # Convert to position change with smooth scaling
         joint_force_modulation = self.map_finger_to_joint_modulation()
-        fine_control_scale = 0.3
         position_change = pid_output * joint_force_modulation * fine_control_scale
         
-        max_change = self.max_position_change
-        position_change = np.clip(position_change, -max_change, max_change)
+        # Very small position change limits for smooth motion
+        position_change = np.clip(position_change, -max_change_active, max_change_active)
         
-        # Minimum change threshold
-        min_change_threshold = 0.1
+        # Even smaller minimum change threshold for high-frequency updates
+        min_change_threshold = 0.02  # Very small movements
         for i in range(len(position_change)):
             if abs(position_change[i]) < min_change_threshold:
                 position_change[i] = 0.0
         
+        # Smooth position updates
         self.current_position = self.current_position + position_change
         
-        # Apply limits between contact and target
+        # Apply limits with extended range for force buildup
         neutral_pos = np.array(self.grip_config["neutral_position"], dtype=np.float64)
         target_pos = np.array(self.grip_config["target_position"], dtype=np.float64)
         contact_pos = self.contact_position if self.contact_position is not None else neutral_pos
         
-        for i in range(len(self.current_position)):
-            if joint_force_modulation[i] > 0:
-                min_pos = min(contact_pos[i], target_pos[i])
-                max_pos = max(contact_pos[i], target_pos[i])
-                self.current_position[i] = np.clip(self.current_position[i], min_pos, max_pos)
+        if self.force_buildup_mode:
+            # Allow 30% extension beyond target for high forces
+            for i in range(len(self.current_position)):
+                if joint_force_modulation[i] > 0:
+                    range_extension = (target_pos[i] - contact_pos[i]) * 0.3
+                    min_pos = min(contact_pos[i], target_pos[i])
+                    max_pos = max(contact_pos[i], target_pos[i] + range_extension)
+                    self.current_position[i] = np.clip(self.current_position[i], min_pos, max_pos)
+        else:
+            # Standard limits
+            for i in range(len(self.current_position)):
+                if joint_force_modulation[i] > 0:
+                    min_pos = min(contact_pos[i], target_pos[i])
+                    max_pos = max(contact_pos[i], target_pos[i])
+                    self.current_position[i] = np.clip(self.current_position[i], min_pos, max_pos)
         
         return current_force, force_error, pid_output
     
@@ -303,7 +362,7 @@ class ForceControlCanvas(FigureCanvas):
 class AdaptiveGripGUI(QMainWindow):
     """Main GUI for adaptive grip control with real-time monitoring"""
     
-    def __init__(self, connected_arm):
+    def __init__(self, connected_arm, person_id, out_root="data"):
         super().__init__()
         self.setWindowTitle("Adaptive Grip Force Control with Real-Time Monitoring")
         self.setGeometry(100, 100, 1600, 1000)
@@ -312,28 +371,45 @@ class AdaptiveGripGUI(QMainWindow):
         self.arm = connected_arm
         self.controller = None
         
+        # Data storage setup
+        self.person_id = person_id
+        self.out_root = out_root
+        
+        # EMG recording setup
+        self.emg = None
+        self.emg_thread = None
+        self.recording_emg = False
+        self.raw_emg_data = []
+        self.raw_emg_timestamps = []
+        
         # Experiment state
         self.experiment_running = False
         self.current_grip_config = None
         self.force_trajectory = None
         self.force_timestamps = None
+        self.experiment_start_time = None
         
-        # Data storage
+        # Data storage with filtering support
         self.experiment_data = {
             'timestamps': [],
             'target_forces': [],
             'actual_forces': [],
+            'actual_forces_filtered': [],  # For smooth plotting
             'grip_positions': [],
             'phases': [],
             'force_errors': []
         }
         
+        # Data filtering for smooth display
+        self.display_force_buffer = deque(maxlen=5)  # For GUI display smoothing
+        
         self.initUI()
         
-        # Update timer
+        # Update timer - Optimized for smooth display
         self.update_timer = QTimer()
         self.update_timer.timeout.connect(self.update_display)
-        self.update_timer.setInterval(50)  # 20 Hz updates
+        self.update_timer.setInterval(50)  # 20 Hz display updates (enough for smooth GUI)
+        self.last_control_time = 0.0
     
     def initUI(self):
         """Initialize user interface"""
@@ -347,6 +423,14 @@ class AdaptiveGripGUI(QMainWindow):
         controls_widget = QWidget()
         controls_widget.setMaximumWidth(400)
         controls_layout = QVBoxLayout(controls_widget)
+        
+        # Person ID display
+        person_group = QGroupBox("Session Info")
+        person_layout = QVBoxLayout(person_group)
+        self.person_label = QLabel(f"Person ID: {self.person_id}")
+        self.person_label.setStyleSheet("font-weight: bold; font-size: 14px;")
+        person_layout.addWidget(self.person_label)
+        controls_layout.addWidget(person_group)
         
         # Experiment setup
         setup_group = QGroupBox("Experiment Setup")
@@ -440,18 +524,14 @@ class AdaptiveGripGUI(QMainWindow):
         
         controls_layout.addWidget(status_group)
         
-        # Save data
-        save_group = QGroupBox("Data Management")
+        # Auto-save info
+        save_group = QGroupBox("Auto-Save")
         save_layout = QVBoxLayout(save_group)
         
-        self.save_btn = QPushButton("Save Experiment Data")
-        self.save_btn.clicked.connect(self.save_experiment_data)
-        self.save_btn.setEnabled(False)
-        save_layout.addWidget(self.save_btn)
-        
-        self.clear_btn = QPushButton("Clear Data")
-        self.clear_btn.clicked.connect(self.clear_data)
-        save_layout.addWidget(self.clear_btn)
+        self.save_path_label = QLabel("Save Path: Not set")
+        self.save_path_label.setWordWrap(True)
+        self.save_path_label.setStyleSheet("font-size: 10px;")
+        save_layout.addWidget(self.save_path_label)
         
         controls_layout.addWidget(save_group)
         controls_layout.addStretch()
@@ -476,6 +556,111 @@ class AdaptiveGripGUI(QMainWindow):
                 f"Active fingers: {', '.join(config['active_fingers'])}\n"
                 f"Contact threshold: {config['contact_threshold']} N"
             )
+            
+            # Update save path
+            self.update_save_path()
+    
+    def update_save_path(self):
+        """Update the save path display"""
+        grip_name = self.grip_combo.currentText()
+        
+        # Create directory structure like s1.5 script
+        exp_parent = os.path.join(
+            self.out_root,
+            self.person_id,
+            "recordings",
+            f"{grip_name}_interaction",
+            "experiments"
+        )
+        
+        # Find next experiment number
+        exp_idx = 1
+        while os.path.exists(os.path.join(exp_parent, str(exp_idx))):
+            exp_idx += 1
+        
+        save_path = os.path.join(exp_parent, str(exp_idx))
+        self.save_path_label.setText(f"Save Path: {save_path}")
+    
+    def start_emg_recording(self):
+        """Start EMG recording in background thread"""
+        try:
+            if self.emg is None:
+                print("Initializing EMG...")
+                self.emg = EMG()
+            
+            self.raw_emg_data = []
+            self.raw_emg_timestamps = []
+            self.recording_emg = True
+            
+            def emg_capture_loop():
+                try:
+                    print("Starting EMG communication...")
+                    # Use the same method as s1.5 script
+                    self.emg.startCommunication()
+                    
+                    # Wait for first data
+                    print("Waiting for first EMG data...")
+                    timeout_counter = 0
+                    while getattr(self.emg, 'OS_time', None) is None and timeout_counter < 100:
+                        time.sleep(0.01)
+                        timeout_counter += 1
+                    
+                    if getattr(self.emg, 'OS_time', None) is None:
+                        print("WARNING: EMG not responding, continuing without EMG")
+                        return
+                    
+                    print("EMG data detected, starting recording...")
+                    first_emg_time = self.emg.OS_time
+                    last_time = self.emg.OS_time
+                    
+                    while self.recording_emg:
+                        try:
+                            time_sample = self.emg.OS_time
+                            
+                            # Add timing validation (same as s1.5)
+                            if (time_sample - last_time)/1e6 > 0.1:
+                                print(f'EMG Read time: {time_sample}, expected time: {last_time}')
+                                print('EMG alignment lost. Please restart the EMG board.')
+                                break
+                            
+                            # Only collect data when we have new timestamps
+                            elif time_sample > last_time:
+                                emg_sample = np.asarray(self.emg.rawEMG)
+                                self.raw_emg_data.append(list(emg_sample))
+                                self.raw_emg_timestamps.append((time_sample - first_emg_time) / 1e6)
+                            
+                            last_time = time_sample
+                            time.sleep(0.001)  # Small delay to prevent busy waiting
+                        except Exception as e:
+                            print(f"EMG read error: {e}")
+                            break
+                        
+                except Exception as e:
+                    print(f"EMG capture setup error: {e}")
+                finally:
+                    try:
+                        if hasattr(self.emg, 'exitEvent'):
+                            self.emg.exitEvent.set()
+                        time.sleep(0.1)
+                        print("EMG recording thread finished")
+                    except:
+                        pass
+            
+            self.emg_thread = threading.Thread(target=emg_capture_loop, daemon=True)
+            self.emg_thread.start()
+            print("EMG thread started")
+            
+        except Exception as e:
+            print(f"Failed to start EMG recording: {e}")
+            self.emg = None
+    
+    def stop_emg_recording(self):
+        """Stop EMG recording"""
+        print("Stopping EMG recording...")
+        self.recording_emg = False
+        if self.emg_thread:
+            self.emg_thread.join(timeout=3.0)
+        print(f"EMG recording stopped. Captured {len(self.raw_emg_data)} samples.")
     
     def load_force_trajectory(self):
         """Load custom force trajectory from CSV"""
@@ -574,6 +759,15 @@ class AdaptiveGripGUI(QMainWindow):
         # Clear previous data
         self.clear_data()
         
+        # Start EMG recording FIRST
+        try:
+            print("Starting EMG recording...")
+            self.start_emg_recording()
+            # Give EMG time to initialize
+            time.sleep(0.5)
+        except Exception as e:
+            print(f"Warning: Could not start EMG recording: {e}")
+        
         # Start experiment
         self.experiment_running = True
         self.experiment_start_time = time.time()
@@ -583,35 +777,48 @@ class AdaptiveGripGUI(QMainWindow):
         self.controller.reset_controller()
         self.controller.phase = "APPROACH"
         
-        # Start recording
+        # CRITICAL: Start hand recording using the SAME method as s1.5
+        print("Starting hand recording...")
         self.arm.resetRecording()
         self.arm.recording = True
         
-        # Start control loop
+        # Start control loop at maximum frequency
         self.control_timer = QTimer()
         self.control_timer.timeout.connect(self.control_loop)
-        self.control_timer.setInterval(16)  # ~60 Hz
+        self.control_timer.setInterval(5)  # 5ms = 200 Hz target
         self.control_timer.start()
         
-        # Start GUI updates
+        # Start GUI updates at lower frequency
         self.update_timer.start()
         
         # Update UI
         self.start_btn.setEnabled(False)
         self.stop_btn.setEnabled(True)
         self.status_label.setText("Status: Experiment running - APPROACH phase")
+        
+        print("Experiment started - recording EMG and hand data")
     
     def control_loop(self):
-        """Main control loop for the experiment"""
+        """High-frequency control loop - Use mainControlLoop like s1.5 for proper recording"""
         if not self.experiment_running or not self.controller:
             return
         
         try:
             current_time = time.time() - self.experiment_start_time
-            dt = 1.0 / 60.0
+            
+            # Calculate actual dt for this control cycle
+            if hasattr(self, 'last_control_time') and self.last_control_time > 0:
+                actual_dt = current_time - self.last_control_time
+            else:
+                actual_dt = self.controller.control_dt_target
+            self.last_control_time = current_time
+            
+            # Use actual measured dt for more accurate control
+            dt = actual_dt
             
             # Get current force
-            current_force = self.controller.get_grip_force()
+            current_force_raw = self.controller.get_grip_force(filtered=False)
+            
             target_force = 0.0
             force_error = 0.0
             
@@ -631,30 +838,39 @@ class AdaptiveGripGUI(QMainWindow):
                 
                 if trajectory_time <= self.force_timestamps[-1]:
                     target_force = np.interp(trajectory_time, self.force_timestamps, self.force_trajectory)
-                    current_force, force_error, pid_output = self.controller.force_control_phase(target_force, dt)
+                    current_force_raw, force_error, pid_output = self.controller.force_control_phase(target_force, dt)
                 else:
                     # Trajectory complete
                     self.stop_experiment()
                     return
             
-            # Send position command
-            position_command = self.controller.current_position.tolist()
-            self.arm.handCom = position_command
+            # CRITICAL FIX: Use mainControlLoop like s1.5 for proper recording
+            # Create a single-row trajectory for this timestep
+            position_command = self.controller.current_position.reshape(1, -1)
             
-            # Store data
-            self.experiment_data['timestamps'].append(current_time)
-            self.experiment_data['target_forces'].append(target_force)
-            self.experiment_data['actual_forces'].append(current_force)
-            self.experiment_data['grip_positions'].append(self.controller.current_position.copy())
-            self.experiment_data['phases'].append(self.controller.phase)
-            self.experiment_data['force_errors'].append(force_error)
+            # Use mainControlLoop with very short period (like s1.5 does)
+            # This ensures proper recording of all sensor data
+            self.arm.mainControlLoop(posDes=position_command, period=0.001, emg=None)
+            
+            # Store data less frequently to avoid memory issues (every 10th sample)
+            if len(self.experiment_data['timestamps']) == 0 or current_time - self.experiment_data['timestamps'][-1] >= 0.033:  # ~30 Hz data storage
+                current_force_display = self.controller.get_grip_force(filtered=True)
+                
+                self.experiment_data['timestamps'].append(current_time)
+                self.experiment_data['target_forces'].append(target_force)
+                self.experiment_data['actual_forces'].append(current_force_raw)
+                self.experiment_data['actual_forces_filtered'].append(current_force_display)
+                self.experiment_data['grip_positions'].append(self.controller.current_position.copy())
+                self.experiment_data['phases'].append(self.controller.phase)
+                self.experiment_data['force_errors'].append(force_error)
             
         except Exception as e:
             print(f"Control loop error: {e}")
             self.stop_experiment()
     
     def stop_experiment(self):
-        """Stop the experiment"""
+        """Stop the experiment and save all data"""
+        print("Stopping experiment...")
         self.experiment_running = False
         
         if hasattr(self, 'control_timer'):
@@ -662,28 +878,195 @@ class AdaptiveGripGUI(QMainWindow):
         
         self.update_timer.stop()
         
-        # Stop recording
+        # Stop hand recording FIRST
+        print("Stopping hand recording...")
         if hasattr(self.arm, 'recording'):
             self.arm.recording = False
         
+        # Stop EMG recording
+        self.stop_emg_recording()
+        
         # Return to neutral
         if self.controller:
-            neutral_pos = np.array(self.current_grip_config["neutral_position"], dtype=np.float64)
-            self.arm.mainControlLoop(posDes=neutral_pos.reshape(1, -1), period=2, emg=None)
+            try:
+                neutral_pos = np.array(self.current_grip_config["neutral_position"], dtype=np.float64)
+                self.arm.mainControlLoop(posDes=neutral_pos.reshape(1, -1), period=2, emg=None)
+            except Exception as e:
+                print(f"Warning: Could not return to neutral: {e}")
         
         # Update UI
         self.start_btn.setEnabled(False)
         self.stop_btn.setEnabled(False)
         self.prepare_btn.setEnabled(True)
-        self.save_btn.setEnabled(True)
-        self.status_label.setText("Status: Experiment completed")
+        self.status_label.setText("Status: Experiment completed - Saving data...")
+        
+        # Auto-save all data
+        self.auto_save_experiment_data()
         
         # Analyze results
         if self.experiment_data['timestamps']:
             self.analyze_results()
     
-    def reset_to_neutral(self):
-        """Reset hand to neutral position"""
+    def auto_save_experiment_data(self):
+        """Automatically save experiment data in s1.5 format"""
+        try:
+            grip_name = self.grip_combo.currentText()
+            
+            # Create directory structure exactly like s1.5 script
+            exp_parent = os.path.join(
+                self.out_root,
+                self.person_id,
+                "recordings",
+                f"{grip_name}_interaction",
+                "experiments"
+            )
+            
+            # Find next experiment number
+            exp_idx = 1
+            while os.path.exists(os.path.join(exp_parent, str(exp_idx))):
+                exp_idx += 1
+            
+            base_dir = os.path.join(exp_parent, str(exp_idx))
+            os.makedirs(base_dir, exist_ok=True)
+            
+            print(f"Saving experiment data to: {base_dir}")
+            
+            files_saved = []
+            
+            # 1. Save raw EMG data (like s1.5)
+            if self.raw_emg_data and len(self.raw_emg_data) > 0:
+                try:
+                    raw_emg_array = np.vstack(self.raw_emg_data)
+                    np.save(os.path.join(base_dir, "raw_emg.npy"), raw_emg_array)
+                    files_saved.append("raw_emg.npy")
+                    
+                    raw_timestamps_unique = make_timestamps_unique(self.raw_emg_timestamps)
+                    np.save(os.path.join(base_dir, "raw_timestamps.npy"), np.array(raw_timestamps_unique))
+                    files_saved.append("raw_timestamps.npy")
+                    
+                    print(f"✓ Saved raw_emg.npy with {len(self.raw_emg_data)} samples")
+                    print(f"✓ EMG duration: {self.raw_emg_timestamps[-1] - self.raw_emg_timestamps[0]:.2f}s")
+                except Exception as e:
+                    print(f"✗ Failed to save EMG data: {e}")
+            else:
+                print("✗ No EMG data to save")
+            
+            # 2. Save hand angle data (like s1.5)
+            if hasattr(self.arm, 'recordedData') and self.arm.recordedData and len(self.arm.recordedData) > 1:
+                try:
+                    raw_data = self.arm.recordedData
+                    headers = raw_data[0]  # first row is header names
+                    data_rows = raw_data[1:]
+                    
+                    if data_rows:
+                        rec = np.array(data_rows, dtype=float)
+                        ts = rec[:, 0]
+                        ts -= ts[0]  # normalize timestamps
+                        
+                        np.save(os.path.join(base_dir, "angles.npy"), rec)
+                        files_saved.append("angles.npy")
+                        
+                        angle_timestamps_unique = make_timestamps_unique(ts)
+                        np.save(os.path.join(base_dir, "angle_timestamps.npy"), angle_timestamps_unique)
+                        files_saved.append("angle_timestamps.npy")
+                        
+                        with open(os.path.join(base_dir, "angles_header.txt"), "w") as f:
+                            f.write(",".join(headers))
+                        files_saved.append("angles_header.txt")
+                        
+                        print(f"✓ Saved angles.npy with {len(rec)} frames")
+                        print(f"✓ Angles duration: {ts[-1]:.2f}s")
+                    else:
+                        print("✗ No angle data rows found")
+                except Exception as e:
+                    print(f"✗ Failed to save angle data: {e}")
+            else:
+                print("✗ No hand angle data to save")
+                print(f"   recordedData exists: {hasattr(self.arm, 'recordedData')}")
+                if hasattr(self.arm, 'recordedData'):
+                    print(f"   recordedData length: {len(self.arm.recordedData) if self.arm.recordedData else 0}")
+            
+            # 3. Save adaptive grip data (target vs actual forces)
+            if self.experiment_data['timestamps']:
+                try:
+                    adaptive_grip_data = {
+                        'timestamps': np.array(self.experiment_data['timestamps']),
+                        'target_forces': np.array(self.experiment_data['target_forces']),
+                        'actual_forces': np.array(self.experiment_data['actual_forces']),
+                        'force_errors': np.array(self.experiment_data['force_errors']),
+                        'phases': self.experiment_data['phases'],
+                        'grip_positions': np.array(self.experiment_data['grip_positions'])
+                    }
+                    
+                    # Save as numpy file
+                    np.save(os.path.join(base_dir, f"adaptive_grip_{grip_name}.npy"), adaptive_grip_data)
+                    files_saved.append(f"adaptive_grip_{grip_name}.npy")
+                    
+                    # Also save as CSV for easy analysis
+                    df = pd.DataFrame({
+                        'timestamp': self.experiment_data['timestamps'],
+                        'target_force': self.experiment_data['target_forces'],
+                        'actual_force': self.experiment_data['actual_forces'],
+                        'force_error': self.experiment_data['force_errors'],
+                        'phase': self.experiment_data['phases']
+                    })
+                    df.to_csv(os.path.join(base_dir, f"adaptive_grip_{grip_name}.csv"), index=False)
+                    files_saved.append(f"adaptive_grip_{grip_name}.csv")
+                    
+                    print(f"✓ Saved adaptive_grip_{grip_name}.npy and .csv")
+                except Exception as e:
+                    print(f"✗ Failed to save adaptive grip data: {e}")
+            
+            # 4. Save experiment configuration
+            try:
+                config_data = {
+                    'person_id': self.person_id,
+                    'grip_type': grip_name,
+                    'grip_config': self.current_grip_config,
+                    'force_pattern': self.pattern_combo.currentText(),
+                    'max_force': self.max_force_spin.value(),
+                    'duration': self.duration_spin.value(),
+                    'experiment_summary': {
+                        'total_samples': len(self.experiment_data['timestamps']),
+                        'total_duration': self.experiment_data['timestamps'][-1] if self.experiment_data['timestamps'] else 0,
+                        'emg_samples': len(self.raw_emg_data),
+                        'angle_samples': len(self.arm.recordedData) - 1 if hasattr(self.arm, 'recordedData') and self.arm.recordedData else 0
+                    }
+                }
+                
+                with open(os.path.join(base_dir, 'experiment_config.yaml'), 'w') as f:
+                    yaml.safe_dump(config_data, f)
+                files_saved.append('experiment_config.yaml')
+                
+                print(f"✓ Saved experiment_config.yaml")
+            except Exception as e:
+                print(f"✗ Failed to save config: {e}")
+            
+            # Update UI
+            self.status_label.setText(f"Status: Data saved to experiment {exp_idx}")
+            self.update_save_path()  # Update for next experiment
+            
+            # Show results
+            files_list = "\n".join([f"- {f}" for f in files_saved])
+            missing_files = []
+            expected_files = ["raw_emg.npy", "raw_timestamps.npy", "angles.npy", "angle_timestamps.npy", "angles_header.txt"]
+            for expected in expected_files:
+                if expected not in files_saved:
+                    missing_files.append(expected)
+            
+            message = f"Experiment data saved to:\n{base_dir}\n\nFiles saved:\n{files_list}"
+            if missing_files:
+                message += f"\n\nMissing files:\n" + "\n".join([f"- {f}" for f in missing_files])
+                message += "\n\nCheck console output for error details."
+            
+            QtWidgets.QMessageBox.information(self, "Data Saved", message)
+            
+        except Exception as e:
+            QtWidgets.QMessageBox.warning(self, "Save Error", f"Failed to save data: {e}")
+            print(f"Save error: {e}")
+            import traceback
+            traceback.print_exc()
+    
     def reset_to_neutral(self):
         """Reset hand to neutral position"""
         try:
@@ -704,30 +1087,41 @@ class AdaptiveGripGUI(QMainWindow):
             return
         
         try:
-            # Update plots
+            # Update plots with filtered data for smooth visualization
             if self.experiment_data['timestamps']:
                 self.canvas.update_plots(
                     self.experiment_data['timestamps'],
                     self.experiment_data['target_forces'],
-                    self.experiment_data['actual_forces']
+                    self.experiment_data['actual_forces_filtered']  # Use filtered data for plotting
                 )
             
-            # Update force info
+            # Update force info with enhanced details
             if self.controller:
-                current_force = self.controller.get_grip_force()
+                current_force = self.controller.get_grip_force(filtered=True)  # Use filtered for display
                 finger_forces = self.controller.get_finger_forces()
                 
-                info_text = f"Current Total Force: {current_force:.2f} N\n\n"
+                info_text = f"Current Total Force: {current_force:.2f} N\n"
+                info_text += f"Control Mode: {'FORCE_BUILDUP' if self.controller.force_buildup_mode else 'STANDARD'}\n\n"
+                
                 info_text += "Finger Forces:\n"
                 for finger in self.controller.finger_names:
                     if finger in finger_forces:
-                        info_text += f"  {finger.capitalize()}: {finger_forces[finger]:.1f} N\n"
+                        active_marker = " *" if finger in self.controller.grip_config["active_fingers"] else ""
+                        info_text += f"  {finger.capitalize()}: {finger_forces[finger]:.1f} N{active_marker}\n"
                 
                 if self.experiment_data['target_forces']:
                     target = self.experiment_data['target_forces'][-1]
                     error = abs(current_force - target)
+                    error_pct = (error / target * 100) if target > 0 else 0
                     info_text += f"\nTarget Force: {target:.2f} N\n"
-                    info_text += f"Force Error: {error:.2f} N"
+                    info_text += f"Force Error: {error:.2f} N ({error_pct:.1f}%)\n"
+                    
+                    # Show position info
+                    if hasattr(self.controller, 'contact_position') and self.controller.contact_position is not None:
+                        pos_range = np.array(self.controller.grip_config["target_position"]) - self.controller.contact_position
+                        pos_used = self.controller.current_position - self.controller.contact_position
+                        pos_pct = np.mean(pos_used / pos_range * 100) if np.mean(pos_range) > 0 else 0
+                        info_text += f"Position Used: {pos_pct:.0f}% of available range"
                 
                 self.force_info.setPlainText(info_text)
                 
@@ -774,79 +1168,28 @@ class AdaptiveGripGUI(QMainWindow):
                     f"Total samples: {len(timestamps)}"
                 )
     
-    def save_experiment_data(self):
-        """Save experiment data to file"""
-        if not self.experiment_data['timestamps']:
-            QtWidgets.QMessageBox.warning(self, "Warning", "No experiment data to save")
-            return
-        
-        try:
-            # Get save location
-            file_path, _ = QFileDialog.getSaveFileName(
-                self, "Save Experiment Data", 
-                f"adaptive_grip_experiment_{int(time.time())}.npy",
-                "NumPy Files (*.npy);;All Files (*)"
-            )
-            
-            if file_path:
-                # Save experiment data
-                np.save(file_path, self.experiment_data)
-                
-                # Save as CSV for easy analysis
-                csv_path = file_path.replace('.npy', '.csv')
-                df = pd.DataFrame({
-                    'timestamp': self.experiment_data['timestamps'],
-                    'target_force': self.experiment_data['target_forces'],
-                    'actual_force': self.experiment_data['actual_forces'],
-                    'force_error': self.experiment_data['force_errors'],
-                    'phase': self.experiment_data['phases']
-                })
-                df.to_csv(csv_path, index=False)
-                
-                # Save configuration
-                config_path = file_path.replace('.npy', '_config.yaml')
-                config_data = {
-                    'grip_config': self.current_grip_config,
-                    'force_pattern': self.pattern_combo.currentText(),
-                    'max_force': self.max_force_spin.value(),
-                    'duration': self.duration_spin.value(),
-                    'experiment_summary': {
-                        'total_samples': len(self.experiment_data['timestamps']),
-                        'total_duration': self.experiment_data['timestamps'][-1] if self.experiment_data['timestamps'] else 0
-                    }
-                }
-                
-                with open(config_path, 'w') as f:
-                    yaml.safe_dump(config_data, f)
-                
-                QtWidgets.QMessageBox.information(
-                    self, "Success", 
-                    f"Experiment data saved:\n"
-                    f"- Data: {file_path}\n"
-                    f"- CSV: {csv_path}\n"
-                    f"- Config: {config_path}"
-                )
-        
-        except Exception as e:
-            QtWidgets.QMessageBox.warning(self, "Error", f"Failed to save data: {e}")
-    
     def clear_data(self):
         """Clear experiment data"""
         self.experiment_data = {
             'timestamps': [],
             'target_forces': [],
             'actual_forces': [],
+            'actual_forces_filtered': [],
             'grip_positions': [],
             'phases': [],
             'force_errors': []
         }
         self.force_info.clear()
-        self.save_btn.setEnabled(False)
+        if hasattr(self, 'display_force_buffer'):
+            self.display_force_buffer.clear()
     
     def closeEvent(self, event):
         """Handle application close"""
         if self.experiment_running:
             self.stop_experiment()
+        
+        # Stop EMG recording
+        self.stop_emg_recording()
         
         try:
             if self.arm:
@@ -881,14 +1224,20 @@ def connect_prosthetic_hand(hand_side="left"):
 
 def main():
     """Main function"""
-    parser = argparse.ArgumentParser(description="Adaptive Grip Control with Real-Time GUI")
+    parser = argparse.ArgumentParser(description="Adaptive Grip Control with Real-Time GUI and Auto-Save")
+    parser.add_argument("--person_id", "-p", required=True,
+                        help="Person ID (folder under data/)")
     parser.add_argument("--hand", choices=["left", "right"], default="left",
                         help="Hand side (default: left)")
+    parser.add_argument("--out_root", "-o", default="data",
+                        help="Root data directory (default: ./data)")
     
     args = parser.parse_args()
     
-    print("=== Adaptive Grip Control with Real-Time GUI ===")
+    print("=== Adaptive Grip Control with Real-Time GUI and Auto-Save ===")
+    print(f"Person ID: {args.person_id}")
     print(f"Hand side: {args.hand}")
+    print(f"Output root: {args.out_root}")
     print()
     
     # Step 1: Connect to prosthetic hand
@@ -900,11 +1249,11 @@ def main():
     print()
     print("Starting GUI...")
     
-    # Step 2: Start GUI with connected arm
+    # Step 2: Start GUI with connected arm and person ID
     app = QApplication(sys.argv)
     
-    # Create and show the main window
-    window = AdaptiveGripGUI(arm)
+    # Create and show the main window with person ID for auto-save
+    window = AdaptiveGripGUI(arm, args.person_id, args.out_root)
     window.show()
     
     print("GUI started successfully!")
@@ -915,6 +1264,8 @@ def main():
     print("3. Place object in hand")
     print("4. Click 'Start Experiment' to begin adaptive grip control")
     print("5. Watch real-time force control in the plots")
+    print("6. Data will be automatically saved when experiment completes")
+    print(f"7. Files will be saved in: data/{args.person_id}/recordings/<grip>_interaction/experiments/")
     print()
     
     try:
