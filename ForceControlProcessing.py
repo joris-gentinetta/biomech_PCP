@@ -31,125 +31,131 @@ def update_yaml_configs(person_id, hand_side, used_channels, out_root='data'):
     recordings_dir = os.path.join(out_root, person_id, 'recordings')
     hand_side_cap = hand_side.capitalize()
 
-    SKIP_MOVEMENTS = {"calibration", "Calibration", "calib", "Calib"}
-
-    # Movements for recordings:value
+    # Get all movements
     movement_names = sorted([
         d for d in os.listdir(recordings_dir)
         if os.path.isdir(os.path.join(recordings_dir, d)) and d not in SKIP_MOVEMENTS
     ])
 
-    # Fixed list for test_recordings:value
-    test_recordings = ['indexFlEx', 'mrpFlEx', 'fingersFlEx']
+    # Split movements by type
+    free_space_movements = [m for m in movement_names if not is_interaction_experiment(m)]
+    interaction_movements = [m for m in movement_names if is_interaction_experiment(m)]
 
-    # Standard targets, switch side as needed
-    TARGETS = [
-        "index_Pos",
-        "middle_Pos",
-        "ring_Pos",
-        "pinky_Pos",
-        "thumbFlex_Pos",
-        "thumbRot_Pos"
-    ]
+    print(f"Free-space movements: {free_space_movements}")
+    print(f"Interaction movements: {interaction_movements}")
 
-    # Check if we have any interaction experiments to add force targets
-    has_interaction_experiments = any(is_interaction_experiment(m) for m in movement_names)
+    # Build feature and target lists
+    emg_features = [[f"emg", str(ch)] for ch in used_channels]
+    force_features = [[hand_side_cap, f"{finger}_Force"] for finger in ["index", "middle", "ring", "pinky", "thumb"]]
+    position_targets = [[hand_side_cap, f"{joint}_Pos"] for joint in ["index", "middle", "ring", "pinky", "thumbFlex", "thumbRot"]]
     
-    if has_interaction_experiments:
-        # Add force targets for interaction experiments
-        FORCE_TARGETS = [
-            "index_Force",
-            "middle_Force", 
-            "ring_Force",
-            "pinky_Force",
-            "thumb_Force"
-        ]
-        TARGETS.extend(FORCE_TARGETS)
-        print(f"Added force targets for interaction experiments: {FORCE_TARGETS}")
+    test_recordings = [m for m in ['indexFlEx', 'mrpFlEx', 'fingersFlEx'] if m in free_space_movements]
 
-    # Formatting for targets
-    targets_block = ""
-    for t in TARGETS:
-        targets_block += f"    - [{hand_side_cap}, {t}]\n"
+    # Update free-space config (modular_fs.yaml)
+    if free_space_movements:
+        fs_config_path = os.path.join(config_dir, 'modular_fs.yaml')
+        if os.path.exists(fs_config_path):
+            update_config_sections(
+                fs_config_path,
+                features=emg_features,  # EMG only
+                targets=position_targets,
+                recordings=free_space_movements,
+                test_recordings=test_recordings
+            )
+        else:
+            print(f"Warning: {fs_config_path} not found")
 
-    # Formatting for features (with channel comments)
-    features_block = ""
-    for idx, ch in enumerate(used_channels):
-        features_block += f"    - [emg, '{ch}'] # {idx}\n"
+    # Update interaction config (modular_inter.yaml)
+    if interaction_movements:
+        inter_config_path = os.path.join(config_dir, 'modular_inter.yaml')
+        if os.path.exists(inter_config_path):
+            update_config_sections(
+                inter_config_path,
+                features=emg_features + force_features,  # EMG + Force
+                targets=position_targets,
+                recordings=interaction_movements,
+                test_recordings=interaction_movements[:3]
+            )
+        else:
+            print(f"Warning: {inter_config_path} not found")
 
-    yaml_files = [f for f in os.listdir(config_dir) if f.endswith('.yaml')]
-    for yaml_file in yaml_files:
-        yaml_path = os.path.join(config_dir, yaml_file)
-        with open(yaml_path, 'r') as f:
-            lines = f.readlines()
+def update_config_sections(config_path, features, targets, recordings, test_recordings):
+    """Update specific sections of an existing config file"""
+    with open(config_path, 'r') as f:
+        lines = f.readlines()
 
-        # Find key sections
-        new_lines = []
-        i = 0
-        while i < len(lines):
-            line = lines[i]
-            # parameters:recordings:value
-            if line.strip().startswith("recordings:") and "parameters:" in "".join(lines[max(0, i-2):i+1]):
-                new_lines.append(line)
+    new_lines = []
+    i = 0
+    while i < len(lines):
+        line = lines[i]
+        
+        # Update features section
+        if line.strip().startswith("features:"):
+            new_lines.append(line)
+            i += 1
+            while i < len(lines) and lines[i].strip() != "value:":
+                new_lines.append(lines[i])
                 i += 1
-                while i < len(lines) and lines[i].strip() != "value:":
-                    new_lines.append(lines[i])
-                    i += 1
-                new_lines.append("    value:\n")
-                for m in movement_names:
-                    new_lines.append(f"    - {m}\n")
-                new_lines.append('\n')  # Blank line after recordings:value block
-                while i < len(lines) and (lines[i].strip().startswith("- ") or lines[i].strip() == "value:" or lines[i].strip() == "" or lines[i].strip().startswith("#")):
-                    i += 1
-                continue
-            # parameters:test_recordings:value
-            if line.strip().startswith("test_recordings:"):
-                new_lines.append(line)
+            new_lines.append("    value:\n")
+            for feature in features:
+                new_lines.append(f"    - {feature}\n")
+            # Skip existing feature lines
+            while i < len(lines) and (lines[i].strip().startswith("- [") or lines[i].strip() == "value:" or lines[i].strip() == ""):
                 i += 1
-                while i < len(lines) and lines[i].strip() != "value:":
-                    new_lines.append(lines[i])
-                    i += 1
-                new_lines.append("    value:\n")
-                for m in test_recordings:
-                    new_lines.append(f"    - {m}\n")
-                # new_lines.append('\n')  # Blank line after test_recordings:value block
-                while i < len(lines) and (lines[i].strip().startswith("- ") or lines[i].strip() == "value:" or lines[i].strip() == "" or lines[i].strip().startswith("#")):
-                    i += 1
-                continue
-            # parameters:targets:value
-            if line.strip().startswith("targets:"):
-                new_lines.append(line)
+            continue
+            
+        # Update targets section
+        elif line.strip().startswith("targets:"):
+            new_lines.append(line)
+            i += 1
+            while i < len(lines) and lines[i].strip() != "value:":
+                new_lines.append(lines[i])
                 i += 1
-                while i < len(lines) and lines[i].strip() != "value:":
-                    new_lines.append(lines[i])
-                    i += 1
-                new_lines.append("    value:\n")
-                new_lines.extend(targets_block)
-                # No blank line here (matches your formatting)
-                while i < len(lines) and (lines[i].strip().startswith("- [") or lines[i].strip() == "value:" or lines[i].strip().startswith("#") or lines[i].strip() == ""):
-                    i += 1
-                continue
-            # parameters:features:value
-            if line.strip().startswith("features:"):
-                new_lines.append('\n')  # Blank line BEFORE features block
-                new_lines.append(line)
+            new_lines.append("    value:\n")
+            for target in targets:
+                new_lines.append(f"    - {target}\n")
+            # Skip existing target lines
+            while i < len(lines) and (lines[i].strip().startswith("- [") or lines[i].strip() == "value:" or lines[i].strip() == ""):
                 i += 1
-                while i < len(lines) and lines[i].strip() != "value:":
-                    new_lines.append(lines[i])
-                    i += 1
-                new_lines.append("    value:\n")
-                new_lines.extend(features_block)
-                new_lines.append('\n')  # Blank line AFTER features:value block
-                while i < len(lines) and (lines[i].strip().startswith("- [emg,") or lines[i].strip() == "value:" or lines[i].strip().startswith("#") or lines[i].strip() == ""):
-                    i += 1
-                continue
-            # Default: keep old line
+            continue
+            
+        # Update recordings section
+        elif line.strip().startswith("recordings:") and "parameters:" in "".join(lines[max(0, i-2):i+1]):
+            new_lines.append(line)
+            i += 1
+            while i < len(lines) and lines[i].strip() != "value:":
+                new_lines.append(lines[i])
+                i += 1
+            new_lines.append("    value:\n")
+            for recording in recordings:
+                new_lines.append(f"    - {recording}\n")
+            # Skip existing recording lines
+            while i < len(lines) and (lines[i].strip().startswith("- ") or lines[i].strip() == "value:" or lines[i].strip() == ""):
+                i += 1
+            continue
+            
+        # Update test_recordings section
+        elif line.strip().startswith("test_recordings:"):
+            new_lines.append(line)
+            i += 1
+            while i < len(lines) and lines[i].strip() != "value:":
+                new_lines.append(lines[i])
+                i += 1
+            new_lines.append("    value:\n")
+            for recording in test_recordings:
+                new_lines.append(f"    - {recording}\n")
+            # Skip existing test recording lines
+            while i < len(lines) and (lines[i].strip().startswith("- ") or lines[i].strip() == "value:" or lines[i].strip() == ""):
+                i += 1
+            continue
+            
+        else:
             new_lines.append(line)
             i += 1
 
-        with open(yaml_path, 'w') as f:
-            f.writelines(new_lines)
-        print(f"Updated {yaml_path}")
+    with open(config_path, 'w') as f:
+        f.writelines(new_lines)
+    print(f" Updated {config_path}")
 
 def extract_finger_forces_by_indices(angles_data):
     """
@@ -286,6 +292,41 @@ def process_force_zero_phase(force_data, sampling_freq, cutoff_freq=2.0):
     
     print(f"Applied zero-phase low-pass filter ({cutoff_freq} Hz) to force data")
     return filtered_force
+
+def normalize_force_data(force_data, finger_names, max_forces_per_finger=None):
+    """
+    Normalize force data to [0, 1] range based on maximum achievable force per finger
+    
+    Args:
+        force_data: numpy array of shape (n_samples, 5) 
+        finger_names: list of finger names ['index', 'middle', 'ring', 'pinky', 'thumb']
+        max_forces_per_finger: dict of max forces per finger (in Newtons)
+                              If None, uses reasonable defaults
+    
+    Returns:
+        normalized_force: force data normalized to [0, 1]
+    """
+    if max_forces_per_finger is None:
+        # Default maximum forces based on prosthetic hand capabilities
+        max_forces_per_finger = {
+            'index': 20.0,   # Index finger typically strongest
+            'middle': 18.0,  # Middle finger strong  
+            'ring': 15.0,    # Ring finger weaker
+            'pinky': 12.0,   # Pinky weakest
+            'thumb': 25.0    # Thumb strongest for opposition
+        }
+    
+    normalized_force = np.copy(force_data)
+    
+    for finger_idx, finger_name in enumerate(finger_names):
+        max_force = max_forces_per_finger[finger_name]
+        normalized_force[:, finger_idx] = np.clip(force_data[:, finger_idx] / max_force, 0, 1)
+        
+        print(f"  {finger_name}: max_force={max_force}N, "
+              f"raw_range=[{np.min(force_data[:, finger_idx]):.2f}, {np.max(force_data[:, finger_idx]):.2f}], "
+              f"normalized_range=[{np.min(normalized_force[:, finger_idx]):.3f}, {np.max(normalized_force[:, finger_idx]):.3f}]")
+    
+    return normalized_force
 
 def scale_emg_timestamps_to_match_angles(emg_timestamps, angle_timestamps):
     """
@@ -603,9 +644,14 @@ def process_emg_and_angles(
     if force_data is not None:
         print(f"\n=== Filtering Force Data ===")
         filtered_force = process_force_zero_phase(force_data, angle_sf, force_filter_cutoff)
-        print(f"Filtered force data summary:")
+        
+        # NEW: Normalize force data
+        print(f"\n=== Normalizing Force Data ===")
+        filtered_force = normalize_force_data(filtered_force, finger_names)
+        
+        print(f"Normalized force data summary:")
         for i, finger in enumerate(finger_names):
-            print(f"  {finger}: mean={np.mean(filtered_force[:, i]):.2f}, max={np.max(filtered_force[:, i]):.2f}")
+            print(f"  {finger}: mean={np.mean(filtered_force[:, i]):.3f}, max={np.max(filtered_force[:, i]):.3f}")
 
     # Continue with the rest of existing processing...
     # Use angle timestamps as reference (EMG interpolated onto angle time base)
