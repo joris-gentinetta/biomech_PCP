@@ -39,12 +39,14 @@ from helpers.EMGClass import EMG
 import threading
 
 class psyonicControllers():
-	def __init__(self, numMotors=6, arm=None, freq_n=3, numElectrodes=8, emg=None, config=None, model_path=None):
+	def __init__(self, numMotors=6, arm=None, freq_n=3, numElectrodes=8, emg=None, config=None, model_path=None, controller_type='free_space'):
 		self.emg = emg
 		self.arm = arm
 		self.numMotors = numMotors
 		self.freq_n = freq_n
 		self.numElectrodes = numElectrodes
+		self.config = config
+		self.controller_type = controller_type  # 'free_space' or 'interaction'
 
 		self.probFilter = BesselFilterArr(numChannels=3, order=4, critFreqs=3, fs=self.arm.Hz, filtType='lowpass')
 
@@ -208,12 +210,35 @@ class psyonicControllers():
 # 			jointPos[5] = -66
 # 		return jointPos
 
-	def runModel(self):
+	def runModel(self, force_data=None):
 		jointPos = [0]*6
 		
 		# Get EMG input
 		emg_timestep = np.asarray(self.emg.normedEMG)[self.emg.usedChannels]
 		
+		if self.controller_type == 'free_space':
+			model_input = emg_timestep
+		elif self.controller_type == 'interaction':
+			if force_data is None:
+				print("Warning: Interaction controller called without force data")
+				force_data = np.zeros(5)
+			if len(force_data) != 5:
+				print(f"Warning: Expected 5 force values, got {len(force_data)}")
+				force_data = force_data[:5] if len(force_data) > 5 else np.pad(force_data, (0, 5-len(force_data)))
+			# Combine EMG and force features
+			model_input = np.concatenate([emg_timestep, force_data])
+		else:
+			raise ValueError(f"Unknown controller type: {self.controller_type}")
+
+		# Input validation
+		if len(model_input) != len(self.config.features):
+			print(f"ERROR: Input size mismatch! Got {len(model_input)}, expected {len(self.config.features)}")
+			print(f"Controller type: {self.controller_type}")
+			print(f"EMG channels: {len(emg_timestep)}")
+			if self.controller_type == 'interaction':
+				print(f"Force channels: {len(force_data) if force_data is not None else 0}")
+			return jointPos  # Return zeros if input size is wrong
+
 		# DEBUG: Print EMG input
 		if not hasattr(self, '_debug_counter'):
 			self._debug_counter = 0
@@ -225,10 +250,11 @@ class psyonicControllers():
 			# print(f"EMG max: {np.max(emg_timestep):.3f}, mean: {np.mean(emg_timestep):.3f}")
 		
 		# Process through model
-		emg_tensor = torch.tensor(emg_timestep, dtype=torch.float32).unsqueeze(0).unsqueeze(0).to(self.device)
+		# emg_tensor = torch.tensor(emg_timestep, dtype=torch.float32).unsqueeze(0).unsqueeze(0).to(self.device)
+		model_input_tensor = torch.tensor(model_input, dtype=torch.float32).unsqueeze(0).unsqueeze(0).to(self.device)
 		
 		with torch.no_grad():
-			output, self.states = self.model.model(emg_tensor, self.states)
+			output, self.states = self.model.model(model_input_tensor, self.states)
 			output = output.squeeze().cpu().numpy()
 			RESPONSIVENESS_SCALE = 2.0  # Increase this to make more responsive
 			output = output * RESPONSIVENESS_SCALE
@@ -280,3 +306,32 @@ class psyonicControllers():
 # 
 # 		return jointPos
 
+def create_controllers(emg, arm, config_free_space, config_interaction, 
+                      free_space_model_path, interaction_model_path):
+    """
+    Create both free space and interaction controllers.
+    
+    Returns:
+        tuple: (free_space_controller, interaction_controller)
+    """
+    free_space_controller = psyonicControllers(
+        numMotors=6 if arm is None else arm.numMotors,
+        arm=arm,
+        freq_n=3,
+        emg=emg,
+        config=config_free_space,
+        model_path=free_space_model_path,
+        controller_type='free_space'
+    )
+    
+    interaction_controller = psyonicControllers(
+        numMotors=6 if arm is None else arm.numMotors,
+        arm=arm,
+        freq_n=3,
+        emg=emg,
+        config=config_interaction,
+        model_path=interaction_model_path,
+        controller_type='interaction'
+    )
+    
+    return free_space_controller, interaction_controller
