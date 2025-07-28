@@ -24,6 +24,7 @@ from helpers.EMGClass import EMG
 from helpers.BesselFilter import BesselFilterArr
 from helpers.ExponentialFilter import ExponentialFilterArr
 from helpers.psyonicControllers import psyonicControllers
+from helpers.psyonicControllers import create_controllers
 from helpers.predict_utils import Config
 import numpy as np
 
@@ -917,13 +918,48 @@ class psyonicArm():
 			# elif self.controlMode == 'voltage':
 			# 	self.handCom = [0]*self.numMotors
 
+
+	def normalize_force_data_realtime(force_data, finger_names=None, max_forces_per_finger=None):
+		"""
+		Normalize force data to [0, 1] range using the same normalization as training.
+		This must match the normalization used in ForceControlProcessing.py
+		
+		Args:
+			force_data: numpy array of shape (5,) for [index, middle, ring, pinky, thumb]
+			finger_names: list of finger names (optional, for debugging)
+			max_forces_per_finger: dict of max forces per finger (should match training)
+		
+		Returns:
+			normalized_force: force data normalized to [0, 1]
+		"""
+		if max_forces_per_finger is None:
+			# IMPORTANT: These values must match exactly what you used in ForceControlProcessing.py
+			max_forces_per_finger = {
+				'index': 20.0,   # Index finger typically strongest
+				'middle': 18.0,  # Middle finger strong  
+				'ring': 15.0,    # Ring finger weaker
+				'pinky': 12.0,   # Pinky weakest
+				'thumb': 25.0    # Thumb strongest for opposition
+			}
+		
+		if finger_names is None:
+			finger_names = ['index', 'middle', 'ring', 'pinky', 'thumb']
+		
+		normalized_force = np.copy(force_data)
+		
+		for finger_idx, finger_name in enumerate(finger_names):
+			max_force = max_forces_per_finger[finger_name]
+			normalized_force[finger_idx] = np.clip(force_data[finger_idx] / max_force, 0, 1)
+		
+		return normalized_force
+
 	# Run the neural net at self.Hz, allowing faster command interpolation to be sent to the arm
 	def runNetForward(self, free_space_controller, interaction_controller):
 		T = time.time()
 		self.NetCom = self.getCurPos()
 
-		ENTER_FORCE_THRESHOLD = 0.8
-		EXIT_FORCE_THRESHOLD = 0.3
+		ENTER_FORCE_THRESHOLD = 0.2
+		EXIT_FORCE_THRESHOLD = 0.1
 		INTERACTION_MODE_DEBOUNCE_TIME = 0.1  # seconds
 
 		self.in_interaction_mode = False
@@ -933,10 +969,18 @@ class psyonicArm():
 		print(f"Controller target: {self.Hz}Hz ({target_period*1000:.1f}ms)")
 
 		while not self.exitEvent.is_set():
-			loop_start = time.time()  # ← ADD THIS LINE!
+			loop_start = time.time() 
+
+			raw_force_data = np.array([
+				np.sum([self.sensors[f'index{i}_Force'] for i in range(6)]),  # Sum all index sensors
+            	np.sum([self.sensors[f'middle{i}_Force'] for i in range(6)]), # Sum all middle sensors  
+				np.sum([self.sensors[f'ring{i}_Force'] for i in range(6)]),   # Sum all ring sensors
+				np.sum([self.sensors[f'pinky{i}_Force'] for i in range(6)]), # Sum all pinky sensors
+				np.sum([self.sensors[f'thumb{i}_Force'] for i in range(6)])   # Sum all thumb sensors
+			])
 			
-			force_data = np.array([self.sensors[key] for key in self.sensorForce])
-			max_finger_force = np.max(force_data)
+			normalized_force_data = self.normalize_force_data_realtime(raw_force_data)
+			max_finger_force = np.max(raw_force_data)
 			current_time = time.time()
 
 			# Force detection logic (unchanged)
@@ -959,7 +1003,7 @@ class psyonicArm():
 			# Run the model
 			self.lastposCom = self.NetCom
 			if self.in_interaction_mode:
-				posCom = interaction_controller.runModel()
+				posCom = interaction_controller.runModel(force_data=normalized_force_data)
 			else:
 				posCom = free_space_controller.runModel()
 
@@ -972,12 +1016,11 @@ class psyonicArm():
 			if sleep_time > 0:
 				time.sleep(sleep_time)
 			# Optional: warn if running slow
-			# else:
-			#     print(f"⚠️  Slow: {processing_time*1000:.1f}ms > {target_period*1000:.1f}ms")
+			elif processing_time > target_period * 1.5:  # Only warn if significantly slow
+				print(f"Slow loop: {processing_time*1000:.1f}ms > {target_period*1000:.1f}ms")
 
 			if self.exitEvent.is_set():
 				break
-
 # 	def runNetForward(self, free_space_controller, interaction_controller):
 # 		T = time.time()
 # 		self.NetCom = self.getCurPos()
@@ -1098,331 +1141,167 @@ def saveThread(saveLocation, filename, data):
 	# np.savetxt('/home/haptix/haptix/psyonic/logs/' + filename + '.csv', dataToSave, delimiter='\t', fmt='%s')
 	np.savetxt(f'{saveLocation}/{filename}.csv', dataToSave, delimiter='\t', fmt='%s')
 
-def main(arm, emg=None, saveLocation='', channels=None):
-	# connect to EMG board
-	calib_path = os.path.join('data', args.person_dir, 'recordings', 'Calibration', 'experiments', '1', 'scaling.yaml')
-	with open(calib_path, 'r') as f:
-		data = yaml.safe_load(f)
-	noiseLevels = np.array(data['noiseLevels'], dtype=np.float32)
-	maxVals = np.array(data['maxVals'], dtype=np.float32)
+def main(arm, emg=None, saveLocation='', channels=None, free_space_controller=None, interaction_controller=None):
+    """
+    Updated main function to handle dual controllers
+    """
+    # Load calibration data
+    calib_path = os.path.join('data', args.person_dir, 'recordings', 'Calibration', 'experiments', '1', 'scaling.yaml')
+    with open(calib_path, 'r') as f:
+        data = yaml.safe_load(f)
+    noiseLevels = np.array(data['noiseLevels'], dtype=np.float32)
+    maxVals = np.array(data['maxVals'], dtype=np.float32)
 
-	if emg is not None:
-		print('Connecting to EMG board...')
-		emg = EMG(noiseLevel=noiseLevels, maxVals=maxVals, usedChannels=channels)
+    if emg is not None:
+        print('Connecting to EMG board...')
+        emg = EMG(noiseLevel=noiseLevels, maxVals=maxVals, usedChannels=channels)
 
-		print(f"Used channels: {emg.usedChannels}")
-		print(f"YAML maxVals length: {len(maxVals)}")
-		print(f"YAML noiseLevel length: {len(noiseLevels)}")
-		print(f"EMG maxVals (first 8): {emg.maxVals[:8]}")
-		print(f"EMG noiseLevel (first 8): {emg.noiseLevel[:8]}")
+        print(f"Used channels: {emg.usedChannels}")
+        print(f"YAML maxVals length: {len(maxVals)}")
+        print(f"YAML noiseLevel length: {len(noiseLevels)}")
+        print(f"EMG maxVals (first 8): {emg.maxVals[:8]}")
+        print(f"EMG noiseLevel (first 8): {emg.noiseLevel[:8]}")
 
-		emg.startCommunication()
-		print('Connected.')
+        emg.startCommunication()
+        print('Connected.')
 
-################ DEBUG #############################
-# Place this after emg.startCommunication() in main()
-# 
-# 		DURATION = 10  # seconds
-# 		SAMPLE_PERIOD = 1.0 / 60  # Sample at 60 Hz to match your controller rate
-# 
-# 		print("\n=== EMG Debug Test ===")
-# 		print(f"EMG pipeline running at: {emg.samplingFreq/emg.numPackets:.1f} Hz")
-# 		print(f"Will sample at: {1/SAMPLE_PERIOD:.1f} Hz")
-# 		print(f"Duration: {DURATION} seconds")
-# 
-# 		# First test: Check update rate of normedEMG
-# 		print("\nTest 1: Checking normedEMG update rate...")
-# 		last_normed = None
-# 		update_count = 0
-# 		start_time = time.time()
-# 
-# 		# Check for 3 seconds
-# 		while (time.time() - start_time) < 3:
-# 			current_normed = np.copy(emg.normedEMG)
-# 			if last_normed is None or not np.array_equal(current_normed, last_normed):
-# 				update_count += 1
-# 				if update_count <= 5:  # Print first 5 updates
-# 					print(f"  Update {update_count} at {time.time()-start_time:.3f}s: {current_normed[:4]}...")
-# 			last_normed = current_normed
-# 			time.sleep(0.001)  # 1ms polling
-# 
-# 		elapsed = time.time() - start_time
-# 		print(f"normedEMG updated {update_count} times in {elapsed:.1f}s = {update_count/elapsed:.1f} Hz")
-# 		print(f"Expected: ~{emg.samplingFreq/emg.numPackets:.1f} Hz")
-# 
-# 		# Second test: Collect all data stages at controller rate
-# 		print(f"\nTest 2: Collecting data at {1/SAMPLE_PERIOD:.1f} Hz for {DURATION}s...")
-# 		raw_emg_data = []
-# 		filtered_emg_data = []
-# 		normed_emg_data = []
-# 		timestamps = []
-# 
-# 		# Track duplicates
-# 		last_sample = None
-# 		duplicate_count = 0
-# 
-# 		start_time = time.time()
-# 		next_sample_time = start_time
-# 
-# 		while (time.time() - start_time) < DURATION:
-# 			current_time = time.time()
-# 			
-# 			# Sample at fixed rate
-# 			if current_time >= next_sample_time:
-# 				# Collect data
-# 				raw_sample = np.copy(emg.rawEMG)
-# 				filt_sample = np.copy(emg.filtEMG)
-# 				norm_sample = np.copy(emg.normedEMG)
-# 				
-# 				raw_emg_data.append(raw_sample)
-# 				filtered_emg_data.append(filt_sample)
-# 				normed_emg_data.append(norm_sample)
-# 				timestamps.append(current_time - start_time)
-# 				
-# 				# Check for duplicates
-# 				if last_sample is not None and np.array_equal(norm_sample, last_sample):
-# 					duplicate_count += 1
-# 				last_sample = norm_sample
-# 				
-# 				# Set next sample time
-# 				next_sample_time += SAMPLE_PERIOD
-# 			
-# 			time.sleep(0.0001)  # Small sleep to prevent CPU spinning
-# 
-# 		# Convert to arrays
-# 		raw_emg_data = np.array(raw_emg_data).T  # Shape: (channels, samples)
-# 		filtered_emg_data = np.array(filtered_emg_data).T
-# 		normed_emg_data = np.array(normed_emg_data).T
-# 
-# 		print(f"\nCollected {len(timestamps)} samples in {timestamps[-1]:.1f}s")
-# 		print(f"Actual collection rate: {len(timestamps)/timestamps[-1]:.1f} Hz")
-# 		print(f"Duplicate samples: {duplicate_count} ({duplicate_count/len(timestamps)*100:.1f}%)")
-# 
-# 		# Analyze single channel (e.g., channel from usedChannels[0])
-# 		test_channel = channels[0] if channels else 0
-# 		print(f"\nAnalyzing channel {test_channel}:")
-# 
-# 		# Raw EMG stats
-# 		raw_channel = raw_emg_data[test_channel]
-# 		print(f"  Raw EMG range: [{np.min(raw_channel):.1f}, {np.max(raw_channel):.1f}]")
-# 		print(f"  Raw EMG mean: {np.mean(raw_channel):.1f}, std: {np.std(raw_channel):.1f}")
-# 
-# 		# Filtered EMG stats
-# 		filt_channel = filtered_emg_data[test_channel]
-# 		print(f"  Filtered EMG range: [{np.min(filt_channel):.1f}, {np.max(filt_channel):.1f}]")
-# 
-# 		# Normalized EMG stats
-# 		norm_channel = normed_emg_data[test_channel]
-# 		print(f"  Normalized EMG range: [{np.min(norm_channel):.3f}, {np.max(norm_channel):.3f}]")
-# 		print(f"  Normalized EMG mean: {np.mean(norm_channel):.3f}, std: {np.std(norm_channel):.3f}")
-# 
-# 		# Check if normalized values are reasonable
-# 		if np.max(norm_channel) > 0.99:
-# 			print(" WARNING: Normalized EMG saturating at 1.0")
-# 		if np.std(norm_channel) < 0.001:
-# 			print(" WARNING: Normalized EMG has very low variation")
-# 
-# 		# Save all data
-# 		print("\nSaving debug data...")
-# 		np.save('raw_emg_live.npy', raw_emg_data)
-# 		np.save('filtered_emg_live.npy', filtered_emg_data)
-# 		np.save('normed_emg_live.npy', normed_emg_data)
-# 		np.save('emg_live_timestamps.npy', np.array(timestamps))
-# 
-# 		# Save metadata
-# 		debug_info = {
-# 			'usedChannels': channels,
-# 			'numElectrodes': emg.numElectrodes,
-# 			'samplingFreq': emg.samplingFreq,
-# 			'numPackets': emg.numPackets,
-# 			'expected_output_rate': emg.samplingFreq / emg.numPackets,
-# 			'actual_normed_update_rate': update_count / 3.0,
-# 			'collection_rate': len(timestamps) / timestamps[-1],
-# 			'duplicate_percentage': duplicate_count / len(timestamps) * 100,
-# 			'maxVals': emg.maxVals.tolist(),
-# 			'noiseLevel': emg.noiseLevel.tolist(),
-# 			'test_channel': test_channel,
-# 			'norm_stats': {
-# 				'min': float(np.min(norm_channel)),
-# 				'max': float(np.max(norm_channel)),
-# 				'mean': float(np.mean(norm_channel)),
-# 				'std': float(np.std(norm_channel))
-# 			}
-# 		}
-# 
-# 		import json
-# 		with open('emg_debug_info.json', 'w') as f:
-# 			json.dump(debug_info, f, indent=2)
-# 
-# 		print(f"\nDebug data saved:")
-# 		print(f"  - raw_emg_live.npy: {raw_emg_data.shape}")
-# 		print(f"  - filtered_emg_live.npy: {filtered_emg_data.shape}")
-# 		print(f"  - normed_emg_live.npy: {normed_emg_data.shape}")
-# 		print(f"  - emg_debug_info.json")
-# 
-# 		# Final check
-# 		print("\n=== Debug Summary ===")
-# 		if update_count/3.0 < 50:
-# 			print("normedEMG updating too slowly")
-# 		elif duplicate_count/len(timestamps) > 0.2:
-# 			print("Too many duplicate samples")
-# 		elif np.max(norm_channel) > 0.99:
-# 			print("Normalized EMG saturating")
-# 		else:
-# 			print("EMG pipeline appears to be working correctly")
-# 
-# 		print("\nPress Ctrl+C to exit debug mode and continue...")
-# 		try:
-# 			while True:
-# 				time.sleep(1)
-# 		except KeyboardInterrupt:
-# 			print("\nExiting debug mode, continuing to main program...")
+        # If controllers are provided, start the neural net thread
+        if free_space_controller is not None and interaction_controller is not None:
+            if not args.dummy:
+                print('Starting dual controller neural net thread...')
+                arm.runNetThread(free_space_controller, interaction_controller)
 
-################ END DEBUG #############################
+    # Set up case/switch for arm control
+    try:
+        while True:
+            run = callback()
+            if run == 'move':
+                print(f'\n\nRunning arm...')
+                if emg is not None:
+                    arm.mainControlLoop(emg=emg)
+                else:
+                    arm.mainControlLoop()
 
-		# setup the controller class
-		# controller = psyonicControllers(numMotors=arm.numMotors, arm=arm, freq_n=3, emg=emg)
+                # Set recording to false, regardless of whether you have been recording
+                if arm.recording:
+                    filename = input('Enter a .csv filename: ')
+                    if not filename == 'exit':
+                        thread = threading.Thread(target=saveThread, args=[saveLocation, filename, arm.recordedData], name='saveThread')
+                        thread.start()
+                        arm.resetRecording()
 
-		# start the neural net thread
-		# arm.runNetThread(controller)
+                arm.recording = False
 
-	# set up case/switch for arm using an input/callback structure -- this allows the behavior of the arm to be controlled without stopping this code
-	try:
-		while True:
-			run = callback()
-			if run == 'move':
-				print(f'\n\nRunning arm...')
-				if emg is not None:
-					arm.mainControlLoop(emg=emg)
-				else:
-					arm.mainControlLoop()
+            elif run == 'record':
+                print('\n\nRecording next arm movement...')
+                arm.recording = True
+                arm.resetRecording()
 
-				# set recording to false, regardless of whether you have been recording
-				if arm.recording:
-					filename = input('Enter a .csv filename: ')
-					if not filename == 'exit':
-						# dataToSave = np.array(arm.recordedData)
-						# np.savetxt('/home/haptix/haptix/psyonic/logs/' + filename + '.csv', dataToSave, delimiter='\t', fmt='%s')
-						thread = threading.Thread(target=saveThread, args=[saveLocation, filename, arm.recordedData], name='saveThread')
-						thread.start()
-						arm.resetRecording()
+            elif run == 'play':
+                validFilename = False
+                while not validFilename:
+                    filename = input('Enter a .csv filename to replay: ')
+                    try:
+                        loadedData = pd.read_csv(filename, delimiter='\t', header=0)
+                        if filename == "exit": break
+                        validFilename = True
+                    except Exception as e:
+                        print(f'Invalid filename with error {e}\n')
 
-				arm.recording = False
+                if validFilename:
+                    positionColTitles = ['index_PosCom', 'middle_PosCom', 'ring_PosCom', 'pinky_PosCom', 'thumbFlex_PosCom', 'thumbRot_PosCom']
+                    loadedPositions = loadedData[positionColTitles].values
+                    fullMove = arm.playbackRecording(loadedPositions)
+                    arm.mainControlLoop(posDes=fullMove)
 
-			elif run == 'record':
-				print('\n\nRecording next arm movement...')
-				arm.recording = True
-				arm.resetRecording()
+            elif run == 'zero':
+                print('\n\nZeroing joints...')
+                posDes = [0]*arm.numMotors
+                curMode = arm.getCurControlMode()
+                arm.setControlMode('position')
+                arm.mainControlLoop(posDes=np.asarray(posDes))
+                arm.setControlMode(curMode)
 
-			elif run == 'play':
-				validFilename = False
-				while not validFilename:
-					filename = input('Enter a .csv filename to replay: ')
-					try:
-						loadedData = pd.read_csv(filename, delimiter='\t', header=0)
-						if filename == "exit": break
-						validFilename = True
+            elif run == 'manual':
+                print('\n\nAccepting manual input...')
+                while True:
+                    print('Enter: [indexPos, middlePos, ringPos, pinkyPos, thumbFlex, thumbRot]')
+                    posRaw = input()
+                    if (posRaw == 'exit'):
+                        break
 
-					except Exception as e:
-						print(f'Invalid filename with error {e}\n')
+                    try:
+                        posDes = [float(x) for x in posRaw.split()]
+                    except:
+                        posDes = []
 
-				if validFilename:
-					positionColTitles = ['index_PosCom', 'middle_PosCom', 'ring_PosCom', 'pinky_PosCom', 'thumbFlex_PosCom', 'thumbRot_PosCom']
-					loadedPositions = loadedData[positionColTitles].values
-					fullMove = arm.playbackRecording(loadedPositions)
-					arm.mainControlLoop(posDes=fullMove)
+                    if not arm.isValidCommand(posDes):
+                        print('Input formatted incorrectly. Enter 6 valid joint positions.\n')
+                    else:
+                        break
 
-			elif run == 'zero':
-				print('\n\nZeroing joints...')
-				posDes = [0]*arm.numMotors
-				curMode = arm.getCurControlMode()
-				arm.setControlMode('position')
-				arm.mainControlLoop(posDes=np.asarray(posDes))
-				arm.setControlMode(curMode)
+                arm.mainControlLoop(posDes=np.asarray(posDes))
 
-			elif run == 'manual':
-				print('\n\nAccepting manual input...')
-				while True:
-					print('Enter: [indexPos, middlePos, ringPos, pinkyPos, thumbFlex, thumbRot]')
-					posRaw = input() # Take input
-					if (posRaw == 'exit'): # Escape valve
-						return
+            elif run == 'set':
+                print('\n\nChanging settings...')
+                while True:
+                    print('Enter: [c (controlMode), r (replyVariant)]')
+                    setRaw = input()
+                    if (setRaw == 'exit'):
+                        break
 
-					try: # Turn input into array of floats
-						posDes = [float(x) for x in posRaw.split()]
-					except: # Uh-oh! Formatting wrong
-						posDes = []
+                    if setRaw in ['c', 'controlMode', 'control']:
+                        while True:
+                            print('Enter: [pos, vel, tor, vol, imp, read]')
+                            setControl = input()
+                            if setControl not in ['pos', 'vel', 'tor', 'vol', 'imp', 'read']:
+                                print('Invalid setting. Enter a valid setting.\n')
+                                continue
+                            break
 
-					if not arm.isValidCommand(posDes): # repeat if not valid
-						print('Input formatted incorrectly. Enter 6 valid joint positions.\n')
-					else: # Otherwise exit
-						break
+                        controlDict = {'pos': 'position', 'vel': 'velocity', 'tor': 'torque', 'vol': 'voltage', 'imp': 'impedance', 'read': 'readOnly'}
+                        setControl = controlDict[setControl]
+                        arm.setControlMode(setControl)
+                        break
 
-				# curMode = arm.getCurControlMode()
-				# arm.setControlMode('position')
-				arm.mainControlLoop(posDes=np.asarray(posDes))
-				# arm.setControlMode(curMode)
+                    elif setRaw in ['r', 'replyVariant', 'reply']:
+                        while True:
+                            print('Enter: [0, 1, 2]')
+                            setReply = input()
+                            if setReply not in ['0', '1', '2']:
+                                print('Invalid setting. Enter a valid setting.\n')
+                                continue
+                            break
 
-			elif run == 'set':
-				print('\n\nChanging settings...')
-				while True:
-					print('Enter: [c (controlMode), r (replyVariant)]')
-					setRaw = input()
-					if (setRaw == 'exit'):
-						break
+                        arm.setReplyVariant(int(setReply))
+                        break
 
-					if setRaw in ['c', 'controlMode', 'control']:
-						while True:
-							print('Enter: [pos, vel, tor, vol, imp, read]')
-							setControl = input()
-							if setControl not in ['pos', 'vel', 'tor', 'vol', 'imp', 'read']:
-								print('Invalid setting. Enter a valid setting.\n')
-								continue
-							
-							break
+                    else:
+                        print('Invalid setting. Enter a valid setting.\n')
+                        continue
 
-						controlDict = {'pos': 'position', 'vel': 'velocity', 'tor': 'torque', 'vol': 'voltage', 'imp': 'impedance', 'read': 'readOnly'}
-						setControl = controlDict[setControl]
-						arm.setControlMode(setControl)
-						break
+            elif run == 'print':
+                print('\n\nPrinting sensor states...')
+                arm.printSensors()
 
-					elif setRaw in ['r', 'replyVariant', 'reply']:
-						while True:
-							print('Enter: [0, 1, 2]')
-							setReply = input()
-							if setReply not in ['0', '1', '2']:
-								print('Invalid setting. Enter a valid setting.\n')
-								continue
+            elif run == 'exit':
+                print('Exiting.')
+                break
 
-							break
+            else:
+                print(f'Invalid command {run}')
 
-						arm.setReplyVariant(int(setReply))
-						break
+    except KeyboardInterrupt:
+        pass
 
-					else:
-						print('Invalid setting. Enter a valid setting.\n')
-						continue
+    print('Shutting Down.')
+    if emg is not None:
+        emg.exitEvent.set()
+        if hasattr(arm, 'netThread') and arm.netThread.is_alive():
+            arm.netThread.join()
 
-			elif run == 'print':
-				print('\n\nPrinting sensor states...')
-				arm.printSensors()
-
-			elif run == 'exit':
-				print('Exiting.')
-				break
-
-			else:
-				print(f'Invalid command {run}')
-
-	except KeyboardInterrupt:
-		pass
-
-	print('Shutting Down.')
-	if emg is not None:
-		emg.exitEvent.set()
-		arm.netThread.join()
-
-	arm.movingEvent.set()
+    if hasattr(arm, 'movingEvent'):
+        arm.movingEvent.set()
 
 
 # Check the args and run
@@ -1433,7 +1312,7 @@ if __name__ == '__main__':
     parser.add_argument('-l', '--laterality', type=str, help='Handedness (left or right)', default='left')
     parser.add_argument('-s', '--stuffing', help='Use byte stuffing?', action='store_true')
     parser.add_argument('--person_dir', type=str, required=True, help='Person directory')
-    parser.add_argument('--config_name', type=str, required=True, help='Training configuration')
+    # REMOVED: --config_name (no longer needed)
     parser.add_argument('--free_space_model_path', type=str, required=True, help='Path to free space model')
     parser.add_argument('--interaction_model_path', type=str, required=True, help='Path to interaction model')
     parser.add_argument('--dummy', action='store_true', help='Run in dummy mode without connecting to real hand')
@@ -1451,12 +1330,35 @@ if __name__ == '__main__':
 
     # EMG Setup
     if args.emg:
-        with open(join('data', args.person_dir, 'configs', args.config_name), 'r') as file:
-            wandb_config = yaml.safe_load(file)
-            config = Config(wandb_config)
-        channels = [int(feature[1]) for feature in config.features]
+        # Load both configs to get features
+        free_space_config_path = join('data', args.person_dir, 'configs', 'modular_fs.yaml')
+        interaction_config_path = join('data', args.person_dir, 'configs', 'modular_inter.yaml')
+        
+        # Verify both config files exist
+        if not os.path.exists(free_space_config_path):
+            raise FileNotFoundError(f"Free space config not found: {free_space_config_path}")
+        if not os.path.exists(interaction_config_path):
+            raise FileNotFoundError(f"Interaction config not found: {interaction_config_path}")
+        
+        # Load free space config to extract EMG channels
+        with open(free_space_config_path, 'r') as file:
+            fs_wandb_config = yaml.safe_load(file)
+            fs_config = Config(fs_wandb_config)
+        
+        # Load interaction config
+        with open(interaction_config_path, 'r') as file:
+            inter_wandb_config = yaml.safe_load(file)
+            inter_config = Config(inter_wandb_config)
+        
+        # Extract only EMG channels (filter out force channels if present)
+        channels = [int(feature[1]) for feature in fs_config.features if feature[0] == 'emg']
 
-        # Load calibration values here too:
+        print(f"Free space config - Features: {len(fs_config.features)} (EMG only)")
+        print(f"Interaction config - Features: {len(inter_config.features)} (EMG + Force)")
+        print(f"Output targets: {len(fs_config.targets)} DOF")
+        print(f"EMG channels: {channels}")
+
+        # Load calibration values
         calib_path = os.path.join('data', args.person_dir, 'recordings', 'Calibration', 'experiments', '1', 'scaling.yaml')
         with open(calib_path, 'r') as f:
             data = yaml.safe_load(f)
@@ -1466,35 +1368,26 @@ if __name__ == '__main__':
         emg = EMG(usedChannels=channels, noiseLevel=noiseLevels, maxVals=maxVals)
 
         # Measure actual stream rate
+        print("Measuring EMG hardware rate...")
         actual_rate = emg.measure_actual_stream_rate(duration=5)
-        print(f"Measured hardware rate: {actual_rate: .1f} Hz")
+        print(f"Measured hardware rate: {actual_rate:.1f} Hz")
        		
         emg.samplingFreq = actual_rate
         print(f"Updated EMG sampling frequency to measured rate: {actual_rate} Hz")
         
-        emg.startCommunication()  # This starts the background thread
+        emg.startCommunication()
         print(f"EMG thread running: {emg.emgThread.is_alive()}")
         print(f"EMG numPackets: {emg.numPackets}")
         print(f"Expected output rate: {emg.samplingFreq / emg.numPackets} Hz")
         
-        free_space_model_path = args.free_space_model_path
-        interaction_model_path = args.interaction_model_path
-        
-        free_space_controller = psyonicControllers(
-            numMotors=6 if args.dummy else arm.numMotors,
-            arm=arm,
-            freq_n=3,
+        # Create both controllers with their respective configs
+        free_space_controller, interaction_controller = create_controllers(
             emg=emg,
-            config=config,
-            model_path=free_space_model_path
-        )
-        interaction_controller = psyonicControllers(
-            numMotors=6 if args.dummy else arm.numMotors,
             arm=arm,
-            freq_n=3,
-            emg=emg,
-            config=config,
-            model_path=interaction_model_path
+            config_free_space=fs_config,
+            config_interaction=inter_config,
+            free_space_model_path=args.free_space_model_path,
+            interaction_model_path=args.interaction_model_path
         )
 
         if not args.dummy:
@@ -1502,10 +1395,10 @@ if __name__ == '__main__':
             arm.initSensors()
             print('Sensors initialized.')
             arm.startComms()
-            arm.runNetThread(free_space_controller, interaction_controller)
 
-        # Always call main (even if dummy)
-        main(arm, emg, saveLocation=f'data/{args.person_dir}/logs', channels=channels)
+        # Call main with both controllers
+        main(arm, emg, saveLocation=f'data/{args.person_dir}/logs', channels=channels,
+             free_space_controller=free_space_controller, interaction_controller=interaction_controller)
 
     elif args.tracker:
         if args.dummy:
@@ -1517,7 +1410,7 @@ if __name__ == '__main__':
         ctx = zmq.Context()
         trackerSock = ctx.socket(zmq.SUB)
         trackerSock.connect(trackerAddr)
-        trackerSock.subscribe('')  # Subscribe to all topics
+        trackerSock.subscribe('')
 
         try:
             while True:
