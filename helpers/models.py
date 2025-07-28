@@ -673,14 +673,44 @@ class TimeSeriesRegressorWrapper:
         weighted_loss = loss * weights  # Will broadcast weights to last dim
         return weighted_loss.mean()
 
+    def train(self):
+        self.model.train()
+        return
+
+    def eval(self):
+        self.model.eval()
+        return
+
+    # def train_one_epoch(self, dataloader):
+    #     self.model.train()
+    #     epoch_loss = 0
+    #     for x, y in dataloader:
+    #         states = self.model.get_starting_states(dataloader.batch_size, y)
+    #         outputs, states = self.model(x, states)
+# 
+    #         loss = self.criterion(outputs[:, self.warmup_steps:], y[:, self.warmup_steps:])
+# 
+    #         self.optimizer.zero_grad(set_to_none=True)
+    #         loss.backward()
+    #         torch.nn.utils.clip_grad_norm_(self.model.parameters(), 4)
+    #         self.optimizer.step()
+    #         epoch_loss += loss
+# 
+    #         if torch.any(torch.isnan(loss)):
+    #             print('NAN Loss!')
+# 
+    #     return epoch_loss.item() / len(dataloader)
+
     def train_one_epoch(self, dataloader):
         self.model.train()
         epoch_loss = 0.0
+        self.dof_min = torch.tensor([0, 0, 0, 0, 0, -120], dtype=torch.float32, device=self.model.device)  
+        self.dof_max = torch.tensor([120, 120, 120, 120, 120, 0], dtype=torch.float32, device=self.model.device)
 
         # 1) Create one global counter before either loop
         global_batch_idx = 0
 
-        output_weights = torch.tensor([1, 1, 1, 1, 1, 1], dtype=torch.float32, device=self.model.device)
+        output_weights = torch.tensor([1.0, 1.0, 1.0, 1.0, 1.0, 1.0], dtype=torch.float32, device=self.model.device)
 
         # 2) First pass: just check x/y for NaNs or Infs
         for x, y in dataloader:
@@ -699,25 +729,47 @@ class TimeSeriesRegressorWrapper:
         for x, y in dataloader:
             states = self.model.get_starting_states(dataloader.batch_size, y)
             outputs, states = self.model(x, states)
+            y_targets = y[:, self.warmup_steps:]
 
-            # loss = self.criterion(outputs[:, self.warmup_steps:], y[:, self.warmup_steps:])
-            # Weighted loss (only after warmup_steps)
-            loss = self.weighted_mse_loss(outputs[:, self.warmup_steps:], y[:, self.warmup_steps:], output_weights)
+            # Prepare thresholds for "extremes" per DoF
+            low_thresh = self.dof_min + 0.3 * (self.dof_max - self.dof_min)
+            high_thresh = self.dof_max - 0.3 * (self.dof_max - self.dof_min)
+            # Reshape for broadcasting
+            low_thresh = low_thresh.view(1, 1, -1)
+            high_thresh = high_thresh.view(1, 1, -1)
+
+            # Compute weights for each element in the batch/seq/DoF
+            weights = torch.where((y_targets < low_thresh) | (y_targets > high_thresh), 2.0, 1.0)
+            weights = weights * output_weights.view(1, 1, -1)
+
+            # Weighted loss
+            # loss = ((outputs[:, self.warmup_steps:] - y_targets) ** 2 * weights).mean()
+            loss = ((outputs[:, self.warmup_steps:] - y_targets) ** 2).mean()
+
+
+            # Addition: Penalize Mean
+            y_mean = y_targets.mean().detach()
+            mean_penalty = torch.abs(outputs[:, self.warmup_steps:] - y_mean).mean()
+            # alpha = 0.01
+            alpha = 0.01
+            loss = loss + alpha * mean_penalty
+
+            pred_var = outputs[:, self.warmup_steps:].var()
+            # beta = 0.03
+            beta = 0.01
+            loss = loss - beta * pred_var
+
             self.optimizer.zero_grad(set_to_none=True)
             loss.backward()
             torch.nn.utils.clip_grad_norm_(self.model.parameters(), 1.0)
             self.optimizer.step()
             epoch_loss += loss.detach().item()
 
-            # print(f"[GlobalBatch {global_batch_idx}] loss={loss.item():.5e}  (OK)")
             if torch.any(torch.isnan(loss)):
                 print(f"[GlobalBatch {global_batch_idx}] NAN Loss!")
 
             global_batch_idx += 1
-
         return epoch_loss / len(dataloader)
-
-    
 
     def predict(self, test_set, features, targets):
         self.model.eval()
