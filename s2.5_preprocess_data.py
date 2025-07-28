@@ -327,6 +327,7 @@ def process_emg_and_angles(
         angles_timestamps_file='angle_timestamps.npy',
         angle_filter_cutoff=5.0,
         use_timestamp_scaling=True,  # New parameter to enable/disable scaling
+        angle_shift_seconds=0.0,
     ):
     # Load the data
     emg = np.load(os.path.join(data_dir, emg_file)).T
@@ -387,7 +388,7 @@ def process_emg_and_angles(
     print(f"Angle sampling frequency: {angle_sf:.1f} Hz")
     filtered_angles = process_angles_zero_phase(angles, angle_sf, angle_filter_cutoff)
 
-    # Continue with the rest of your existing processing...
+    # Continue with the rest of existing processing...
     # Use angle timestamps as reference (EMG interpolated onto angle time base)
     ref_t = angles_timestamps
     aligned_angles = filtered_angles
@@ -411,6 +412,32 @@ def process_emg_and_angles(
     print(f"Final sampling frequency: {final_sf:.1f} Hz")
     print(f"Final data length: {len(downsampled_t)} samples")
 
+    if angle_shift_seconds > 0:
+        print(f"\n=== Applying Time Shift: {angle_shift_seconds}s ===")
+        shift_samples = int(angle_shift_seconds * final_sf)
+        if shift_samples >= len(emg_60Hz):
+            print(f"Warning: Shift ({angle_shift_seconds}s = {shift_samples} samples) is larger than data length ({len(emg_60Hz)})")
+            shift_samples = len(emg_60Hz) - 1
+
+        print(f"Shifting EMG by {shift_samples} samples ({shift_samples/final_sf:.3f}s)")
+
+        # Shift EMG to the left (remove first N samples)
+        emg_60Hz_shifted = emg_60Hz[shift_samples:, :]
+        # Trim angles from the end to match the EMG length
+        angles_60Hz_trimmed = angles_60Hz[:len(emg_60Hz_shifted), :]
+
+        # Create new timestamp array
+        downsampled_t_shifted = downsampled_t[:len(emg_60Hz_shifted)]
+
+        # Update the data arrays
+        emg_60Hz = emg_60Hz_shifted
+        angles_60Hz = angles_60Hz_trimmed
+        downsampled_t = downsampled_t_shifted
+        
+        print(f"After shift - EMG shape: {emg_60Hz.shape}, Angles shape: {angles_60Hz.shape}")
+        print(f"New data length: {len(downsampled_t)} samples ({downsampled_t[-1]:.2f}s)")
+
+
     # Drop the first few seconds because of synchronization
     drop_secs = 0.0
     start_idx = np.searchsorted(downsampled_t, drop_secs)
@@ -433,9 +460,11 @@ def process_emg_and_angles(
     print(f"Final EMG samples: {len(emg_60Hz)}")
     print(f"Final angle samples: {len(angles_60Hz)}")
     print(f"Final duration: {downsampled_t[-1]:.2f}s")
+    if angle_shift_seconds > 0:
+        print(f"Time shift applied: {angle_shift_seconds}s (EMG predicts angles {angle_shift_seconds}s into the future)")
     
 
-def process_all_experiments(person_id, out_root, movement=None, snr_threshold=3.0, hand_side='left', use_timestamp_scaling=True):
+def process_all_experiments(person_id, out_root, movement=None, snr_threshold=3.0, hand_side='left', use_timestamp_scaling=True, angle_shift_seconds=0.0):
     recordings_dir = os.path.join(out_root, person_id, "recordings")
     if not os.path.exists(recordings_dir):
         print(f"No such directory: {recordings_dir}")
@@ -480,7 +509,8 @@ def process_all_experiments(person_id, out_root, movement=None, snr_threshold=3.
                     out_root, 
                     used_channels, 
                     hand_side=hand_side,
-                    use_timestamp_scaling=use_timestamp_scaling  # Pass the parameter
+                    use_timestamp_scaling=use_timestamp_scaling,  # Pass the parameter
+                    angle_shift_seconds=angle_shift_seconds
                 )
             except Exception as e:
                 print(f"Failed to process {exp_dir}: {e}")
@@ -490,9 +520,10 @@ if __name__ == "__main__":
     parser.add_argument('--person_id', required=True, help='Person ID (e.g. Emanuel_FirstTries)')
     parser.add_argument('--movement', required=False, help='Movement name (e.g. indexFlDigitsEx, optional)')
     parser.add_argument('--out_root', default='data', help='Root directory (default: data)')
-    parser.add_argument('--snr_threshold', type=float, default=2, help='SNR threshold for channel selection')
+    parser.add_argument('--snr_threshold', type=float, default=0.9, help='SNR threshold for channel selection')
     parser.add_argument("--hand_side", "-s", choices=["left", "right"], default="left", help="Side of the prosthetic hand")
     parser.add_argument('--no_timestamp_scaling', action='store_true', help='Disable timestamp scaling (use original timestamps)')
+    parser.add_argument('--angle_shift', type=float, default=0.5, help= 'Shift anfles to the left by this many seconds')
     args = parser.parse_args()
 
     use_timestamp_scaling = not args.no_timestamp_scaling  # Default is True unless --no_timestamp_scaling is specified
@@ -503,6 +534,6 @@ if __name__ == "__main__":
         args.movement, 
         args.snr_threshold, 
         args.hand_side,
-        use_timestamp_scaling=use_timestamp_scaling
+        use_timestamp_scaling=use_timestamp_scaling,
+        angle_shift_seconds=args.angle_shift 
     )
-
