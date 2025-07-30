@@ -107,8 +107,8 @@ if __name__ == '__main__':
 
 
     if args.save_input:
-        # temp_vc = cv2.VideoCapture(args.camera)
-        temp_vc = VideoCapture(args.camera)
+        temp_vc = cv2.VideoCapture(args.camera)
+        # temp_vc = VideoCapture(args.camera)
         # temp_vc = VideoCapture(args.camera) if args.capture_card else cv2.VideoCapture(args.camera)
 
         width = temp_vc.get(cv2.CAP_PROP_FRAME_WIDTH)

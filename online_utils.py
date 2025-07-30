@@ -100,8 +100,8 @@ class VideoCapture(cv2.VideoCapture):
 class InputThread(Thread):
     def __init__(self, src=0, queueSize=0, save=True, kE=None):
         super().__init__()
-        # self.stream = cv2.VideoCapture(src)
-        self.stream = VideoCapture(src)
+        self.stream = cv2.VideoCapture(src)
+        # self.stream = VideoCapture(src)
 
         self.outputQ = Queue(maxsize=queueSize)
         self.initialized = Event()
@@ -677,7 +677,7 @@ if __name__ == '__main__':
     mediapipe_test = True
     if mediapipe_test:
         # print(system_name)
-        cap = VideoCapture(args.camera_id)
+        cap = cv2.VideoCapture(args.camera_id)
 
         body_model_path = 'models/mediapipe/pose_landmarker_lite.task'
         hands_model_path = 'models/mediapipe/hand_landmarker.task'

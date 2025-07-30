@@ -38,30 +38,27 @@ class psyonicControllers:
 		jointPos = self.arm.lastPosCom
 		emg_timestep = np.asarray(self.emg.normedEMG)[self.emg.usedChannels]
 		if not np.any(emg_timestep > 0.1): return jointPos
-		emg_timestep = torch.tensor(emg_timestep, dtype=torch.float32).unsqueeze(0).unsqueeze(0).to(self.device)
 		with torch.no_grad():
+			emg_timestep = torch.tensor(emg_timestep, dtype=torch.float32).unsqueeze(0).unsqueeze(0).to(self.device)
 			output, self.states = self.model.model(emg_timestep, self.states)
 			output = output.squeeze().to('cpu').detach().numpy()
-			for j, target in enumerate(self.targets):
-				self.output_dict[target] = output[j]
 
-				self.output_dict[target] = np.clip(self.output_dict[target], -1, 1)
-				self.output_dict[target] = (self.output_dict[target] * math.pi + math.pi) / 2
-			self.output_dict['thumbInPlaneAng'] = self.output_dict['thumbInPlaneAng'] - math.pi
+		for j, target in enumerate(self.targets):
+			self.output_dict[target] = output[j]
 
-			jointPos[0] = np.rad2deg(self.output_dict['indexAng'])
-			jointPos[1] = np.rad2deg(self.output_dict['midAng'])
-			jointPos[2] = jointPos[1] # np.rad2deg(self.output_dict['ringAng'])
-			jointPos[3] = jointPos[1] # np.rad2deg(self.output_dict['pinkyAng'])
-			jointPos[4] = np.rad2deg(self.output_dict['thumbOutPlaneAng'])
-			jointPos[5] = np.rad2deg(self.output_dict['thumbInPlaneAng'])
+			self.output_dict[target] = np.clip(self.output_dict[target], -1, 1)
+			self.output_dict[target] = (self.output_dict[target] * math.pi + math.pi) / 2
+		self.output_dict['thumbInPlaneAng'] = self.output_dict['thumbInPlaneAng'] - math.pi
 
-			jointPos[0] = 1.25*(np.rad2deg(self.output_dict['indexAng'])) if jointPos[0] > 60 else jointPos[0]
-			# jointPos[1] = 1.25*(np.rad2deg(self.output_dict['midAng']) - 70)
-			# jointPos[2] = 1.25*(np.rad2deg(self.output_dict['ringAng']) - 70)
-			# jointPos[3] = 1.25*(np.rad2deg(self.output_dict['pinkyAng']) - 70)
-			jointPos[4] = 4*(np.rad2deg(self.output_dict['thumbOutPlaneAng']) - 22) # Biophys, GRU
-			jointPos[5] = 4*(np.rad2deg(self.output_dict['thumbInPlaneAng']) + 20) # Biophys
+		ind = self.output_dict['indexAng']
+		thumbI = np.rad2deg(self.output_dict['thumbInPlaneAng'])
+		jointPos[0] = np.rad2deg(self.output_dict['indexAng'])#*(thumbI > -25) + min(np.rad2deg(ind), 70)*(thumbI <= -25)
+		jointPos[1] = np.rad2deg(self.output_dict['midAng'])
+		jointPos[2] = np.rad2deg(self.output_dict['ringAng'])
+		jointPos[3] = np.rad2deg(self.output_dict['pinkyAng'])
+		jointPos[4] = 1.5*(np.rad2deg(self.output_dict['thumbOutPlaneAng']) - 15)
+		# jointPos[5] = 2*(np.rad2deg(self.output_dict['thumbInPlaneAng']) + 15)
+		jointPos[5] = -90
 
 		return jointPos
 
