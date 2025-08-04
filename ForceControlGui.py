@@ -102,7 +102,7 @@ class SimpleAdaptiveGripController:
         
         # Control limits - Adjusted for frequency
         frequency_scale = 60.0 / control_frequency  # Scale for different frequencies
-        self.max_position_change = 0.65 * frequency_scale # Angle change per control step - higher for lower frequencies
+        self.max_position_change = 0.65 * frequency_scale
         
         # Force control parameters
         self.force_buildup_mode = False
@@ -194,7 +194,7 @@ class SimpleAdaptiveGripController:
             kd_active = self.kd
             max_change_active = self.max_position_change
             fine_control_scale = 0.4
-            deadband = 0.2
+            deadband = 0.3
         
         # PID control
         self.integral_error += force_error * dt
@@ -260,27 +260,79 @@ class SimpleAdaptiveGripController:
 def generate_force_trajectory(duration, max_force, pattern):
     """Generate force trajectory based on settings"""
     dt = 1.0 / 60.0  # 60 Hz
-    timestamps = np.arange(0, duration, dt)
     
-    if pattern == "sine":
-        base_force = max_force * 0.4
-        amplitude = max_force * 0.3
-        frequency = 0.1
-        forces = base_force + amplitude * np.sin(2 * np.pi * frequency * timestamps)
-    elif pattern == "step":
-        forces = np.ones_like(timestamps) * max_force * 0.3
-        forces[len(forces)//4:len(forces)//2] = max_force * 0.6
-        forces[3*len(forces)//4:] = max_force * 0.9
-    elif pattern == "ramp":
-        forces = np.ones_like(timestamps) * max_force * 0.2
-        ramp_up = np.linspace(max_force * 0.2, max_force, len(forces)//3)
-        ramp_down = np.linspace(max_force, max_force * 0.2, len(forces)//3)
-        forces[len(forces)//3:2*len(forces)//3] = ramp_up
-        forces[2*len(forces)//3:] = ramp_down[:len(forces) - 2*len(forces)//3]
-    else:  # constant
-        forces = np.ones_like(timestamps) * max_force * 0.5
+    if pattern == "all":
+        # Stitch all patterns together - each gets equal duration
+        patterns = ["sine", "ramp", "step", "constant"]
+        pattern_duration = duration / len(patterns)
+        
+        all_timestamps = []
+        all_forces = []
+        current_time_offset = 0
+        
+        print(f"Generating 'all' pattern: {len(patterns)} patterns × {pattern_duration:.1f}s each = {duration}s total")
+        
+        for i, sub_pattern in enumerate(patterns):
+            print(f"  Pattern {i+1}/{len(patterns)}: {sub_pattern} ({pattern_duration:.1f}s)")
+            
+            # Generate timestamps for this pattern
+            pattern_timestamps = np.arange(0, pattern_duration, dt)
+            
+            # Generate forces for this specific pattern
+            if sub_pattern == "sine":
+                base_force = max_force * 0.4
+                amplitude = max_force * 0.3
+                frequency = 0.1
+                pattern_forces = base_force + amplitude * np.sin(2 * np.pi * frequency * pattern_timestamps)
+            elif sub_pattern == "step":
+                pattern_forces = np.ones_like(pattern_timestamps) * max_force * 0.3
+                pattern_forces[len(pattern_forces)//4:len(pattern_forces)//2] = max_force * 0.6
+                pattern_forces[3*len(pattern_forces)//4:] = max_force * 0.9
+            elif sub_pattern == "ramp":
+                pattern_forces = np.ones_like(pattern_timestamps) * max_force * 0.2
+                ramp_up = np.linspace(max_force * 0.2, max_force, len(pattern_forces)//3)
+                ramp_down = np.linspace(max_force, max_force * 0.2, len(pattern_forces)//3)
+                pattern_forces[len(pattern_forces)//3:2*len(pattern_forces)//3] = ramp_up
+                pattern_forces[2*len(pattern_forces)//3:] = ramp_down[:len(pattern_forces) - 2*len(pattern_forces)//3]
+            else:  # constant
+                pattern_forces = np.ones_like(pattern_timestamps) * max_force * 0.5
+            
+            # Adjust timestamps to be continuous
+            adjusted_timestamps = pattern_timestamps + current_time_offset
+            
+            # Append to overall trajectory
+            all_timestamps.extend(adjusted_timestamps)
+            all_forces.extend(pattern_forces)
+            
+            # Update time offset for next pattern
+            current_time_offset += pattern_duration
+        
+        print(f"Generated complete trajectory with {len(all_forces)} points over {all_timestamps[-1]:.1f}s")
+        return np.array(all_timestamps), np.array(all_forces)
     
-    return timestamps, forces
+    else:
+        # Single pattern mode (original behavior)
+        timestamps = np.arange(0, duration, dt)
+        
+        if pattern == "sine":
+            base_force = max_force * 0.4
+            amplitude = max_force * 0.3
+            frequency = 0.1
+            forces = base_force + amplitude * np.sin(2 * np.pi * frequency * timestamps)
+        elif pattern == "step":
+            forces = np.ones_like(timestamps) * max_force * 0.3
+            forces[len(forces)//4:len(forces)//2] = max_force * 0.6
+            forces[3*len(forces)//4:] = max_force * 0.9
+        elif pattern == "ramp":
+            forces = np.ones_like(timestamps) * max_force * 0.2
+            ramp_up = np.linspace(max_force * 0.2, max_force, len(forces)//3)
+            ramp_down = np.linspace(max_force, max_force * 0.2, len(forces)//3)
+            forces[len(forces)//3:2*len(forces)//3] = ramp_up
+            forces[2*len(forces)//3:] = ramp_down[:len(forces) - 2*len(forces)//3]
+        else:  # constant
+            forces = np.ones_like(timestamps) * max_force * 0.5
+        
+        return timestamps, forces
 
 def start_emg_recording():
     """Start EMG recording in background thread"""
@@ -397,7 +449,7 @@ class SimplePlotCanvas(FigureCanvas):
             targets = np.array(target_forces)
             measured = np.array(measured_forces)
             
-            # Time window
+            # Time window - for "all" pattern, show more of the trajectory
             current_time = times[-1] if len(times) > 0 else 0
             start_time = max(0, current_time - window_seconds)
             
@@ -529,12 +581,13 @@ class SimpleForceGUI(QMainWindow):
             return
         
         try:
-            # Update plots
+            # Update plots - for "all" pattern, show longer window to see pattern transitions
+            window_seconds = self.duration * 4 if self.pattern == "all" else self.duration + 5
             self.canvas.update_plots(
                 self.gui_data['timestamps'],
                 self.gui_data['target_forces'],
                 self.gui_data['measured_forces'],
-                window_seconds=self.duration + 5
+                window_seconds=window_seconds
             )
             
             # Update current values
@@ -612,6 +665,9 @@ def run_force_control_with_gui(arm, grip_name, duration, max_force, pattern,
     print(f"Duration: {duration}s")
     print(f"Max Force: {max_force}N")
     print(f"Pattern: {pattern}")
+    if pattern == "all":
+        print(f"  → Will run ALL patterns: sine, ramp, step, constant ({duration/4:.1f}s each)")
+    print(f"Control Frequency: {control_frequency}Hz")
     
     # Initialize Qt Application
     app = QApplication.instance()
@@ -796,6 +852,8 @@ def run_force_control_experiment(arm, grip_name, duration, max_force, pattern,
     print(f"Duration: {duration}s")
     print(f"Max Force: {max_force}N")
     print(f"Pattern: {pattern}")
+    if pattern == "all":
+        print(f"  → Will run ALL patterns: sine, ramp, step, constant ({duration/4:.1f}s each)")
     print(f"Control Frequency: {control_frequency}Hz")
     
     # Get grip configuration
@@ -1083,12 +1141,12 @@ def main():
     parser.add_argument("--grip", "-g", required=True, 
                         choices=list(GRIP_CONFIGURATIONS.keys()),
                         help="Grip type")
-    parser.add_argument("--duration", "-d", type=float, default=10.0,
+    parser.add_argument("--duration", "-d", type=float, default=15.0,
                         help="Experiment duration in seconds (default: 15)")
     parser.add_argument("--max_force", "-f", type=float, default=15.0,
                         help="Maximum force in Newtons (default: 15)")
-    parser.add_argument("--pattern", choices=["sine", "step", "ramp", "constant"], 
-                        default="sine", help="Force pattern (default: sine)")
+    parser.add_argument("--pattern", choices=["sine", "step", "ramp", "constant", "all"], 
+                        default="sine", help="Force pattern (default: sine). 'all' stitches all patterns together.")
     parser.add_argument("--frequency", type=float, default=200.0,
                         help="Control frequency in Hz (default: 200)")
     parser.add_argument("--hand", choices=["left", "right"], default="left",
@@ -1144,10 +1202,10 @@ def main():
             )
         
         if success:
-            print("\n✓ Experiment completed successfully!")
+            print("\n Experiment completed successfully!")
             print(f"Data saved to: data/{args.person_id}/recordings/{args.grip}_interaction/experiments/")
         else:
-            print("\n✗ Experiment failed!")
+            print("\n Experiment failed!")
             
     except KeyboardInterrupt:
         print("\n\nExperiment interrupted by user")
