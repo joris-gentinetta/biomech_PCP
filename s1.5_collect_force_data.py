@@ -441,7 +441,7 @@ def start_emg_recording(enable_emg=True):
     
     return stop_recording
 
-# MODIFIED: Updated GUI function to use the new module
+# Updated GUI function to use the new module
 def run_force_control_with_gui(arm, grip_name, duration, max_force, pattern, 
                               control_frequency, person_id, out_root, enable_emg=True):
     """Run force control experiment with GUI visualization"""
@@ -550,19 +550,24 @@ def run_force_control_with_gui(arm, grip_name, duration, max_force, pattern,
         """Process Qt events to keep GUI responsive"""
         app.processEvents()
     
+    gui_update_counter = 0
+    gui_update_interval = max(1, int(control_frequency / 30))  # Update GUI at 25Hz
+    print(f"Running control loop at {control_frequency}Hz with GUI updates every {gui_update_interval} control cycles (~30Hz)")
+
     while True:
         current_time = time.time()
         
-        # Process GUI events to keep it responsive
-        process_qt_events()
+        gui_update_counter += 1
+        if gui_update_counter >= gui_update_interval:
+            process_qt_events()
+            gui_update_counter = 0  
         
-        # Wait for next control cycle
         if current_time < next_control_time:
             sleep_time = next_control_time - current_time
             if sleep_time > 0.001:
                 time.sleep(sleep_time)
             continue
-        
+
         experiment_time = current_time - experiment_start_time
         
         # Control logic (same as original)
@@ -613,7 +618,8 @@ def run_force_control_with_gui(arm, grip_name, duration, max_force, pattern,
                 elif current_force_raw > grip_config["max_force"]:
                     force_status = "TOO HIGH"
                 
-                print(f"Time: {experiment_time:.1f}s | Target: {target_force:.2f}N | Actual: {current_force_raw:.2f}N | Status: {force_status}")
+                actual_freq = len(experiment_data['timestamps']) / experiment_time if experiment_time > 0 else 0
+                print(f"Time: {experiment_time:.1f}s | Target: {target_force:.2f}N | Actual: {current_force_raw:.2f}N | Status: {force_status} | Freq: {actual_freq:.1f}Hz")
         
         # Schedule next control cycle
         next_control_time += control_dt
@@ -645,6 +651,12 @@ def run_force_control_with_gui(arm, grip_name, duration, max_force, pattern,
     # Print enhanced results with force range analysis
     analyze_experiment_results(experiment_data, grip_config)
     
+    # Print actual achieved frequency
+    if len(experiment_data['timestamps']) > 1:
+        total_time = experiment_data['timestamps'][-1] - experiment_data['timestamps'][0]
+        actual_frequency = (len(experiment_data['timestamps']) - 1) / total_time
+        print(f"\nActual Control Frequency Achieved: {actual_frequency:.1f}Hz (target: {control_frequency}Hz)")
+    
     print("\nExperiment completed! The GUI shows both raw and filtered data.")
     print("Use the filter controls to adjust filtering parameters in real-time.")
     print("Close the GUI window when ready.")
@@ -663,8 +675,6 @@ def run_force_control_with_gui(arm, grip_name, duration, max_force, pattern,
     
     return True
 
-# Keep all your other existing functions (run_force_control_experiment, save_experiment_data, 
-# analyze_experiment_results, connect_prosthetic_hand) exactly as they are
 
 def run_force_control_experiment(arm, grip_name, duration, max_force, pattern, 
                                 control_frequency, person_id, out_root, enable_emg=True):
@@ -749,9 +759,7 @@ def run_force_control_experiment(arm, grip_name, duration, max_force, pattern,
     # Control loop
     control_dt = 1.0 / control_frequency
     next_control_time = time.time()
-    
-    print(f"Running control loop at {control_frequency}Hz...")
-    print("Phase: APPROACH - waiting for contact...")
+
     
     while True:
         current_time = time.time()
