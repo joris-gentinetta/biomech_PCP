@@ -9,8 +9,91 @@ import torch.optim as optim
 from abc import ABC, abstractmethod
 from tqdm import tqdm
 from dynamics.bilinear import Muscles, Joints, M as bilinear_M
+#from predict_utils import simplified_enhanced_loss, simplified_muscle_physiology_loss
+
 
 SR = 60
+
+def simplified_enhanced_loss(outputs, targets, muscle_activations, force_data, warmup_steps):
+    """
+    Simplified combined loss for interaction model training (no material classification)
+    
+    Args:
+        outputs: (batch, seq_len, output_size) - predicted joint positions
+        targets: (batch, seq_len, output_size) - target joint positions  
+        muscle_activations: (batch, seq_len, 12) - predicted muscle activations
+        force_data: (batch, seq_len, 5) - force feedback data
+        warmup_steps: int - steps to skip at beginning
+    """
+    # 1. Standard position loss
+    position_loss = torch.nn.functional.mse_loss(
+        outputs[:, warmup_steps:], 
+        targets[:, warmup_steps:]
+    )
+    
+    # 2. Muscle physiology loss (only after warmup)
+    if muscle_activations is not None and force_data is not None:
+        physiology_loss = simplified_muscle_physiology_loss(
+            muscle_activations[:, warmup_steps:], 
+            force_data[:, warmup_steps:],
+            outputs.device
+        )
+        
+        # Combine losses with weighting
+        total_loss = position_loss + 0.3 * physiology_loss
+
+        # print("outputs", outputs[:, warmup_steps:].abs().mean().item())
+        # print("targets", targets[:, warmup_steps:].abs().mean().item())
+        # print("muscle_activations", muscle_activations[:, warmup_steps:].abs().mean().item())
+        # print("force_data", force_data[:, warmup_steps:].abs().mean().item())
+        
+        return total_loss, position_loss.item(), physiology_loss.item()
+    else:
+        return position_loss, position_loss.item(), 0.0
+
+def simplified_muscle_physiology_loss(muscle_activations, force_feedback, device):
+    """
+    Simplified physiologically informed muscle activation loss (no material classification)
+    
+    Args:
+        muscle_activations: (batch, seq_len, 12) - muscle activation values
+        force_feedback: (batch, seq_len, 5) - force values per finger
+        device: torch device
+    """
+    # Force magnitude across all fingers
+    force_magnitude = torch.norm(force_feedback, dim=-1)  # (batch, seq_len)
+    
+    # 1. Activation Level Loss
+    # Expected activation should scale with force magnitude
+    expected_activation_level = torch.sigmoid(force_magnitude - 0.5)  # Threshold at 0.5
+    actual_activation_level = torch.mean(muscle_activations, dim=-1)   # Average across all muscles
+    
+    activation_level_loss = torch.nn.functional.mse_loss(actual_activation_level, expected_activation_level) * 0.2
+    
+    # 2. Co-contraction Loss
+    # During contact, antagonist muscles should co-contract for stability
+    cocontraction_loss = torch.tensor(0.0, device=device)
+    
+    if muscle_activations.shape[-1] >= 12:  # Ensure we have enough muscle activations
+        # Reshape to (batch, seq_len, 6_DOF, 2_muscles_per_DOF)
+        muscle_pairs = muscle_activations.reshape(
+            muscle_activations.shape[0], muscle_activations.shape[1], 6, 2
+        )
+        
+        # Contact mask: where force is significant
+        contact_mask = (force_magnitude > 0.5).float()  # (batch, seq_len)
+        
+        for pair_idx in range(6):
+            agonist = muscle_pairs[:, :, pair_idx, 0]      # (batch, seq_len)
+            antagonist = muscle_pairs[:, :, pair_idx, 1]   # (batch, seq_len)
+            
+            # Co-contraction: minimum activation of both muscles
+            both_active = torch.minimum(agonist, antagonist)
+            
+            # Only penalize/reward co-contraction during contact
+            cocontraction_loss += torch.mean(both_active * contact_mask) * 0.1
+    
+    return activation_level_loss + cocontraction_loss
 
 class TimeSeriesRegressor(nn.Module, ABC):
     def __init__(self, input_size, output_size, device):
@@ -510,12 +593,23 @@ class ModularModel(TimeSeriesRegressor):
         self.muscle_model_config = kwargs.get('muscle_model')
         self.joint_model_config = kwargs.get('joint_model')
 
+         # Check if this is an interaction model (has force + material inputs)
+        self.is_interaction_model = kwargs.get('is_interaction_model', False)
+
         self.device = device
 
-        self.activation_model = self.get_model(input_size, output_size * 2, self.activation_model_config)
+        # Input size for activation model
+        # For interaction: EMG (8) + Force (5) + Material (1) = 14
+        # For free-space: EMG (8) only
+        activation_input_size = input_size
+
+        self.activation_model = self.get_model(activation_input_size, output_size * 2, self.activation_model_config)
         self.sigmoid = nn.Sigmoid()
         self.muscle_model = PhysMuscleModel(output_size * 2, output_size * 4, self.device, **self.muscle_model_config) if self.muscle_model_config['model_type'] == 'PhysMuscleModel' else NNMuscleModel(output_size * 2, output_size * 4, self.device, **self.muscle_model_config)
         self.joint_model = PhysJointModel(output_size * 4, output_size, self.device, **self.joint_model_config) if self.joint_model_config['model_type'] == 'PhysJointModel' else NNJointModel(output_size * 4, output_size, self.device, **self.joint_model_config)
+
+        # Store intermediate activations for loss computation
+        self.last_muscle_activations = None
 
     def get_model(self, input_size, output_size, config):
         if config['model_type'] == 'DenseNet':
@@ -539,11 +633,20 @@ class ModularModel(TimeSeriesRegressor):
 
     def forward(self, x, states):
         out = torch.zeros((x.shape[0], x.shape[1], self.output_size), dtype=torch.float, device=self.device)
+        muscle_activations_sequence = []
+
         for i in range(x.shape[1]):
             activation_out, states[0] = self.activation_model(x[:, i:i+1, :], states[0])
             activation_out = self.sigmoid(activation_out)
+
+            # Store muscle activations for loss computation
+            muscle_activations_sequence.append(activation_out)
+
             muscle_out, states[1] = self.muscle_model(activation_out, [states[1], states[2][0]])
             out[:, i:i+1, :], states[2] = self.joint_model(muscle_out, states[2])
+
+        # Store the full sequence of muscle activations
+        self.last_muscle_activations = torch.cat(muscle_activations_sequence, dim=1)
 
         return out, states
 
@@ -743,21 +846,22 @@ class TimeSeriesRegressorWrapper:
             weights = weights * output_weights.view(1, 1, -1)
 
             # Weighted loss
-            # loss = ((outputs[:, self.warmup_steps:] - y_targets) ** 2 * weights).mean()
-            loss = ((outputs[:, self.warmup_steps:] - y_targets) ** 2).mean()
+            loss = ((outputs[:, self.warmup_steps:] - y_targets) ** 2 * weights).mean()
 
 
-            # Addition: Penalize Mean
-            y_mean = y_targets.mean().detach()
-            mean_penalty = torch.abs(outputs[:, self.warmup_steps:] - y_mean).mean()
-            # alpha = 0.01
+            # Penalize Mean
+            per_dof_means = y_targets.mean(dim=(0,1), keepdim=True).detach()  # [1, 1, 6]
+            mean_penalty = torch.abs(outputs[:, self.warmup_steps:] - per_dof_means).mean()
             alpha = 0.01
             loss = loss + alpha * mean_penalty
 
-            pred_var = outputs[:, self.warmup_steps:].var()
-            # beta = 0.03
-            beta = 0.01
-            loss = loss - beta * pred_var
+            # Per-DoF Variance Matching
+            target_var_per_dof = y_targets.var(dim=1)  # Shape: [batch_size, 6 DoFs]
+            pred_var_per_dof = outputs[:, self.warmup_steps:].var(dim=1)  # Shape: [batch_size, 6 DoFs]
+
+            var_matching_loss = ((pred_var_per_dof - target_var_per_dof) ** 2).mean()
+            gamma = 0.01  # Weight for variance matching term
+            loss = loss + gamma * var_matching_loss
 
             self.optimizer.zero_grad(set_to_none=True)
             loss.backward()
@@ -770,6 +874,91 @@ class TimeSeriesRegressorWrapper:
 
             global_batch_idx += 1
         return epoch_loss / len(dataloader)
+
+
+    def train_one_epoch_enhanced(self, dataloader, use_enhanced_loss=False):
+        """
+        Enhanced training loop with optional physiology loss
+        """
+        self.model.train()
+        epoch_loss = 0.0
+        position_loss_sum = 0.0
+        physiology_loss_sum = 0.0
+        
+        # DOF limits for joint angle constraints (from your existing code)
+        self.dof_min = torch.tensor([0, 0, 0, 0, 0, -120], dtype=torch.float32, device=self.model.device)  
+        self.dof_max = torch.tensor([120, 120, 120, 120, 120, 0], dtype=torch.float32, device=self.model.device)
+        
+        output_weights = torch.tensor([1.0, 1.0, 1.0, 1.0, 1.0, 1.0], dtype=torch.float32, device=self.model.device)
+
+        for batch_data in dataloader:
+            # Handle different batch formats
+            if len(batch_data) >= 3:
+                x, y, force_data = batch_data[:3]
+            else:
+                x, y = batch_data[:2]
+                force_data = None
+            
+            states = self.model.get_starting_states(dataloader.batch_size, y)
+            outputs, final_states = self.model(x, states)
+            
+            # Get muscle activations if available (for ModularModel)
+            muscle_activations = None
+            if hasattr(self.model, 'last_muscle_activations'):
+                muscle_activations = self.model.last_muscle_activations
+            
+            # Use enhanced loss if requested and data is available
+            if use_enhanced_loss and muscle_activations is not None and force_data is not None:
+
+                print("→ Using simplified enhanced loss...")
+                assert muscle_activations is not None, "Muscle_activations is None!"
+                assert force_data is not None, "Force_data is None!"
+
+                loss, pos_loss, phys_loss = simplified_enhanced_loss(
+                    outputs, y, muscle_activations, force_data, self.warmup_steps
+                )
+
+                position_loss_sum += pos_loss
+                physiology_loss_sum += phys_loss
+                
+            else:
+                # Standard loss computation (from your existing train_one_epoch)
+                y_targets = y[:, self.warmup_steps:]
+                
+                # Your existing loss calculation logic
+                loss = ((outputs[:, self.warmup_steps:] - y_targets) ** 2).mean()
+
+                # Your existing regularization terms
+                y_mean = y_targets.mean().detach()
+                mean_penalty = torch.abs(outputs[:, self.warmup_steps:] - y_mean).mean()
+                pred_var = outputs[:, self.warmup_steps:].var()
+                
+                alpha, beta = 0.01, 0.01
+                loss = loss + alpha * mean_penalty - beta * pred_var
+
+            # Backward pass (same for both)
+            self.optimizer.zero_grad(set_to_none=True)
+            loss.backward()
+            torch.nn.utils.clip_grad_norm_(self.model.parameters(), 1.0)
+            self.optimizer.step()
+            
+            epoch_loss += loss.detach().item()
+
+            if torch.any(torch.isnan(loss)):
+                print(f"NAN Loss detected!")
+
+        avg_epoch_loss = epoch_loss / len(dataloader)
+        
+        # Return detailed loss info if using enhanced loss
+        if use_enhanced_loss:
+            return {
+                'total_loss': avg_epoch_loss,
+                'position_loss': position_loss_sum / len(dataloader),
+                'physiology_loss': physiology_loss_sum / len(dataloader)
+            }
+        else:
+            return avg_epoch_loss
+    
 
     def predict(self, test_set, features, targets):
         self.model.eval()
@@ -805,6 +994,7 @@ class TimeSeriesRegressorWrapper:
 
     def modules(self, *args, **kwargs):
         return self.model.modules(*args, **kwargs)
+
 
 # if __name__ == '__main__':
 #     model = ModularModel(device=torch.device('cpu'), input_size=8, output_size=4, muscleType='bilinear', nn_ratio=0.2)
