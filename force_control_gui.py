@@ -39,7 +39,7 @@ class ForceDataFilter:
         # Filter parameters
         self.filter_enabled = True
         self.filter_type = "butterworth"
-        self.cutoff_freq = 2.0
+        self.cutoff_freq = 3.0
         self.filter_order = 2
         self.window_size = 5
         self.savgol_order = 2
@@ -129,7 +129,7 @@ class ForceDataFilter:
 class SimplePlotCanvas(FigureCanvas):
     """Exactly same plot styling as original, but with filtering capability"""
     
-    def __init__(self, parent=None, grip_config=None, width=12, height=8, dpi=100):
+    def __init__(self, parent=None, grip_config=None, width=12, height=8, dpi=100, sampling_frequency=60.0):
         if not GUI_AVAILABLE:
             return
             
@@ -141,7 +141,8 @@ class SimplePlotCanvas(FigureCanvas):
         
         # Initialize data filter
         self.data_filter = ForceDataFilter(buffer_size=200)
-        
+        self.data_filter.sampling_freq = sampling_frequency
+        self.data_filter.reset_filter() # reinitialize filter with new sampling frequency
         # Create single subplot for force - EXACT same as original
         self.ax_force = self.fig.add_subplot(1, 1, 1)
         
@@ -237,7 +238,7 @@ class SimplePlotCanvas(FigureCanvas):
         
         self.bands_initialized = True
         
-    def update_plots(self, timestamps, measured_forces, window_seconds=30):
+    def update_plots(self, timestamps, measured_forces, window_seconds=15):
         """Update plots with new data and filtering"""
         if not timestamps or len(timestamps) == 0:
             return
@@ -453,7 +454,7 @@ class FilterControlPanel(QGroupBox):
 class SimpleForceGUI(QMainWindow):
     """EXACT same styling as original GUI but with enhanced functionality"""
     
-    def __init__(self, grip_name, duration, max_force, pattern, grip_config):
+    def __init__(self, grip_name, duration, max_force, pattern, grip_config, sampling_frequency=60.0):
         if not GUI_AVAILABLE:
             return
             
@@ -461,6 +462,9 @@ class SimpleForceGUI(QMainWindow):
         
         # Store grip configuration
         self.grip_config = grip_config
+
+        # Store sampling frequency
+        self.sampling_frequency = sampling_frequency    
         
         # EXACT same window title and size as original
         self.setWindowTitle(f"Force Control Monitor - {grip_name} ({self.grip_config['min_force']:.1f}-{self.grip_config['max_force']:.1f}N)")
@@ -543,7 +547,7 @@ class SimpleForceGUI(QMainWindow):
         left_layout.addLayout(values_layout)
         
         # Plot canvas - NOW TAKES UP MOST OF THE SPACE
-        self.canvas = SimplePlotCanvas(self, grip_config=self.grip_config, width=12, height=8)
+        self.canvas = SimplePlotCanvas(self, grip_config=self.grip_config, width=12, height=8, sampling_frequency=self.sampling_frequency)
         left_layout.addWidget(self.canvas, 1)  # Give it stretch factor so it expands
         
         # Stats panel - COMPACT styling  
@@ -594,7 +598,8 @@ class SimpleForceGUI(QMainWindow):
         
         try:
             # Update plots with filtering
-            window_seconds = self.duration * 4 if self.pattern == "all" else self.duration + 5
+            # window_seconds = self.duration * 4 if self.pattern == "all" else self.duration + 5
+            window_seconds = 15  # Fixed window size for simplicity
             self.canvas.update_plots(
                 self.gui_data['timestamps'],
                 self.gui_data['measured_forces'],
