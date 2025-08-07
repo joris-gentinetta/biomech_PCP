@@ -27,6 +27,160 @@ from helpers.psyonicControllers import psyonicControllers
 from helpers.psyonicControllers import create_controllers
 from helpers.predict_utils import Config
 import numpy as np
+from scipy import signal
+from collections import deque
+
+class AdaptiveForceFilter:
+    """
+    Real-time force filtering with adaptive baseline compensation - Per-finger filtering
+    Much more efficient than per-sensor filtering
+    """
+    
+    def __init__(self, num_fingers=5, sampling_freq=60.0):
+        self.num_fingers = num_fingers  # 5 fingers
+        self.sampling_freq = sampling_freq
+        
+        # Static baseline from zeroJoints() - set later
+        self.static_offsets = np.zeros(num_fingers)
+        
+        # Adaptive baseline tracking
+        self.baseline_window_size = 300  # 5 seconds at 60Hz
+        self.baseline_buffers = [deque(maxlen=self.baseline_window_size) for _ in range(num_fingers)]
+        self.current_baselines = np.zeros(num_fingers)
+        
+        # Contact detection parameters
+        self.contact_threshold = 0.5  # Force threshold to detect contact (N)
+        self.no_contact_duration = 0.0  # Time since last contact
+        self.baseline_update_delay = 2.0  # Wait 2 seconds after contact before updating baseline
+        
+        # High-frequency noise filtering - only 5 filters now!
+        self.setup_butterworth_filters()
+        
+        # Debug tracking
+        self.filter_enabled = True
+        
+    def setup_butterworth_filters(self):
+        """Setup Butterworth filters for high-frequency noise removal - one per finger"""
+        # 3Hz cutoff - removes sensor noise but preserves force dynamics
+        nyquist = 0.5 * self.sampling_freq
+        normal_cutoff = min(3.0 / nyquist, 0.99)
+        self.b, self.a = signal.butter(2, normal_cutoff, btype='low')
+        
+        # Initialize filter state for each finger (not each sensor!)
+        self.filter_states = []
+        for i in range(self.num_fingers):
+            zi = signal.lfilter_zi(self.b, self.a)
+            self.filter_states.append({
+                'zi': zi.copy(),
+                'initialized': False
+            })
+    
+    def set_static_offsets(self, per_finger_offsets):
+        """
+        Set static offsets from zeroJoints() calibration
+        per_finger_offsets: numpy array of shape (5,) with per-finger baseline forces
+        """
+        self.static_offsets = per_finger_offsets.copy()
+        print(f"AdaptiveForceFilter: Set static offsets, mean = {np.mean(per_finger_offsets):.3f}")
+    
+    def process_finger_forces(self, per_finger_forces):
+        """
+        Main processing pipeline: static correction → HF filtering → adaptive baseline
+        
+        Args:
+            per_finger_forces: numpy array of shape (5,) with per-finger force sums
+        
+        Returns:
+            filtered_forces: numpy array of shape (5,) with processed per-finger forces
+        """
+        if not self.filter_enabled:
+            return np.maximum(per_finger_forces, 0)
+        
+        # 1. Apply static baseline correction (from zeroJoints calibration)
+        static_corrected = np.maximum(per_finger_forces - self.static_offsets, 0)
+        
+        # 2. Apply high-frequency Butterworth filtering (per finger)
+        hf_filtered = self._apply_butterworth_filter(static_corrected)
+        
+        # 3. Detect contact and update adaptive baselines
+        max_force = np.max(hf_filtered)
+        self._update_contact_state(max_force, hf_filtered)
+        
+        # 4. Apply adaptive baseline correction
+        adaptive_corrected = np.maximum(hf_filtered - self.current_baselines, 0)
+        
+        return adaptive_corrected
+    
+    def _apply_butterworth_filter(self, forces):
+        """Apply Butterworth filter to each finger"""
+        filtered = np.zeros_like(forces)
+        
+        for i, force in enumerate(forces):
+            if i >= len(self.filter_states):
+                filtered[i] = force
+                continue
+                
+            state = self.filter_states[i]
+            
+            if not state['initialized']:
+                # Initialize filter with first value
+                state['zi'] = state['zi'] * force
+                state['initialized'] = True
+                filtered[i] = force
+            else:
+                # Apply filter
+                filt_val, state['zi'] = signal.lfilter(
+                    self.b, self.a, [force], zi=state['zi']
+                )
+                filtered[i] = filt_val[0]
+        
+        return filtered
+    
+    def _update_contact_state(self, max_force, filtered_forces):
+        """Update contact state and adaptive baselines"""
+        dt = 1.0 / self.sampling_freq
+        
+        if max_force < self.contact_threshold:
+            # No significant contact detected
+            self.no_contact_duration += dt
+            
+            # Wait for delay period after contact ends before updating baselines
+            if self.no_contact_duration > self.baseline_update_delay:
+                self._update_adaptive_baselines(filtered_forces)
+        else:
+            # Contact detected - stop baseline updates
+            self.no_contact_duration = 0.0
+    
+    def _update_adaptive_baselines(self, forces):
+        """Update adaptive baseline estimates using robust statistics"""
+        for i, force in enumerate(forces):
+            if i < len(self.baseline_buffers):
+                # Add to rolling buffer
+                self.baseline_buffers[i].append(force)
+                
+                # Update baseline estimate if we have enough samples
+                if len(self.baseline_buffers[i]) >= 20:
+                    # Use 20th percentile for robustness against outliers
+                    buffer_array = np.array(list(self.baseline_buffers[i]))
+                    self.current_baselines[i] = np.percentile(buffer_array, 20)
+    
+    def get_debug_info(self):
+        """Get debug information about filter state"""
+        return {
+            'no_contact_duration': self.no_contact_duration,
+            'mean_static_offset': np.mean(self.static_offsets),
+            'mean_adaptive_baseline': np.mean(self.current_baselines),
+            'num_baseline_samples': len(self.baseline_buffers[0]) if self.baseline_buffers else 0,
+            'filter_enabled': self.filter_enabled
+        }
+    
+    def set_enabled(self, enabled):
+        """Enable or disable filtering"""
+        self.filter_enabled = enabled
+        if not enabled:
+            print("AdaptiveForceFilter: Filtering disabled")
+        else:
+            print("AdaptiveForceFilter: Filtering enabled")
 
 class psyonicArm():
 	def __init__(self, hand='right', usingEMG=False, stuffing=False, baud=460800, plotSocketAddr='tcp://127.0.0.1:1240', dummy=False):
@@ -123,6 +277,10 @@ class psyonicArm():
 		# exponential filter the force sensor readings
 		self.filterForce = ExponentialFilterArr(numChannels=self.numForce, smoothingFactor=0.8, defaultValue=0) # todo
 
+		self.adaptive_force_filter = AdaptiveForceFilter(
+			num_fingers=5,      # 5 fingers instead of 30 sensors
+			sampling_freq=self.Hz
+		)
 
 		# store prior commands for some reason
 		self.lastPosCom = -1*np.ones(self.numMotors)
@@ -608,6 +766,20 @@ class psyonicArm():
 		avgReadings = np.mean(forceSensorReadings, axis=0)
 		self.sensorForceOffsets = dict(zip(self.sensorForce, avgReadings))
 
+		per_finger_baselines = np.zeros(5)
+		for finger_idx in range(5):
+			start_idx = finger_idx * 6
+			end_idx = start_idx + 6
+			per_finger_baselines[finger_idx] = np.sum(avgReadings[start_idx:end_idx])
+		
+		# Set per-finger offsets in the adaptive filter
+		if hasattr(self, 'adaptive_force_filter'):
+			self.adaptive_force_filter.set_static_offsets(per_finger_baselines)
+			print(f"Zero joints completed. Set {len(self.sensorForceOffsets)} sensor offsets.")
+			print(f"Per-finger baselines: {per_finger_baselines}")
+		else:
+			print("Warning: adaptive_force_filter not initialized")
+
 		bytesWritten = self.ser.write(msg)
 		assert bytesWritten == len(msg), f'zeroJoints(): Not all bytes sent - expected {len(msg)}, sent {bytesWritten}'
 
@@ -617,6 +789,40 @@ class psyonicArm():
 
 		self.setControlMode(curMode)
 		self.setReplyVariant(curReply)
+
+	def get_all_raw_force_data(self):
+		"""
+		Get all 30 raw force sensor readings in the correct order
+		Returns numpy array of shape (30,)
+		"""
+		raw_forces = np.zeros(self.numForce)
+		
+		for i, sensor_name in enumerate(self.sensorForce):
+			if i < self.numForce:
+				raw_forces[i] = self.sensors.get(sensor_name, 0.0)
+		
+		return raw_forces
+
+	def sum_forces_per_finger(self, all_forces):
+		"""
+		Sum the 6 sensor readings per finger into 5 finger totals
+		
+		Args:
+			all_forces: numpy array of shape (30,) with all sensor readings
+		
+		Returns:
+			finger_forces: numpy array of shape (5,) with [index, middle, ring, pinky, thumb]
+		"""
+		finger_forces = np.zeros(5)
+		
+		# Each finger has 6 sensors (0-5, 6-11, 12-17, 18-23, 24-29)
+		for finger_idx in range(5):
+			start_idx = finger_idx * 6
+			end_idx = start_idx + 6
+			if end_idx <= len(all_forces):
+				finger_forces[finger_idx] = np.sum(all_forces[start_idx:end_idx])
+		
+		return finger_forces
 
 	def getCurControlMode(self):
 		return self.controlMode
@@ -918,28 +1124,21 @@ class psyonicArm():
 			# elif self.controlMode == 'voltage':
 			# 	self.handCom = [0]*self.numMotors
 
+	def reset_adaptive_baselines(self):
+		"""Reset adaptive baselines (force recalibration)"""
+		self.adaptive_force_filter.current_baselines = np.zeros(self.numForce)
+		for buffer in self.adaptive_force_filter.baseline_buffers:
+			buffer.clear()
+		print("Adaptive baselines reset")
 
-	def normalize_force_data_realtime(force_data, finger_names=None, max_forces_per_finger=None):
+	def normalize_force_data_realtime(self, force_data, finger_names=None, max_forces_per_finger=None):  # ← ADD THIS METHOD INSIDE THE CLASS
 		"""
 		Normalize force data to [0, 1] range using the same normalization as training.
-		This must match the normalization used in ForceControlProcessing.py
-		
-		Args:
-			force_data: numpy array of shape (5,) for [index, middle, ring, pinky, thumb]
-			finger_names: list of finger names (optional, for debugging)
-			max_forces_per_finger: dict of max forces per finger (should match training)
-		
-		Returns:
-			normalized_force: force data normalized to [0, 1]
 		"""
 		if max_forces_per_finger is None:
-			# IMPORTANT: These values must match exactly what you used in ForceControlProcessing.py
 			max_forces_per_finger = {
-				'index': 20.0,   # Index finger typically strongest
-				'middle': 18.0,  # Middle finger strong  
-				'ring': 15.0,    # Ring finger weaker
-				'pinky': 12.0,   # Pinky weakest
-				'thumb': 25.0    # Thumb strongest for opposition
+				'index': 12.0, 'middle': 12.0, 'ring': 12.0, 
+				'pinky': 12.0, 'thumb': 12.0    
 			}
 		
 		if finger_names is None:
@@ -958,8 +1157,8 @@ class psyonicArm():
 		T = time.time()
 		self.NetCom = self.getCurPos()
 
-		ENTER_FORCE_THRESHOLD = 0.2
-		EXIT_FORCE_THRESHOLD = 0.1
+		ENTER_FORCE_THRESHOLD = 0.5
+		EXIT_FORCE_THRESHOLD = 1.0
 		INTERACTION_MODE_DEBOUNCE_TIME = 0.1  # seconds
 
 		self.in_interaction_mode = False
@@ -971,19 +1170,35 @@ class psyonicArm():
 		while not self.exitEvent.is_set():
 			loop_start = time.time() 
 
-			raw_force_data = np.array([
-				np.sum([self.sensors[f'index{i}_Force'] for i in range(6)]),  # Sum all index sensors
-            	np.sum([self.sensors[f'middle{i}_Force'] for i in range(6)]), # Sum all middle sensors  
-				np.sum([self.sensors[f'ring{i}_Force'] for i in range(6)]),   # Sum all ring sensors
-				np.sum([self.sensors[f'pinky{i}_Force'] for i in range(6)]), # Sum all pinky sensors
-				np.sum([self.sensors[f'thumb{i}_Force'] for i in range(6)])   # Sum all thumb sensors
-			])
-			
-			normalized_force_data = self.normalize_force_data_realtime(raw_force_data)
-			max_finger_force = np.max(raw_force_data)
+			# 1. Get raw force data and sum per finger FIRST
+			all_raw_forces = self.get_all_raw_force_data()
+			raw_force_per_finger = self.sum_forces_per_finger(all_raw_forces)
+
+			# 2. Apply simplified filtering pipeline (5 filters only!)
+			filtered_force_per_finger = self.adaptive_force_filter.process_finger_forces(raw_force_per_finger)
+
+			# 3. Use filtered data for mode detection
+			max_finger_force = np.max(filtered_force_per_finger)
+
+			# 4. Normalize filtered forces for controller input
+			normalized_force_data = self.normalize_force_data_realtime(filtered_force_per_finger)
+
+			#####################################################################################
+			############### DEBUG output every 60 frames (1 second)
+			if not hasattr(self, '_filter_debug_counter'):
+				self._filter_debug_counter = 0
+			self._filter_debug_counter += 1
+
+			if self._filter_debug_counter % 120 == 0:
+				debug_info = self.adaptive_force_filter.get_debug_info()
+				print(f"Filter Debug - Contact duration: {debug_info['no_contact_duration']:.1f}s, "
+					f"Baseline samples: {debug_info['num_baseline_samples']}, "
+					f"Max force: {max_finger_force:.3f}N")
+			#####################################################################################
+
 			current_time = time.time()
 
-			# Force detection logic (unchanged)
+			# Force detection logic
 			if not self.in_interaction_mode:
 				if max_finger_force > ENTER_FORCE_THRESHOLD:
 					self.in_interaction_mode = True
@@ -1125,6 +1340,21 @@ class psyonicArm():
 	
 		else:
 			return 0
+		
+	def set_force_filtering_enabled(self, enabled):
+		"""Enable/disable adaptive force filtering"""
+		self.adaptive_force_filter.set_enabled(enabled)
+
+	def get_force_filter_status(self):
+		"""Get current filter status and debug info"""
+		return self.adaptive_force_filter.get_debug_info()
+
+	def reset_adaptive_baselines(self):
+		"""Reset adaptive baselines (force recalibration)"""
+		self.adaptive_force_filter.current_baselines = np.zeros(5)
+		for buffer in self.adaptive_force_filter.baseline_buffers:
+			buffer.clear()
+		print("Adaptive baselines reset")
 
 
 ###################################################################
@@ -1312,12 +1542,15 @@ if __name__ == '__main__':
     parser.add_argument('-l', '--laterality', type=str, help='Handedness (left or right)', default='left')
     parser.add_argument('-s', '--stuffing', help='Use byte stuffing?', action='store_true')
     parser.add_argument('--person_dir', type=str, required=True, help='Person directory')
-    # REMOVED: --config_name (no longer needed)
-    parser.add_argument('--free_space_model_path', type=str, required=True, help='Path to free space model')
-    parser.add_argument('--interaction_model_path', type=str, required=True, help='Path to interaction model')
+    parser.add_argument('--free_space_model_name', type=str, required=True, help='Filename of free space model')
+    parser.add_argument('--interaction_model_name', type=str, required=True, help='Filename of interaction model')
     parser.add_argument('--dummy', action='store_true', help='Run in dummy mode without connecting to real hand')
 
     args = parser.parse_args()
+
+    # Construct full model paths
+    fs_model_path = os.path.join('data', args.person_dir, 'models', args.free_space_model_name)
+    inter_model_path = os.path.join('data', args.person_dir, 'models', args.interaction_model_name)
 
     emg = None
 
@@ -1386,8 +1619,8 @@ if __name__ == '__main__':
             arm=arm,
             config_free_space=fs_config,
             config_interaction=inter_config,
-            free_space_model_path=args.free_space_model_path,
-            interaction_model_path=args.interaction_model_path
+            free_space_model_path=fs_model_path,
+            interaction_model_path=inter_model_path
         )
 
         if not args.dummy:
