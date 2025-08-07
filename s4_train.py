@@ -10,9 +10,11 @@ import numpy as np
 from os.path import join
 import wandb
 import multiprocessing
+from tqdm import tqdm
 
 from helpers.predict_utils import Config, get_data, train_model, rescale_data, evaluate_model
 from helpers.models import TimeSeriesRegressorWrapper
+from helpers.predict_utils import SimplifiedEnhancedTSDataset, TSDataLoader, EarlyStopper
 
 def wandb_process(arguments):
     config = arguments['config']
@@ -72,6 +74,8 @@ if __name__ == '__main__':
     parser.add_argument('-e', '--evaluate', action='store_true', help='Evaluate the model')
     parser.add_argument('--perturb', action='store_true', help='Perturb the data')
     args = parser.parse_args()
+
+    is_both = args.controller_mode == "both"
 
     sampling_frequency = 60
     experiment_name = 'perturb' if args.perturb else 'non_perturb'
@@ -145,6 +149,7 @@ if __name__ == '__main__':
         print("TRAINING FREE-SPACE CONTROLLER")
         print("="*60)
 
+        model_type = "free_space"
         config = configs['free_space']
 
         # Build data directordies from config
@@ -184,8 +189,10 @@ if __name__ == '__main__':
             if args.save_model:
                 free_model.to(torch.device('cpu'))
                 os.makedirs(join('data', args.person_dir, 'models'), exist_ok=True)
-                free_model.save(join('data', args.person_dir, 'models', f'{config.name}.pt'))
-                print(f"Saved free-space model: {config.name}.pt")
+
+                final_saved_model_name = f"{model_type}_model_{args.person_dir}.pt"
+                free_model.save(join('data', args.person_dir, 'models', final_saved_model_name))
+                print(f"Saved free-space model: {final_saved_model_name}")
 
     # if args.hyperparameter_search:  # training on training set, evaluation on test set
     #     sweep_id = wandb.sweep(wandb_config, project=config.wandb_project)
@@ -199,34 +206,161 @@ if __name__ == '__main__':
         print("TRAINING INTERACTION CONTROLLER") 
         print("="*60)
 
+        model_type = "interaction"
+
         config = configs['interaction']
 
         data_dirs = [join('data', args.person_dir, 'recordings', recording, 'experiments', '1') 
-                 for recording in config.recordings]
+                     for recording in config.recordings]
         test_dirs = [join('data', args.person_dir, 'recordings', recording, 'experiments', '1') 
-                 for recording in config.test_recordings] if config.test_recordings is not None else []
+                     for recording in config.test_recordings] if config.test_recordings is not None else []
         
         print(f"Interaction recordings: {config.recordings}")
         print(f"Input features: {len(config.features)} (EMG + Force)")
         print(f"Output targets: {len(config.targets)} (positions)")
         
-        # Get interaction data
+        # Get standard data first
         trainsets, valsets, combined_sets, testsets = get_data(
             config, data_dirs, args.intact_hand,
             visualize=args.visualize, test_dirs=test_dirs, perturb_file=perturb_file
         )
         
+        # Extract force features from config
+        # Your ForceControlProcessing.py creates these columns: (Hand_side, 'finger_Force')
+        hand_side_cap = args.intact_hand.capitalize()
+        force_features = [(hand_side_cap, f"{finger}_Force") for finger in ["index", "middle", "ring", "pinky", "thumb"]]
+        
+        print(f"Looking for force features: {force_features}")
+        
+        # Check if force data exists in your datasets
+        force_data_available = all(feat in trainsets[0].columns for feat in force_features) if trainsets else False
+        print(f"Force data available in datasets: {force_data_available}")
+        
         if args.hyperparameter_search:
+            # Use standard training for hyperparameter search
             sweep_id = wandb.sweep(config.to_dict(), project=config.wandb_project)
             wandb.agent(sweep_id, lambda: train_model(trainsets, valsets, testsets, device, config.wandb_mode, config.wandb_project, config.name))
         
         if args.test:
-            print("Training interaction model...")
-            interaction_model = train_model(trainsets, valsets, testsets, device,
-                                        config.wandb_mode, config.wandb_project,
-                                        config.name, config, args.person_dir)
+            if force_data_available:
+                print("Training interaction model with REAL force data...")
+                
+                # Create enhanced dataset with real force data
+                enhanced_dataset = SimplifiedEnhancedTSDataset(
+                    trainsets,
+                    config.features,
+                    config.targets,
+                    seq_len=config.seq_len,
+                    device=device,
+                    force_features=force_features  # Real force features from your data
+                )
+                
+                # Create enhanced dataloader
+                enhanced_dataloader = TSDataLoader(enhanced_dataset, batch_size=config.batch_size, 
+                                                 shuffle=True, drop_last=True)
+                
+                # Train with enhanced dataset and optional enhanced loss
+                with wandb.init(mode=config.wandb_mode, project=config.wandb_project, 
+                               name=config.name, config=config.to_dict()):
+                    config = wandb.config
+
+                    model = TimeSeriesRegressorWrapper(
+                        device=device, 
+                        input_size=len(config.features), 
+                        output_size=len(config.targets),  
+                        **config
+                    )
+                    model.to(device)
+
+                    best_val_loss = float('inf')
+                    early_stopper = EarlyStopper(
+                        patience=config.early_stopping_patience, 
+                        min_delta=config.early_stopping_delta
+                    )
+                    
+                    # IMPORTANT: Choose your training mode here
+                    USE_ENHANCED_LOSS = True  # Set to True to enable enhanced loss with force feedback
+                    
+                    print(f'Training interaction model (enhanced_loss={USE_ENHANCED_LOSS})...')
+                    with tqdm(range(model.n_epochs)) as pbar:
+                        for epoch in pbar:
+                            pbar.set_description(f'Epoch {epoch}')
+
+                            # Standard ModularModel freezing
+                            if config.model_type == 'ModularModel':
+                                for param in model.model.activation_model.parameters():
+                                    param.requires_grad = False if epoch < config.activation_model['n_freeze_epochs'] else True
+                                for param in model.model.muscle_model.parameters():
+                                    param.requires_grad = False if epoch < config.muscle_model['n_freeze_epochs'] else True
+                                for param in model.model.joint_model.parameters():
+                                    param.requires_grad = False if epoch < config.joint_model['n_freeze_epochs'] else True
+
+                            print(f"\nStarting epoch {epoch}...")
+                            
+                            # Choose training method
+                            if USE_ENHANCED_LOSS:
+                                train_result = model.train_one_epoch_enhanced(enhanced_dataloader, use_enhanced_loss=True)
+                                if isinstance(train_result, dict):
+                                    train_loss = train_result['total_loss']
+                                    print(f"Position loss: {train_result['position_loss']:.6f}, "
+                                          f"Physiology loss: {train_result['physiology_loss']:.6f}")
+                                else:
+                                    train_loss = train_result
+                            else:
+                                # Standard training (enhanced dataset but standard loss)
+                                train_loss = model.train_one_epoch(enhanced_dataloader)
+
+                            # Standard validation and logging (unchanged)
+                            val_loss, test_loss, val_losses = evaluate_model(model, valsets, testsets, device, config)
+                            
+                            if val_loss < best_val_loss:
+                                best_val_loss = val_loss
+                                wandb.run.summary['best_epoch'] = epoch
+                                wandb.run.summary['best_val_loss'] = best_val_loss
+                                best_model_name = f"best_model_{args.person_dir}_{model_type}.pt"
+                                model.save(join('data', args.person_dir, 'models', best_model_name))
+
+                            if test_loss < wandb.run.summary.get('best_test_loss', float('inf')):
+                                wandb.run.summary['best_test_loss'] = test_loss
+                                wandb.run.summary['best_test_epoch'] = epoch
+                            
+                            wandb.run.summary['used_epochs'] = epoch
+
+                            lr = model.scheduler.get_last_lr()[0]
+                            if epoch > 15:
+                                model.scheduler.step(val_loss)
+                            pbar.set_postfix({'lr': lr, 'train_loss': train_loss, 'val_loss': val_loss, 'test_loss': test_loss})
+
+                            # Logging
+                            test_recording_names = config.test_recordings if config.test_recordings is not None else []
+                            log = {f'val_loss/{(config.recordings + test_recording_names)[set_id]}': loss 
+                                   for set_id, loss in enumerate(val_losses)}
+                            log['total_val_loss'] = val_loss
+                            log['total_test_loss'] = test_loss
+                            log['train_loss'] = train_loss
+                            log['lr'] = lr
+                            
+                            # Add enhanced loss components if available
+                            if USE_ENHANCED_LOSS and isinstance(train_result, dict):
+                                log['position_loss'] = train_result['position_loss']
+                                log['physiology_loss'] = train_result['physiology_loss']
+                            
+                            wandb.log(log, step=epoch)
+
+                            if early_stopper.early_stop(val_loss):
+                                break
+                                
+                    final_model_name = f"final_model_{args.person_dir}_{model_type}_bs{config.batch_size}_sl{config.seq_len}.pt"
+                    model.save(join('data', args.person_dir, 'models', final_model_name))
+                    interaction_model = model
+            else:
+                print("Training interaction model with STANDARD data (no force available)...")
+                # Fall back to standard training if no force data
+                interaction_model = train_model(trainsets, valsets, testsets, device,
+                                            config.wandb_mode, config.wandb_project,
+                                            config.name, config, args.person_dir)
             
-            # Generate predictions for test sets
+            # Generate predictions (same as before)
             for set_id, test_set in enumerate(valsets + testsets):
                 val_pred = interaction_model.predict(test_set, config.features, config.targets).squeeze(0).to('cpu').detach().numpy()
                 test_set[config.targets] = val_pred
@@ -237,8 +371,9 @@ if __name__ == '__main__':
             if args.save_model:
                 interaction_model.to(torch.device('cpu'))
                 os.makedirs(join('data', args.person_dir, 'models'), exist_ok=True)
-                interaction_model.save(join('data', args.person_dir, 'models', f'{config.name}.pt'))
-                print(f"Saved interaction model: {config.name}.pt")
+                final_saved_model_name = f"{model_type}_model_{args.person_dir}.pt"
+                interaction_model.save(join('data', args.person_dir, 'models', final_saved_model_name))
+                print(f"Saved interaction model: {final_saved_model_name}")
 
     print("\n" + "="*60)
     print("TRAINING COMPLETE")
