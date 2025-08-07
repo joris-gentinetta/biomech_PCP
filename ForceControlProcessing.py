@@ -256,6 +256,75 @@ def extract_finger_forces(angles_data, headers):
     
     return force_data, finger_names
 
+
+def process_force_realtime_style(force_data, sampling_freq, static_offsets=None):
+    """
+    Process force data to match the real-time filtering pipeline in s5_inference.py
+    BUT using zero-phase filtering for superior offline processing.
+    
+    This matches the real-time filter characteristics (Butterworth, 3Hz, 2nd order)
+    while providing zero-lag filtering for training data.
+    
+    Args:
+        force_data: numpy array of shape (n_samples, 5) for per-finger forces
+        sampling_freq: sampling frequency in Hz
+        static_offsets: numpy array of shape (5,) with static baseline offsets
+                       If None, uses mean of first 10% of data as baseline
+    
+    Returns:
+        filtered_force: processed force data with same characteristics as real-time
+                       but with zero-phase filtering for better training data
+    """
+    from scipy import signal
+    
+    # 1. Static baseline correction (like zeroJoints calibration in real-time)
+    if static_offsets is None:
+        # Estimate static baseline from first 10% of data (assuming start is baseline)
+        baseline_samples = int(0.1 * len(force_data))
+        static_offsets = np.mean(force_data[:baseline_samples, :], axis=0)
+        print(f"Estimated static offsets: {static_offsets}")
+    
+    static_corrected = np.maximum(force_data - static_offsets[None, :], 0)
+    
+    # 2. Butterworth filter - SAME CHARACTERISTICS as real-time but zero-phase
+    # Real-time uses: 3Hz cutoff, 2nd order Butterworth
+    # We use: 3Hz cutoff, 2nd order Butterworth + filtfilt (zero-phase)
+    nyquist = 0.5 * sampling_freq
+    normal_cutoff = min(3.0 / nyquist, 0.99)
+    b, a = signal.butter(2, normal_cutoff, btype='low')
+    
+    # Apply ZERO-PHASE filtering to each finger (this is the key advantage for training)
+    hf_filtered = np.zeros_like(static_corrected)
+    for finger_idx in range(static_corrected.shape[1]):
+        hf_filtered[:, finger_idx] = signal.filtfilt(b, a, static_corrected[:, finger_idx])
+    
+    # 3. Since all your data is "during contact", skip adaptive baseline correction
+    # Just ensure non-negative values (matching real-time clipping)
+    final_filtered = np.maximum(hf_filtered, 0)
+    
+    print(f"Applied zero-phase Butterworth filter (3Hz, 2nd order) - matches real-time characteristics")
+    return final_filtered
+
+def extract_and_filter_force_data_realtime_style(angles_data, headers, sampling_freq):
+    """
+    Extract force data and apply real-time style filtering for training data.
+    """
+    # Extract per-finger force sums (same as before)
+    force_data, finger_names = extract_finger_forces(angles_data, headers)
+    
+    # Apply real-time style filtering instead of the Bessel filter
+    filtered_force = process_force_realtime_style(force_data, sampling_freq)
+    
+    # Normalize (same as before)
+    normalized_force = normalize_force_data(filtered_force, finger_names)
+    
+    print(f"Applied real-time style filtering to force data")
+    print(f"Filtered force data summary:")
+    for i, finger in enumerate(finger_names):
+        print(f"  {finger}: mean={np.mean(filtered_force[:, i]):.3f}, max={np.max(filtered_force[:, i]):.3f}")
+    
+    return normalized_force, finger_names
+
 def process_force_zero_phase(force_data, sampling_freq, cutoff_freq=2.0):
     """
     Smooth force data using zero-phase low-pass filtering optimized for force sensors.
@@ -309,11 +378,11 @@ def normalize_force_data(force_data, finger_names, max_forces_per_finger=None):
     if max_forces_per_finger is None:
         # Default maximum forces based on prosthetic hand capabilities
         max_forces_per_finger = {
-            'index': 20.0,   # Index finger typically strongest
-            'middle': 18.0,  # Middle finger strong  
-            'ring': 15.0,    # Ring finger weaker
-            'pinky': 12.0,   # Pinky weakest
-            'thumb': 25.0    # Thumb strongest for opposition
+            'index': 12.0,   
+            'middle': 12.0,    
+            'ring': 12.0,    
+            'pinky': 12.0,   
+            'thumb': 12.0    
         }
     
     normalized_force = np.copy(force_data)
@@ -541,6 +610,29 @@ def process_emg_and_angles(
     angles_timestamps = np.load(os.path.join(data_dir, angles_timestamps_file))
     
     print(f"Loaded data from {data_dir}")
+
+    # Load experiment config and calculate contact detection offset
+    config_path = os.path.join(data_dir, 'experiment_config.yaml')
+    if os.path.exists(config_path):
+        with open(config_path, 'r') as f:
+            config = yaml.safe_load(f)
+        duration = config.get('duration', 0)
+        total_duration = config.get('total_duration', 0)
+        contact_offset = total_duration - duration
+        print(f"Trimming pre-contact data: Removing first {contact_offset:.3f}s")
+
+        # Trim EMG to only include data after contact detection
+        emg_mask = emg_timestamps >= (emg_timestamps[0] + contact_offset)
+        emg = emg[:, emg_mask]
+        emg_timestamps = emg_timestamps[emg_mask]
+
+        # Trim angles to only include data after contact detection
+        angles_mask = angles_timestamps >= (angles_timestamps[0] + contact_offset)
+        angles = angles[angles_mask, :]
+        angles_timestamps = angles_timestamps[angles_mask]
+    else:
+        print(f"Warning: experiment_config.yaml not found in {data_dir}. No trimming applied.")
+
     print(f"EMG shape: {emg.shape}, timestamps: {len(emg_timestamps)}")
     print(f"Angles shape: {angles.shape}, timestamps: {len(angles_timestamps)}")
 
@@ -643,9 +735,10 @@ def process_emg_and_angles(
     filtered_force = None
     if force_data is not None:
         print(f"\n=== Filtering Force Data ===")
-        filtered_force = process_force_zero_phase(force_data, angle_sf, force_filter_cutoff)
+        # filtered_force = process_force_zero_phase(force_data, angle_sf, force_filter_cutoff)
+        filtered_force = process_force_realtime_style(force_data, angle_sf)
         
-        # NEW: Normalize force data
+        # Normalize force data
         print(f"\n=== Normalizing Force Data ===")
         filtered_force = normalize_force_data(filtered_force, finger_names)
         
