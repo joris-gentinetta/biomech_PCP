@@ -358,7 +358,81 @@ def evaluate_model(model, valsets, testsets, device, config):
 
     return total_val_loss, total_test_loss, val_losses + test_losses
 
+def simplified_enhanced_loss(outputs, targets, muscle_activations, force_data, warmup_steps):
+    """
+    Simplified combined loss for interaction model training (no material classification)
+    
+    Args:
+        outputs: (batch, seq_len, output_size) - predicted joint positions
+        targets: (batch, seq_len, output_size) - target joint positions  
+        muscle_activations: (batch, seq_len, 12) - predicted muscle activations
+        force_data: (batch, seq_len, 5) - force feedback data
+        warmup_steps: int - steps to skip at beginning
+    """
+    # 1. Standard position loss
+    position_loss = torch.nn.functional.mse_loss(
+        outputs[:, warmup_steps:], 
+        targets[:, warmup_steps:]
+    )
+    
+    # 2. Muscle physiology loss (only after warmup)
+    if muscle_activations is not None and force_data is not None:
+        physiology_loss = simplified_muscle_physiology_loss(
+            muscle_activations[:, warmup_steps:], 
+            force_data[:, warmup_steps:],
+            outputs.device
+        )
+        
+        # Combine losses with weighting
+        total_loss = position_loss + 0.3 * physiology_loss
+        
+        return total_loss, position_loss.item(), physiology_loss.item()
+    else:
+        return position_loss, position_loss.item(), 0.0
 
+def simplified_muscle_physiology_loss(muscle_activations, force_feedback, device):
+    """
+    Simplified physiologically informed muscle activation loss (no material classification)
+    
+    Args:
+        muscle_activations: (batch, seq_len, 12) - muscle activation values
+        force_feedback: (batch, seq_len, 5) - force values per finger
+        device: torch device
+    """
+    # Force magnitude across all fingers
+    force_magnitude = torch.norm(force_feedback, dim=-1)  # (batch, seq_len)
+    
+    # 1. Activation Level Loss
+    # Expected activation should scale with force magnitude
+    expected_activation_level = torch.sigmoid(force_magnitude - 0.5)  # Threshold at 0.5
+    actual_activation_level = torch.mean(muscle_activations, dim=-1)   # Average across all muscles
+    
+    activation_level_loss = torch.nn.functional.mse_loss(actual_activation_level, expected_activation_level) * 0.2
+    
+    # 2. Co-contraction Loss
+    # During contact, antagonist muscles should co-contract for stability
+    cocontraction_loss = torch.tensor(0.0, device=device)
+    
+    if muscle_activations.shape[-1] >= 12:  # Ensure we have enough muscle activations
+        # Reshape to (batch, seq_len, 6_DOF, 2_muscles_per_DOF)
+        muscle_pairs = muscle_activations.reshape(
+            muscle_activations.shape[0], muscle_activations.shape[1], 6, 2
+        )
+        
+        # Contact mask: where force is significant
+        contact_mask = (force_magnitude > 0.5).float()  # (batch, seq_len)
+        
+        for pair_idx in range(6):
+            agonist = muscle_pairs[:, :, pair_idx, 0]      # (batch, seq_len)
+            antagonist = muscle_pairs[:, :, pair_idx, 1]   # (batch, seq_len)
+            
+            # Co-contraction: minimum activation of both muscles
+            both_active = torch.minimum(agonist, antagonist)
+            
+            # Only penalize/reward co-contraction during contact
+            cocontraction_loss += torch.mean(both_active * contact_mask) * 0.1
+    
+    return activation_level_loss + cocontraction_loss
 
 class EarlyStopper:
     def __init__(self, patience=1, min_delta=0):
@@ -436,6 +510,56 @@ class TSDataset(Dataset):
     def set_index_shift(self, shift):
         self.index_shift = shift
 
+class SimplifiedEnhancedTSDataset(TSDataset):
+    def __init__(self, data_sources, features, targets, seq_len, device, 
+                 force_features=None, index_shift=0, dummy_labels=False):
+        """
+        Simplified enhanced dataset (no material labels)
+        
+        Args:
+            force_features: List of force feature names
+        """
+        super().__init__(data_sources, features, targets, seq_len, device, index_shift, dummy_labels)
+        self.force_features = force_features or []
+        
+    def __getitem__(self, idx):
+        # Get standard EMG and position data
+        x, y = super().__getitem__(idx)[:2]
+        
+        # Get force data if available
+        force_data = None
+        if self.force_features:
+            # Determine which data source this sample comes from
+            set_idx = self._get_set_idx(idx)
+            local_idx = idx - self.starts[set_idx]
+            start_idx = local_idx * self.seq_len + self.index_shift
+            end_idx = start_idx + self.seq_len
+            
+            try:
+                force_data = torch.tensor(
+                    self.data_sources[set_idx].loc[start_idx:end_idx-1, self.force_features].values,
+                    dtype=torch.float32, device=self.device
+                )
+            except KeyError:
+                # Force features not found - create dummy zeros
+                force_data = torch.zeros((self.seq_len, len(self.force_features)), 
+                                       dtype=torch.float32, device=self.device)
+        
+        if force_data is not None:
+            return x, y, force_data
+        else:
+            return x, y
+    
+    def _get_set_idx(self, idx):
+        """Determine which data source a given index belongs to"""
+        set_idx = 0
+        for i, start in enumerate(self.starts[1:], 1):  # Skip first start (always 0)
+            if idx < start:
+                set_idx = i - 1
+                break
+        else:
+            set_idx = len(self.starts) - 1  # Last data source
+        return set_idx
 
 class OLDataset(Dataset):
     def __init__(self, data_sources, features, targets, device):
