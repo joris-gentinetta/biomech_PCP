@@ -571,9 +571,9 @@ def calibrate_emg(base_dir, rest_time=10, mvc_time=10):
     print(f"Sampling frequency (MVC): {sf_mvc:.1f} Hz")
     
     # Use simple percentile noise calculation (like zzzzzemgfilter.py)
-    print(f"\nUsing SIMPLE percentile noise calculation (98th percentile)")
+    print(f"\n Using SIMPLE percentile noise calculation (99.8th percentile)")
     noise_levels, artifact_cut, mvc_cut = measure_noise_levels_simple(
-        rest_data.T, mvc_data.T, sf_rest, sf_mvc, noise_percentile=98
+        rest_data.T, mvc_data.T, sf_rest, sf_mvc, noise_percentile=99.8
     )
     
     # Filter MVC for max values
@@ -629,7 +629,7 @@ def calibrate_emg(base_dir, rest_time=10, mvc_time=10):
         'maxVals': maxVals.tolist(),
         'noiseLevels': noise_levels.tolist(),
         'calibration_method': 'simple_percentile',  # Updated method name
-        'noise_percentile': 98,  # Document which percentile was used
+        'noise_percentile': 99.8,  # Document which percentile was used
         'mvc_percentile': 95,    # Document MVC percentile
         'artifact_cut_samples': int(artifact_cut),
         'artifact_cut_seconds': float(artifact_cut / sf_rest),
