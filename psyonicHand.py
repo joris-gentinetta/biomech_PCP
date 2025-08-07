@@ -113,7 +113,7 @@ class psyonicArm():
 		self.loopRate = 10 # this is how much faster this should run than the neural net
 
 		# lowpass filter joint commands
-		self.lowpassCommands = BesselFilterArr(numChannels=self.numMotors, order=4, critFreqs=[2], fs=self.Hz, filtType='lowpass')
+		self.lowpassCommands = BesselFilterArr(numChannels=self.numMotors, order=4, critFreqs=2, fs=self.Hz, filtType='lowpass')
 		# self.lowpassCommands = ExponentialFilterArr(numChannels=self.numMotors, smoothingFactor=0.8, defaultValue=0)
 
 		# exponential filter the force sensor readings
