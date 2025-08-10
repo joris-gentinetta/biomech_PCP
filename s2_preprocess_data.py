@@ -340,7 +340,7 @@ if __name__ == "__main__":
         subprocess.run(
             [
                 "python",
-                "video_gui.py",
+                "helpers/video_gui.py",
                 "--file",
                 join(args.data_dir, "triggered_video.mp4"),
             ]
