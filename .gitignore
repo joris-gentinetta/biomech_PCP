@@ -20,3 +20,6 @@ omen*
 hand_config.yaml
 
 paper_utils/paper_data/*
+# pixi environments
+.pixi/*
+!.pixi/config.toml

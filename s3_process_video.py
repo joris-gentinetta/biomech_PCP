@@ -255,7 +255,7 @@ if __name__ == "__main__":
     cap.release()
 
     if not args.process:
-        subprocess.run(["python", "video_gui.py", "--file", input_video_path])
+        subprocess.run(["python", "helpers/video_gui.py", "--file", input_video_path])
         exit(0)
 
     joints_df = update_left_right(joints_df)
