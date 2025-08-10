@@ -5,22 +5,22 @@
 import numpy as np
 
 """Data definitions"""
-ACTIVE_FRQSC = 1 
+ACTIVE_FRQSC = 1
 
-WIFI_STATUS = 1 #  0: off, 1: on
-VISUALIZATION_STATUS = 0 #  0: off, 1: on
+WIFI_STATUS = 1  #  0: off, 1: on
+VISUALIZATION_STATUS = 0  #  0: off, 1: on
 
 EMG_INIT_DELAY = 3000
 
 # Comm port type - buf[1]
-COMM_COMMAND_CONFIG_USB =  0x50
+COMM_COMMAND_CONFIG_USB = 0x50
 COMM_COMMAND_CONFIG_UART = 0x51
-COMM_COMMAND_CONFIG_I2C =  0x52
-COMM_COMMAND_CONFIG_SPI =  0x53
+COMM_COMMAND_CONFIG_I2C = 0x52
+COMM_COMMAND_CONFIG_SPI = 0x53
 
 # Communication on/off
-COMM_TX_INACTIVE = 0x0A # stop stream
-COMM_TX_DONE =     0x93 # start stream
+COMM_TX_INACTIVE = 0x0A  # stop stream
+COMM_TX_DONE = 0x93  # start stream
 
 # Definition of the datatype
 DSP_DATA_RAW = 0x00
@@ -40,23 +40,23 @@ DSP_DATA_THMAX = 0x0A
 DSP_DATA_THMIN = 0x0B
 DSP_DATA_GYROACC = 0x0C
 DSP_DATA_RAW8CH_GYROACC = 0x0D
-DSP_DATA_FEMGPWR1 = 0x0E #  TEST
-DSP_DATA_FEMGPWR2 = 0x0F #  TEST
-DSP_DATA_FEMGPWR_RAW = 0x10 #  TEST
+DSP_DATA_FEMGPWR1 = 0x0E  #  TEST
+DSP_DATA_FEMGPWR2 = 0x0F  #  TEST
+DSP_DATA_FEMGPWR_RAW = 0x10  #  TEST
 
 # buffer type
-BUFFER_FULL =      0x00 # full buffer (16ch float): 80byte
-BUFFER_HALF =      0x01 # half buffer (16ch int16_t): 40byte
-BUFFER_64BYTE =    0x02 # 3/4 buffer (16ch int16_t): 64byte
-BUFFER_8CH =       0x03 # half buffer (8ch int16_t): 24 byte
-BUFFER_160 =       0x04 # full buffer (16ch float): 160byte - for BeagleBone DMA
+BUFFER_FULL = 0x00  # full buffer (16ch float): 80byte
+BUFFER_HALF = 0x01  # half buffer (16ch int16_t): 40byte
+BUFFER_64BYTE = 0x02  # 3/4 buffer (16ch int16_t): 64byte
+BUFFER_8CH = 0x03  # half buffer (8ch int16_t): 24 byte
+BUFFER_160 = 0x04  # full buffer (16ch float): 160byte - for BeagleBone DMA
 
 BUFFER_FULL_LENGTH = 80
 BUFFER_HALF_LENGTH = 40
 
 # #RECEIVER_IP "192.168.50.234" #  JQ
 # RECEIVER_IP = "192.168.50.19" #  TSHU
-RECEIVER_IP = "192.168.1.3" # Mikey
+RECEIVER_IP = "192.168.1.3"  # Mikey
 
 RECEIVER_PORT = 8899
 
@@ -71,7 +71,9 @@ ACTIVE_DATA = DSP_DATA_RAW
 USB_PACKET_LENGTH = BUFFER_FULL_LENGTH
 
 """ Clasee definitions """
-class emgDataHalf():
+
+
+class emgDataHalf:
     def __init__(self):
         self.idx = 0
         self.dataType = 0
@@ -80,7 +82,7 @@ class emgDataHalf():
         self.buttonCounter = 0
         self.sw1 = 0
         self.sw2 = 0
-        
+
         self.dataBuf = np.zeros(16)
 
         ## the below isn't memcpy'd
@@ -118,12 +120,13 @@ class emgDataHalf():
 
     def emgDataPrint(self):
         print(f"""Time: {self.emg_os_tick:07.3f} ms\n
-            {self.dataBuf[0]:07.2f} {self.dataBuf[4]:07.2f} {self.dataBuf[ 8]:07.2f} {self.dataBuf[12]:07.2f}
-            {self.dataBuf[1]:07.2f} {self.dataBuf[5]:07.2f} {self.dataBuf[ 9]:07.2f} {self.dataBuf[13]:07.2f}
+            {self.dataBuf[0]:07.2f} {self.dataBuf[4]:07.2f} {self.dataBuf[8]:07.2f} {self.dataBuf[12]:07.2f}
+            {self.dataBuf[1]:07.2f} {self.dataBuf[5]:07.2f} {self.dataBuf[9]:07.2f} {self.dataBuf[13]:07.2f}
             {self.dataBuf[2]:07.2f} {self.dataBuf[6]:07.2f} {self.dataBuf[10]:07.2f} {self.dataBuf[14]:07.2f}
             {self.dataBuf[3]:07.2f} {self.dataBuf[7]:07.2f} {self.dataBuf[11]:07.2f} {self.dataBuf[15]:07.2f}\n""")
 
-class emgDataFull():
+
+class emgDataFull:
     def __init__(self):
         self.startCode = 0
         self.gpioState = 0
@@ -134,7 +137,7 @@ class emgDataFull():
         self.processingTime = 0
 
         self.dataBuf = np.zeros(16)
-        
+
         self.gpioTimedState = 0
         self.sw1 = 0
         self.sw2 = 0
@@ -180,7 +183,7 @@ class emgDataFull():
 
     def emgDataFullPrint(self):
         print(f"""Time: {self.osTime_ms:07.3f} ms\n
-            {self.dataBuf[0]:07.2f} {self.dataBuf[4]:07.2f} {self.dataBuf[ 8]:07.2f} {self.dataBuf[12]:07.2f}
-            {self.dataBuf[1]:07.2f} {self.dataBuf[5]:07.2f} {self.dataBuf[ 9]:07.2f} {self.dataBuf[13]:07.2f}
+            {self.dataBuf[0]:07.2f} {self.dataBuf[4]:07.2f} {self.dataBuf[8]:07.2f} {self.dataBuf[12]:07.2f}
+            {self.dataBuf[1]:07.2f} {self.dataBuf[5]:07.2f} {self.dataBuf[9]:07.2f} {self.dataBuf[13]:07.2f}
             {self.dataBuf[2]:07.2f} {self.dataBuf[6]:07.2f} {self.dataBuf[10]:07.2f} {self.dataBuf[14]:07.2f}
             {self.dataBuf[3]:07.2f} {self.dataBuf[7]:07.2f} {self.dataBuf[11]:07.2f} {self.dataBuf[15]:07.2f}\n""")

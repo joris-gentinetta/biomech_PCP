@@ -1,7 +1,7 @@
 from setuptools import setup, find_packages
 
 setup(
-    name='dynamics',
-    version='0.1',
+    name="dynamics",
+    version="0.1",
     packages=find_packages(),
 )

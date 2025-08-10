@@ -36,7 +36,9 @@ def process_images(input_dir, output_dir, square_size):
                 new_height = int(height * scale)
 
                 # Resize image to ensure it is at least square_size x square_size
-                img_resized = cv2.resize(img_rgb, (new_width, new_height), interpolation=cv2.INTER_LINEAR)
+                img_resized = cv2.resize(
+                    img_rgb, (new_width, new_height), interpolation=cv2.INTER_LINEAR
+                )
             else:
                 img_resized = img_rgb
 

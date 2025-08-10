@@ -1,9 +1,9 @@
-'''
+"""
 Mikey Fernandez modified 03/17/2021
 
 # Change to 16 channels and a 76 bit packet, for testing with Haptix controller
 Further modified - 92 bit packet 03/20/2021
-'''
+"""
 
 import numpy as np
 import struct
@@ -12,8 +12,9 @@ import zmq
 import threading
 from helpers.emgDef import *
 
-class FakeStreamer():
-    def __init__(self, socketAddr='tcp://18.27.123.85:1236'):
+
+class FakeStreamer:
+    def __init__(self, socketAddr="tcp://18.27.123.85:1236"):
         self.quitEvent = threading.Event()
 
         self.socketAddr = socketAddr
@@ -21,7 +22,7 @@ class FakeStreamer():
         self.sock = self.ctx.socket(zmq.PUB)
         self.sock.bind(self.socketAddr)
 
-        self.recordRate = 2000 # Hz
+        self.recordRate = 2000  # Hz
         self.printRate = 100
 
         self.numChannels = 16
@@ -30,8 +31,10 @@ class FakeStreamer():
 
         self.emgData = emgDataFull()
 
-        self.offset = np.random.uniform(low=-1e4, high = 1e4, size=self.numChannels)
-        self.artifactFreq = np.random.uniform(low=0.0025, high=0.01, size=self.numChannels)
+        self.offset = np.random.uniform(low=-1e4, high=1e4, size=self.numChannels)
+        self.artifactFreq = np.random.uniform(
+            low=0.0025, high=0.01, size=self.numChannels
+        )
         self.artifactAmp = np.random.uniform(low=10, high=100, size=self.numChannels)
 
     def __del__(self):
@@ -43,23 +46,27 @@ class FakeStreamer():
             self.quitEvent.set()
 
         except Exception as e:
-            print(f'__del__: Socket closing error {e}')
+            print(f"__del__: Socket closing error {e}")
 
     def generateEMG(self):
         thisTime = time.time()
         emgSignals = np.zeros(self.numChannels)
         for _ in range(self.numComponents):
             amplitude = np.random.uniform(low=0.1, high=1.0, size=self.numChannels)
-            frequency = np.random.uniform(low=5, high=150, size=self.numChannels)  # Random frequency between 5 Hz and 150 Hz
+            frequency = np.random.uniform(
+                low=5, high=150, size=self.numChannels
+            )  # Random frequency between 5 Hz and 150 Hz
             noise = np.random.normal(loc=0, scale=0.1, size=self.numChannels)
 
-            signal = amplitude * np.sin(2*np.pi*frequency*thisTime) + noise
+            signal = amplitude * np.sin(2 * np.pi * frequency * thisTime) + noise
             emgSignals += signal
 
-        motionArtifacts = self.artifactAmp*np.sin(2*np.pi*self.artifactFreq*thisTime)
+        motionArtifacts = self.artifactAmp * np.sin(
+            2 * np.pi * self.artifactFreq * thisTime
+        )
 
         return emgSignals + motionArtifacts + self.offset
-    
+
     def generatePacket(self, emg):
         self.emgData.startCode = 0
         self.emgData.gpioState = 0
@@ -68,19 +75,19 @@ class FakeStreamer():
         self.emgData.processingTime = 0
 
         self.emgData.dataBuf = emg
-        
+
         self.emgData.gpioTimedState = 0
         self.emgData.sw1 = 0
         self.emgData.sw2 = 0
         self.emgData.newline = 0
 
-        time.sleep(1/self.recordRate)
+        time.sleep(1 / self.recordRate)
 
     def stream(self):
         a = 0
         while not self.quitEvent.is_set():
-            self.emgData.osTime_us += int(1e6/self.recordRate)
-            self.emgData.osTime_ms += int(1e3/self.recordRate)
+            self.emgData.osTime_us += int(1e6 / self.recordRate)
+            self.emgData.osTime_ms += int(1e3 / self.recordRate)
 
             start = time.time()
             signals = self.generateEMG()
@@ -100,23 +107,49 @@ class FakeStreamer():
                 break
 
             endTime = time.time()
-            time.sleep(max(1/self.recordRate - endTime - start, 0))
-        
-        print('Stopping stream.')
+            time.sleep(max(1 / self.recordRate - endTime - start, 0))
+
+        print("Stopping stream.")
 
     def pack(self, data):
-        packedData = struct.pack('BBBBIHHffffffffffffffffBBBB', data.startCode, data.gpioState, data.dataType, 
-            data.freqScalar, data.osTime_us, data.osTime_ms, data.processingTime, 
-            data.dataBuf[0], data.dataBuf[1], data.dataBuf[2], data.dataBuf[3], data.dataBuf[4], data.dataBuf[5], data.dataBuf[6], data.dataBuf[7], 
-            data.dataBuf[8], data.dataBuf[9], data.dataBuf[10], data.dataBuf[11], data.dataBuf[12], data.dataBuf[13], data.dataBuf[14], data.dataBuf[15], 
-            data.gpioTimedState, data.sw1, data.sw2, data.newline)
+        packedData = struct.pack(
+            "BBBBIHHffffffffffffffffBBBB",
+            data.startCode,
+            data.gpioState,
+            data.dataType,
+            data.freqScalar,
+            data.osTime_us,
+            data.osTime_ms,
+            data.processingTime,
+            data.dataBuf[0],
+            data.dataBuf[1],
+            data.dataBuf[2],
+            data.dataBuf[3],
+            data.dataBuf[4],
+            data.dataBuf[5],
+            data.dataBuf[6],
+            data.dataBuf[7],
+            data.dataBuf[8],
+            data.dataBuf[9],
+            data.dataBuf[10],
+            data.dataBuf[11],
+            data.dataBuf[12],
+            data.dataBuf[13],
+            data.dataBuf[14],
+            data.dataBuf[15],
+            data.gpioTimedState,
+            data.sw1,
+            data.sw2,
+            data.newline,
+        )
 
         return packedData
 
     def startCommunication(self):
-        self.streamThread = threading.Thread(target=self.stream, name='streamEMG')
+        self.streamThread = threading.Thread(target=self.stream, name="streamEMG")
         self.streamThread.daemon = False
         self.streamThread.start()
+
 
 # ##################################
 # class fakeDataSource():
@@ -145,7 +178,7 @@ class FakeStreamer():
 #             self.ctx.term()
 
 #         except Exception as e:
-#             print(f'__del__: Socket closing error, {e}')        
+#             print(f'__del__: Socket closing error, {e}')
 
 #     def startService(self):
 #         self.sendData()
@@ -181,9 +214,9 @@ class FakeStreamer():
 #         try:
 #             while True:
 #                 X = self.generateData()
-#                 byte_data = struct.pack(f'{18}f{4}If', self.fakeTime, self.fakeTime, 
-#                     X[0], X[1], X[2],  X[3],  X[4],  X[5],  X[6],  X[7], 
-#                     X[8], X[9], X[10], X[11], X[12], X[13], X[14], X[15], 
+#                 byte_data = struct.pack(f'{18}f{4}If', self.fakeTime, self.fakeTime,
+#                     X[0], X[1], X[2],  X[3],  X[4],  X[5],  X[6],  X[7],
+#                     X[8], X[9], X[10], X[11], X[12], X[13], X[14], X[15],
 #                     1, 0, 1, 0, self.sendingHz)
 
 #                 # socket
@@ -210,10 +243,10 @@ class FakeStreamer():
 #         self.streamThread.daemon = False
 #         self.streamThread.start()
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     # The main program
     print("Starting fake data streamer.")
-    streamer = FakeStreamer(socketAddr='tcp://18.27.123.85:1236')
+    streamer = FakeStreamer(socketAddr="tcp://18.27.123.85:1236")
     streamer.startCommunication()
 
     # dataSource = fakeDataSource(socketAddr='tcp://127.0.0.1:1235', frequency=1000)
