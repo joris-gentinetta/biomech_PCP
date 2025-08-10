@@ -1,0 +1,20 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "dynamics"
+version = "0.1.0"
+authors = [
+    {name = "Michael Fernandez", email = "mfernan@media.mit.edu"},
+]
+description = "Dynamics module for biomechanics research"
+requires-python = ">=3.8"
+dependencies = [
+    "numpy",
+    "torch",
+]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["dynamics*"]

@@ -1,5 +1,0 @@
-setup.py
-dynamics.egg-info/PKG-INFO
-dynamics.egg-info/SOURCES.txt
-dynamics.egg-info/dependency_links.txt
-dynamics.egg-info/top_level.txt

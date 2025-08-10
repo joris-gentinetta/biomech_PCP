@@ -1,5 +1,6 @@
-import cv2
 import os
+
+import cv2
 
 
 def process_images(input_dir, output_dir, square_size):

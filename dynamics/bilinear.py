@@ -5,11 +5,12 @@ In this model, the total force is the sum of bilinear model force and neural net
 """
 
 import math
+
 import torch
 from torch import nn
 from torch.nn.utils.parametrize import register_parametrization
-from dynamics.utils import Exponential, Sigmoid
 
+from dynamics.utils import Exponential, Sigmoid
 
 ## Muscle parameters
 K0 = math.log(100)
@@ -21,7 +22,7 @@ B1 = math.log(math.e)
 
 ## Joint parameters
 M = 0.05
-I = math.log(0.004)
+I = math.log(0.004)  # noqa E741
 B = math.log(math.e)
 K = math.log(1)
 
@@ -120,9 +121,9 @@ class Joints(nn.Module):
         # Linear interpolation between steps
         # Algorithm: to integrate from time 0 to time self.dt, with linear
         # interpolation between inputs u = [[F0], [F1]]
-        
+
         #   xdot = A x + B u,        x(0) = x0
-        
+
         # Solution is
         #   x(dt) = exp(A*dt) x0 + (I - exp(A*dt)) A^-1 B u
 

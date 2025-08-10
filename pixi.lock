@@ -117,7 +117,6 @@ environments:
       - pypi: https://files.pythonhosted.org/packages/fd/7f/2c3697bba5d4aa5cc2afe81826d73dfae5f049458e44732c7a0938baa673/PyYAML-6.0.2-cp38-cp38-manylinux_2_17_x86_64.manylinux2014_x86_64.whl
       - pypi: https://files.pythonhosted.org/packages/e0/2c/dba5e4e756a29bd684496c4d6d61c40728ff0140b364b400f5a735c1c0a3/pyzmq-27.0.1-cp38-cp38-manylinux2014_x86_64.manylinux_2_17_x86_64.whl
       - pypi: https://files.pythonhosted.org/packages/7c/e4/56027c4a6b4ae70ca9de302488c5ca95ad4a39e190093d6c1a8ace08341b/requests-2.32.4-py3-none-any.whl
-      - pypi: https://files.pythonhosted.org/packages/e8/67/0c3c9179a3ad19791ef1b8f7138aa27d4578c78700551c60d9260b2c660d/ruff-0.12.8-py3-none-manylinux_2_17_x86_64.manylinux2014_x86_64.whl
       - pypi: https://files.pythonhosted.org/packages/3f/48/6fdd99f5717045f9984616b5c2ec683d6286d30c0ac234563062132b83ab/scikit_learn-1.3.2-cp38-cp38-manylinux_2_17_x86_64.manylinux2014_x86_64.whl
       - pypi: https://files.pythonhosted.org/packages/69/f0/fb07a9548e48b687b8bf2fa81d71aba9cfc548d365046ca1c791e24db99d/scipy-1.10.1-cp38-cp38-manylinux_2_17_x86_64.manylinux2014_x86_64.whl
       - pypi: https://files.pythonhosted.org/packages/2d/3e/bb34de65a5787f76848a533afbb6610e01fbcdd59e76d8679c254e02255c/sentry_sdk-2.34.1-py2.py3-none-any.whl
@@ -230,7 +229,6 @@ environments:
       - pypi: https://files.pythonhosted.org/packages/54/ed/79a089b6be93607fa5cdaedf301d7dfb23af5f25c398d5ead2525b063e17/pyyaml-6.0.2.tar.gz
       - pypi: https://files.pythonhosted.org/packages/3f/80/c0f1ce41dc2ed788a1a7a67714e6797ed66e2dfa045afe13923e0bfd7acf/pyzmq-27.0.1-cp38-cp38-macosx_10_15_universal2.whl
       - pypi: https://files.pythonhosted.org/packages/7c/e4/56027c4a6b4ae70ca9de302488c5ca95ad4a39e190093d6c1a8ace08341b/requests-2.32.4-py3-none-any.whl
-      - pypi: https://files.pythonhosted.org/packages/99/9d/e91f84dfe3866fa648c10512904991ecc326fd0b66578b324ee6ecb8f725/ruff-0.12.8-py3-none-macosx_11_0_arm64.whl
       - pypi: https://files.pythonhosted.org/packages/a4/62/92e9cec3deca8b45abf62dd8f6469d688b3f28b9c170809fcc46f110b523/scikit_learn-1.3.2-cp38-cp38-macosx_12_0_arm64.whl
       - pypi: https://files.pythonhosted.org/packages/93/4a/50c436de1353cce8b66b26e49a687f10b91fe7465bf34e4565d810153003/scipy-1.10.1-cp38-cp38-macosx_12_0_arm64.whl
       - pypi: https://files.pythonhosted.org/packages/2d/3e/bb34de65a5787f76848a533afbb6610e01fbcdd59e76d8679c254e02255c/sentry_sdk-2.34.1-py2.py3-none-any.whl
@@ -333,8 +331,31 @@ packages:
   requires_python: '>=3.8'
 - pypi: ./
   name: biomech-pcp
-  version: '0.1'
-  sha256: 602f1bf47562e3e46dce57804e32ab2201eafd7ab567bac8cd6127b530c334e0
+  version: 0.1.0
+  sha256: d7d9365a95ee0f0806f6f13f648863b2a63c527ef896f44f5d8d78a41b4f156e
+  requires_dist:
+  - pybullet>=3.25,<4
+  - mediapipe>=0.10.11,<0.11
+  - opencv-python>=4.12.0.88,<5
+  - imageio[ffmpeg]>=2.35.1,<3
+  - numpy>=1.24.4,<2
+  - pandas>=2.0.3,<3
+  - pyarrow>=17.0.0,<18
+  - zmq>=0.0.0,<0.0.1
+  - matplotlib>=3.7.5,<4
+  - scikit-learn>=1.3.2,<2
+  - tqdm>=4.67.1,<5
+  - torch>=2.4.1,<3
+  - wandb>=0.21.1,<0.22
+  - pyserial>=3.5,<4
+  - pyqt5>=5.15.11,<6
+  - pyqtgraph>=0.13.3,<0.14
+  - pyzmq>=27.0.1,<28
+  - scipy>=1.10.1,<2
+  - pillow>=10.4.0,<11
+  - pyyaml>=6.0.2,<7
+  - wget>=3.2,<4
+  requires_python: '>=3.8,<3.9'
   editable: true
 - conda: https://conda.anaconda.org/conda-forge/linux-64/bullet-cpp-3.25-h53bb729_2.conda
   sha256: 27f5155fdacf93dc8886b30af87aebdf1c2718a461ca3e9ca9e0122b58e46d35
@@ -493,8 +514,12 @@ packages:
   requires_python: '>=3.8'
 - pypi: ./dynamics
   name: dynamics
-  version: '0.1'
-  sha256: 0fee202bdaa15c46ccdf2b88b0302d13c8c5d6b499c0e5eb1ecad3989c1e206c
+  version: 0.1.0
+  sha256: 37a32119e6be323ccaeb58305fc1c7c5807c1f92b837c2f18c899e7ff4afa1c5
+  requires_dist:
+  - numpy
+  - torch
+  requires_python: '>=3.8'
   editable: true
 - pypi: https://files.pythonhosted.org/packages/ce/31/55cd413eaccd39125368be33c46de24a1f639f2e12349b0361b4678f3915/eval_type_backport-0.2.2-py3-none-any.whl
   name: eval-type-backport
@@ -2346,16 +2371,6 @@ packages:
   - pysocks>=1.5.6,!=1.5.7 ; extra == 'socks'
   - chardet>=3.0.2,<6 ; extra == 'use-chardet-on-py3'
   requires_python: '>=3.8'
-- pypi: https://files.pythonhosted.org/packages/99/9d/e91f84dfe3866fa648c10512904991ecc326fd0b66578b324ee6ecb8f725/ruff-0.12.8-py3-none-macosx_11_0_arm64.whl
-  name: ruff
-  version: 0.12.8
-  sha256: 2fae54e752a3150f7ee0e09bce2e133caf10ce9d971510a9b925392dc98d2fec
-  requires_python: '>=3.7'
-- pypi: https://files.pythonhosted.org/packages/e8/67/0c3c9179a3ad19791ef1b8f7138aa27d4578c78700551c60d9260b2c660d/ruff-0.12.8-py3-none-manylinux_2_17_x86_64.manylinux2014_x86_64.whl
-  name: ruff
-  version: 0.12.8
-  sha256: 560e0cd641e45591a3e42cb50ef61ce07162b9c233786663fdce2d8557d99818
-  requires_python: '>=3.7'
 - pypi: https://files.pythonhosted.org/packages/3f/48/6fdd99f5717045f9984616b5c2ec683d6286d30c0ac234563062132b83ab/scikit_learn-1.3.2-cp38-cp38-manylinux_2_17_x86_64.manylinux2014_x86_64.whl
   name: scikit-learn
   version: 1.3.2
