@@ -654,10 +654,18 @@ def calibrate_emg(base_dir, rest_time=10, mvc_time=10):
 
 def start_raw_emg_recorder(base_dir, enable_video=False, sync_event=None):
     """
-    Start background threads to record raw EMG and (optionally) webcam video.
+    Start background threads to record raw EMG and (optionally) webcam video at full 1kHz.
     Returns: stop_event, emg_thread, video_thread (or None), raw_history, raw_timestamps, video_timestamps
     """
-    emg = EMG()  # connect directly to ADS1299 via EMGClass (records all 16 channels by default)
+    import zmq
+    import struct
+    
+    # Connect to the RAW EMG stream (port 1236, not the processed 1235)
+    SOCKET_ADDR = "tcp://127.0.0.1:1236"
+    
+    # Exact packet format from EMGStreamer.pack() - with explicit little-endian
+    FMT = "<BBBBIHH" + "f"*16 + "BBBB"
+    SIZE = struct.calcsize(FMT)
 
     raw_history = []
     raw_timestamps = []
@@ -695,54 +703,98 @@ def start_raw_emg_recorder(base_dir, enable_video=False, sync_event=None):
         video_thread = threading.Thread(target=video_loop, daemon=True)
         video_thread.start()
 
-    # EMG capture thread with sync_event - PROPERLY INDENTED
+    # EMG capture thread with 1kHz ZMQ connection
     def capture_loop():
         try:
-            # Start the EMG communication pipeline (like the original)
-            emg.startCommunication()  # This starts the internal emgThread
+            # Setup ZMQ connection
+            ctx = zmq.Context()
+            sock = ctx.socket(zmq.SUB)
+            sock.connect(SOCKET_ADDR)
+            sock.setsockopt_string(zmq.SUBSCRIBE, "")  # Subscribe to all
             
-            # Wait for first data
-            while getattr(emg, 'OS_time', None) is None:
-                time.sleep(0.001)
+            # ZMQ socket options for robust high-frequency capture
+            sock.setsockopt(zmq.RCVHWM, 10000)     # Large buffer for brief hiccups
+            sock.setsockopt(zmq.LINGER, 0)         # Quick shutdown
+            sock.setsockopt(zmq.RCVTIMEO, 100)     # 100ms timeout
+            
+            print("EMG: Connected to 1kHz ZMQ stream, waiting for sync signal...")
 
-            print("EMG thread: Keeping connection alive, waiting for sync event...")
-            
-            # Wait for sync while EMG pipeline runs in background
+            # Wait for external sync (so we don't keep any pre-sync packets)
             while sync_event is not None and not sync_event.is_set() and not stop_event.is_set():
                 time.sleep(0.001)
 
             if stop_event.is_set():
+                sock.close()
+                ctx.term()
                 return
 
+            # Sync moment: reset capture buffers and set t=0
             raw_history.clear()
             raw_timestamps.clear()
 
-            # Get first timestamp like the original
-            first_emg_time = emg.OS_time
-            last_time = emg.OS_time
-            
+            print(f"EMG: Starting 1kHz capture via ZMQ...")
+            first_timestamp_us = None
+            last_timestamp_us = None
+            samples_collected = 0
+
             while not stop_event.is_set():
-                time_sample = emg.OS_time
+                try:
+                    # Receive packet (non-blocking with timeout)
+                    msg = sock.recv()
+                    
+                    # Validate packet size
+                    if len(msg) != SIZE:
+                        continue
+                    
+                    # Unpack the packet
+                    packet = struct.unpack(FMT, msg)
+                    
+                    # Extract data (indices match the pack format)
+                    timestamp_us = packet[4]  # osTime_us (microseconds)
+                    emg_channels = packet[7:23]  # 16 EMG channels (floats)
+                    
+                    # Initialize timing on first packet
+                    if first_timestamp_us is None:
+                        first_timestamp_us = timestamp_us
+                        last_timestamp_us = timestamp_us
+                        print(f"EMG: First packet at {timestamp_us} μs")
+                    
+                    # Check for duplicate timestamps
+                    if timestamp_us > last_timestamp_us:
+                        # Convert to relative time in seconds
+                        relative_time_s = (timestamp_us - first_timestamp_us) / 1e6
+                        
+                        # Store the data (emg_channels is already a tuple from slice)
+                        raw_history.append(emg_channels)
+                        raw_timestamps.append(relative_time_s)
+                        
+                        last_timestamp_us = timestamp_us
+                        samples_collected += 1
+                        
+                        # Progress report every 1000 samples
+                        if samples_collected % 1000 == 0:
+                            print(f"EMG: {samples_collected} samples, {relative_time_s:.1f}s elapsed")
                 
-                # Add timing validation like the original
-                if (time_sample - last_time)/1e6 > 0.1:
-                    print(f'Read time: {time_sample}, expected time: {last_time}')
-                    raise ValueError('EMG alignment lost. Please restart the EMG board and the script.')
-                
-                # Only collect data when we have new timestamps
-                elif time_sample > last_time:
-                    emg_sample = np.asarray(emg.rawEMG)
-                    raw_history.append(list(emg_sample))
-                    raw_timestamps.append((time_sample - first_emg_time) / 1e6)
-                
-                last_time = time_sample
-                time.sleep(0.001)  # Small delay to prevent busy waiting
-                
+                except zmq.Again:
+                    # Timeout - no packet received, continue
+                    continue
+                    
+                except Exception as e:
+                    print(f"EMG: Packet processing error: {e}")
+                    break
+
+            # Clean shutdown
+            sock.close()
+            ctx.term()
+            print(f"EMG: Recording stopped. Collected {samples_collected} samples")
+            
+            if samples_collected > 0:
+                duration = raw_timestamps[-1] - raw_timestamps[0]
+                actual_rate = samples_collected / duration if duration > 0 else 0
+                print(f"EMG: Duration {duration:.2f}s, rate {actual_rate:.1f}Hz")
+
         except Exception as e:
             print(f"EMG capture error: {e}")
-        finally:
-            emg.exitEvent.set()
-            time.sleep(0.1)
 
     # Create and start the thread
     emg_thread = threading.Thread(target=capture_loop, daemon=True)
@@ -1118,9 +1170,9 @@ def main():
                         help="Disable prosthetic arm control; EMG-only recording")
     parser.add_argument("--hand_side", "-s", choices=["left", "right"],
                         default="left", help="Side of the prosthetic hand")
-    parser.add_argument("--sync_iterations", type=int, default=4,
+    parser.add_argument("--sync_iterations", type=int, default=2,
                         help="Warm-up sync iterations (default: 5)")
-    parser.add_argument("--record_iterations", "-r", type=int, default=35,
+    parser.add_argument("--record_iterations", "-r", type=int, default=3,
                         help="Number of recording iterations (default: 40)")
     parser.add_argument("--video", action="store_true",
                         help="Enable simultaneous webcam video recording")
