@@ -30,157 +30,120 @@ import numpy as np
 from scipy import signal
 from collections import deque
 
-class AdaptiveForceFilter:
+class SimplifiedForceProcessor:
     """
-    Real-time force filtering with adaptive baseline compensation - Per-finger filtering
-    Much more efficient than per-sensor filtering
+    Simplified force processing:
+    - Zeroing of force sensors when entering free space
+    - Baseline drift correction only during free space
     """
     
-    def __init__(self, num_fingers=5, sampling_freq=60.0):
-        self.num_fingers = num_fingers  # 5 fingers
+    def __init__(self, sampling_freq=60.0):
         self.sampling_freq = sampling_freq
+        self.finger_names = ['index', 'middle', 'ring', 'pinky', 'thumb']
         
-        # Static baseline from zeroJoints() - set later
-        self.static_offsets = np.zeros(num_fingers)
+        # Simple drift tracking (moving average during free space)
+        self.drift_window_size = 150  # 2.5 seconds at 60Hz
+        self.drift_buffers = [deque(maxlen=self.drift_window_size) for _ in range(5)]
+        self.current_drift = np.zeros(5)
         
-        # Adaptive baseline tracking
-        self.baseline_window_size = 300  # 5 seconds at 60Hz
-        self.baseline_buffers = [deque(maxlen=self.baseline_window_size) for _ in range(num_fingers)]
-        self.current_baselines = np.zeros(num_fingers)
+        # Force normalization constants (same as training)
+        self.max_forces_per_finger = np.array([12.0, 12.0, 12.0, 12.0, 12.0])
         
-        # Contact detection parameters
-        self.contact_threshold = 0.5  # Force threshold to detect contact (N)
-        self.no_contact_duration = 0.0  # Time since last contact
-        self.baseline_update_delay = 2.0  # Wait 2 seconds after contact before updating baseline
-        
-        # High-frequency noise filtering - only 5 filters now!
-        self.setup_butterworth_filters()
-        
-        # Debug tracking
-        self.filter_enabled = True
-        
-    def setup_butterworth_filters(self):
-        """Setup Butterworth filters for high-frequency noise removal - one per finger"""
-        # 3Hz cutoff - removes sensor noise but preserves force dynamics
-        nyquist = 0.5 * self.sampling_freq
-        normal_cutoff = min(3.0 / nyquist, 0.99)
-        self.b, self.a = signal.butter(2, normal_cutoff, btype='low')
-        
-        # Initialize filter state for each finger (not each sensor!)
-        self.filter_states = []
-        for i in range(self.num_fingers):
-            zi = signal.lfilter_zi(self.b, self.a)
-            self.filter_states.append({
-                'zi': zi.copy(),
-                'initialized': False
-            })
+        print("SimplifiedForceProcessor initialized")
     
-    def set_static_offsets(self, per_finger_offsets):
+    def extract_finger_forces_from_sensors(self, sensors_dict, touchNames):
         """
-        Set static offsets from zeroJoints() calibration
-        per_finger_offsets: numpy array of shape (5,) with per-finger baseline forces
+        Extract per-finger forces from sensor dictionary using touchNames order
         """
-        self.static_offsets = per_finger_offsets.copy()
-        print(f"AdaptiveForceFilter: Set static offsets, mean = {np.mean(per_finger_offsets):.3f}")
+        finger_forces = np.zeros(5)
+        
+        for finger_idx, finger in enumerate(touchNames):
+            finger_total = 0.0
+            sensors_found = 0
+            
+            for sensor_idx in range(6):
+                sensor_name = f'{finger}{sensor_idx}_Force'
+                if sensor_name in sensors_dict:
+                    value = sensors_dict[sensor_name]
+                    if value != -1:  # Valid sensor reading
+                        finger_total += value
+                        sensors_found += 1
+            
+            if sensors_found > 0:
+                finger_forces[finger_idx] = finger_total
+            # else: finger_forces[finger_idx] remains 0
+        
+        return finger_forces
+	
+    def reset_baseline_immediately(self, current_forces):
+        """
+        zeroing baseline when entering free space mode
+        """
+        self.current_drift = current_forces.copy()
+        
+        # Clear drift buffers and start fresh
+        for buffer in self.drift_buffers:
+            buffer.clear()
+        
+        print(f"Forces immediately zeroed - new baseline: {self.current_drift}")
     
-    def process_finger_forces(self, per_finger_forces):
+    def update_drift_baseline(self, finger_forces):
+        """Update drift baseline during free space mode"""
+        for finger_idx in range(5):
+            self.drift_buffers[finger_idx].append(finger_forces[finger_idx])
+            
+            # Update current drift estimate (median of recent values)
+            if len(self.drift_buffers[finger_idx]) > 10:
+                self.current_drift[finger_idx] = np.median(
+                    list(self.drift_buffers[finger_idx])
+                )
+    
+    def process_runtime_force(self, sensors_dict, touchNames, in_interaction_mode, mode_just_changed=False):
         """
-        Main processing pipeline: static correction → HF filtering → adaptive baseline
+        Process forces with immediate zeroing on free space entry
         
         Args:
-            per_finger_forces: numpy array of shape (5,) with per-finger force sums
-        
-        Returns:
-            filtered_forces: numpy array of shape (5,) with processed per-finger forces
+            mode_just_changed: True if we just switched modes this cycle
         """
-        if not self.filter_enabled:
-            return np.maximum(per_finger_forces, 0)
+        # 1. Extract raw per-finger forces
+        raw_forces = self.extract_finger_forces_from_sensors(sensors_dict, touchNames)
         
-        # 1. Apply static baseline correction (from zeroJoints calibration)
-        static_corrected = np.maximum(per_finger_forces - self.static_offsets, 0)
-        
-        # 2. Apply high-frequency Butterworth filtering (per finger)
-        hf_filtered = self._apply_butterworth_filter(static_corrected)
-        
-        # 3. Detect contact and update adaptive baselines
-        max_force = np.max(hf_filtered)
-        self._update_contact_state(max_force, hf_filtered)
-        
-        # 4. Apply adaptive baseline correction
-        adaptive_corrected = np.maximum(hf_filtered - self.current_baselines, 0)
-        
-        return adaptive_corrected
-    
-    def _apply_butterworth_filter(self, forces):
-        """Apply Butterworth filter to each finger"""
-        filtered = np.zeros_like(forces)
-        
-        for i, force in enumerate(forces):
-            if i >= len(self.filter_states):
-                filtered[i] = force
-                continue
-                
-            state = self.filter_states[i]
+        # 2. Mode-based processing with immediate zeroing
+        if in_interaction_mode:
+            # INTERACTION MODE: Use RAW forces 
+            processed_forces = np.maximum(raw_forces, 0.0)
+            neural_network_forces = processed_forces  # Raw forces to neural network
             
-            if not state['initialized']:
-                # Initialize filter with first value
-                state['zi'] = state['zi'] * force
-                state['initialized'] = True
-                filtered[i] = force
+        else:
+            # FREE SPACE MODE
+            if mode_just_changed:
+                # JUST ENTERED FREE SPACE: Immediately zero forces
+                self.reset_baseline_immediately(raw_forces)
             else:
-                # Apply filter
-                filt_val, state['zi'] = signal.lfilter(
-                    self.b, self.a, [force], zi=state['zi']
-                )
-                filtered[i] = filt_val[0]
-        
-        return filtered
-    
-    def _update_contact_state(self, max_force, filtered_forces):
-        """Update contact state and adaptive baselines"""
-        dt = 1.0 / self.sampling_freq
-        
-        if max_force < self.contact_threshold:
-            # No significant contact detected
-            self.no_contact_duration += dt
+                # CONTINUING IN FREE SPACE: Update drift correction
+                self.update_drift_baseline(raw_forces)
             
-            # Wait for delay period after contact ends before updating baselines
-            if self.no_contact_duration > self.baseline_update_delay:
-                self._update_adaptive_baselines(filtered_forces)
-        else:
-            # Contact detected - stop baseline updates
-            self.no_contact_duration = 0.0
-    
-    def _update_adaptive_baselines(self, forces):
-        """Update adaptive baseline estimates using robust statistics"""
-        for i, force in enumerate(forces):
-            if i < len(self.baseline_buffers):
-                # Add to rolling buffer
-                self.baseline_buffers[i].append(force)
-                
-                # Update baseline estimate if we have enough samples
-                if len(self.baseline_buffers[i]) >= 20:
-                    # Use 20th percentile for robustness against outliers
-                    buffer_array = np.array(list(self.baseline_buffers[i]))
-                    self.current_baselines[i] = np.percentile(buffer_array, 20)
-    
-    def get_debug_info(self):
-        """Get debug information about filter state"""
+            # Apply drift correction for mode switching
+            corrected_forces = raw_forces - self.current_drift
+            corrected_forces = np.maximum(corrected_forces, 0.0)
+            processed_forces = corrected_forces
+            neural_network_forces = np.zeros_like(corrected_forces)  # Neural network gets zeros
+        
+        # 3. Normalize for neural network
+        normalized_forces = np.clip(neural_network_forces / self.max_forces_per_finger, 0.0, 1.0)
+        
+        # 4. Calculate aggregates for mode switching
+        total_force = np.sum(processed_forces)
+        max_finger_force = np.max(processed_forces)
+        
         return {
-            'no_contact_duration': self.no_contact_duration,
-            'mean_static_offset': np.mean(self.static_offsets),
-            'mean_adaptive_baseline': np.mean(self.current_baselines),
-            'num_baseline_samples': len(self.baseline_buffers[0]) if self.baseline_buffers else 0,
-            'filter_enabled': self.filter_enabled
+            'raw': raw_forces,
+            'processed': processed_forces,
+            'normalized': normalized_forces,      # For NN
+            'total_force': total_force,            
+            'max_finger_force': max_finger_force,  # For mode switching
+            'current_drift': self.current_drift.copy()
         }
-    
-    def set_enabled(self, enabled):
-        """Enable or disable filtering"""
-        self.filter_enabled = enabled
-        if not enabled:
-            print("AdaptiveForceFilter: Filtering disabled")
-        else:
-            print("AdaptiveForceFilter: Filtering enabled")
 
 class psyonicArm():
 	def __init__(self, hand='right', usingEMG=False, stuffing=False, baud=460800, plotSocketAddr='tcp://127.0.0.1:1240', dummy=False):
@@ -210,7 +173,7 @@ class psyonicArm():
 		self.volConversion = 3.3/4096
 		self.resConversion = 33000
 		self.resAdd = 10000
-		self.forceResConversion = [121591.0, 0.878894] # These are not accurate
+		self.forceResConversion = [121591.0, 0.878894] # I need to do this
 		self.radToDeg = lambda rad: 180*rad/3.14159
 		self.torqueConstant = 1.49 # mNm/A torque constant
 		self.voltLimit = 3546
@@ -277,16 +240,26 @@ class psyonicArm():
 		# exponential filter the force sensor readings
 		self.filterForce = ExponentialFilterArr(numChannels=self.numForce, smoothingFactor=0.8, defaultValue=0) # todo
 
-		self.adaptive_force_filter = AdaptiveForceFilter(
-			num_fingers=5,      # 5 fingers instead of 30 sensors
-			sampling_freq=self.Hz
-		)
+		self.simplified_force_processor = SimplifiedForceProcessor(sampling_freq=self.Hz)
 
 		# store prior commands for some reason
 		self.lastPosCom = -1*np.ones(self.numMotors)
 		self.lastVelCom = -1*np.ones(self.numMotors)
 		self.lastTorCom = -1*np.ones(self.numMotors)
 		self.lastVolCom = -1*np.ones(self.numMotors)
+
+		# 2 Mode Controller
+		self.in_interaction_mode = False
+		self.enter_timer = None
+		self.exit_timer = None
+		self.blend_start_time = None
+		self.blend_duration = 0.20  # 200ms blending
+		
+		# Thresholds for mode switching
+		self.ENTER_THRESHOLD = 0.8   # N
+		self.EXIT_THRESHOLD = 0.3    # N  
+		self.ENTER_DEBOUNCE = 0.10   # seconds
+		self.EXIT_DEBOUNCE = 0.15    # seconds
 
 		# for byte stuffing
 		self.frameChar = 0x7E
@@ -1124,118 +1097,259 @@ class psyonicArm():
 			# elif self.controlMode == 'voltage':
 			# 	self.handCom = [0]*self.numMotors
 
-	def reset_adaptive_baselines(self):
-		"""Reset adaptive baselines (force recalibration)"""
-		self.adaptive_force_filter.current_baselines = np.zeros(self.numForce)
-		for buffer in self.adaptive_force_filter.baseline_buffers:
-			buffer.clear()
-		print("Adaptive baselines reset")
+	
+	def get_processed_force_data(self, mode_just_changed=False):
+		"""
+		Get processed force data using simplified approach
+		"""
+		return self.simplified_force_processor.process_runtime_force(
+			self.sensors, 
+			self.touchNames, 
+			self.in_interaction_mode,
+			mode_just_changed=mode_just_changed
+			)
 
-	def normalize_force_data_realtime(self, force_data, finger_names=None, max_forces_per_finger=None):  # ← ADD THIS METHOD INSIDE THE CLASS
+	def update_interaction_mode(self, force_data, current_time):
 		"""
-		Normalize force data to [0, 1] range using the same normalization as training.
+		Handle mode switching with proper hysteresis and debouncing
+		
+		Args:
+			force_data: dict from get_processed_force_data()
+			current_time: current timestamp
+			
+		Returns:
+			bool: True if mode changed
 		"""
-		if max_forces_per_finger is None:
-			max_forces_per_finger = {
-				'index': 12.0, 'middle': 12.0, 'ring': 12.0, 
-				'pinky': 12.0, 'thumb': 12.0    
-			}
+		total_force = force_data['total_force']
+		mode_changed = False
 		
-		if finger_names is None:
-			finger_names = ['index', 'middle', 'ring', 'pinky', 'thumb']
+		if not self.in_interaction_mode:
+			# Try to enter interaction mode
+			if total_force >= self.ENTER_THRESHOLD:
+				if self.enter_timer is None:
+					self.enter_timer = current_time
+					print(f"Enter timer started: force={total_force:.3f}N")
+				elif (current_time - self.enter_timer) >= self.ENTER_DEBOUNCE:
+					# Transition to interaction mode
+					self.in_interaction_mode = True
+					self.enter_timer = None
+					self.exit_timer = None
+					self.blend_start_time = current_time
+					mode_changed = True
+					print(f"→ INTERACTION MODE (force: {total_force:.3f}N)")
+			else:
+				# Reset enter timer if force drops
+				if self.enter_timer is not None:
+					print(f"Enter timer reset: force={total_force:.3f}N")
+				self.enter_timer = None
 		
-		normalized_force = np.copy(force_data)
+		else:
+			# Try to exit interaction mode  
+			if total_force <= self.EXIT_THRESHOLD:
+				if self.exit_timer is None:
+					self.exit_timer = current_time
+					print(f"Exit timer started: force={total_force:.3f}N")
+				elif (current_time - self.exit_timer) >= self.EXIT_DEBOUNCE:
+					# Transition to free space mode
+					self.in_interaction_mode = False
+					self.exit_timer = None
+					self.enter_timer = None
+					self.blend_start_time = current_time
+					mode_changed = True
+					print(f"→ FREE SPACE MODE (force: {total_force:.3f}N)")
+			else:
+				# Reset exit timer if force rises
+				if self.exit_timer is not None:
+					print(f"Exit timer reset: force={total_force:.3f}N")
+				self.exit_timer = None
 		
-		for finger_idx, finger_name in enumerate(finger_names):
-			max_force = max_forces_per_finger[finger_name]
-			normalized_force[finger_idx] = np.clip(force_data[finger_idx] / max_force, 0, 1)
+		return mode_changed
+
+	def blend_controller_commands(self, cmd_free, cmd_interaction, current_time):
+		"""
+		Blend between controller commands during transitions
 		
-		return normalized_force
+		Args:
+			cmd_free: free space controller command
+			cmd_interaction: interaction controller command  
+			current_time: current timestamp
+			
+		Returns:
+			blended command
+		"""
+		if self.blend_start_time is None:
+			# No active blend - use current mode
+			return cmd_interaction if self.in_interaction_mode else cmd_free
+		
+		# Calculate blend factor
+		blend_elapsed = current_time - self.blend_start_time
+		if blend_elapsed >= self.blend_duration:
+			# Blend complete
+			self.blend_start_time = None
+			return cmd_interaction if self.in_interaction_mode else cmd_free
+		
+		# Active blending
+		alpha = np.clip(blend_elapsed / self.blend_duration, 0.0, 1.0)
+		
+		if self.in_interaction_mode:
+			# Blending TO interaction mode
+			cmd = (1 - alpha) * np.array(cmd_free) + alpha * np.array(cmd_interaction)
+		else:
+			# Blending TO free space mode  
+			cmd = alpha * np.array(cmd_free) + (1 - alpha) * np.array(cmd_interaction)
+		
+		return cmd
+
+	def reset_force_drift_baseline(self):
+		"""
+		Reset the drift baseline (call this when you want to recalibrate)
+		"""
+		for buffer in self.simplified_force_processor.drift_buffers:
+			buffer.clear()
+		self.simplified_force_processor.current_drift = np.zeros(5)
+		print("Force drift baseline reset")
 
 	# Run the neural net at self.Hz, allowing faster command interpolation to be sent to the arm
 	def runNetForward(self, free_space_controller, interaction_controller):
-		T = time.time()
-		self.NetCom = self.getCurPos()
-
-		ENTER_FORCE_THRESHOLD = 0.5
-		EXIT_FORCE_THRESHOLD = 1.0
-		INTERACTION_MODE_DEBOUNCE_TIME = 0.1  # seconds
-
-		self.in_interaction_mode = False
-		exit_mode_start_time = None
-
+		"""
+		Simplified neural network control loop using the new force processor
+		"""
+		import time
+		
+		# Initialize timing
 		target_period = 1.0 / self.Hz  # 1/60 = 0.0167 seconds
+		last_time = time.monotonic()
+		
 		print(f"Controller target: {self.Hz}Hz ({target_period*1000:.1f}ms)")
-
+		print("Using simplified force processing approach")
+		
+		# Initialize state
+		self.NetCom = np.array(self.getCurPos())
+		previous_mode = False # Tracking previous mode
+		
+		# Cached commands for blending
+		cached_fs_command = None
+		cached_int_command = None
+		
+		# Debug counters
+		loop_count = 0
+		slow_loop_count = 0
+		
 		while not self.exitEvent.is_set():
-			loop_start = time.time() 
-
-			# 1. Get raw force data and sum per finger FIRST
-			all_raw_forces = self.get_all_raw_force_data()
-			raw_force_per_finger = self.sum_forces_per_finger(all_raw_forces)
-
-			# 2. Apply simplified filtering pipeline (5 filters only!)
-			filtered_force_per_finger = self.adaptive_force_filter.process_finger_forces(raw_force_per_finger)
-
-			# 3. Use filtered data for mode detection
-			max_finger_force = np.max(filtered_force_per_finger)
-
-			# 4. Normalize filtered forces for controller input
-			normalized_force_data = self.normalize_force_data_realtime(filtered_force_per_finger)
-
-			#####################################################################################
-			############### DEBUG output every 60 frames (1 second)
-			if not hasattr(self, '_filter_debug_counter'):
-				self._filter_debug_counter = 0
-			self._filter_debug_counter += 1
-
-			if self._filter_debug_counter % 120 == 0:
-				debug_info = self.adaptive_force_filter.get_debug_info()
-				print(f"Filter Debug - Contact duration: {debug_info['no_contact_duration']:.1f}s, "
-					f"Baseline samples: {debug_info['num_baseline_samples']}, "
-					f"Max force: {max_finger_force:.3f}N")
-			#####################################################################################
-
-			current_time = time.time()
-
-			# Force detection logic
-			if not self.in_interaction_mode:
-				if max_finger_force > ENTER_FORCE_THRESHOLD:
-					self.in_interaction_mode = True
-					exit_mode_start_time = None
-					print("Entered interaction mode")
-			else:
-				if max_finger_force < EXIT_FORCE_THRESHOLD:
-					if exit_mode_start_time is None:
-						exit_mode_start_time = current_time
-					elif (current_time - exit_mode_start_time) > INTERACTION_MODE_DEBOUNCE_TIME:
-						self.in_interaction_mode = False
-						exit_mode_start_time = None
-						print("Exited interaction mode")
-				else:
-					exit_mode_start_time = None
-
-			# Run the model
-			self.lastposCom = self.NetCom
-			if self.in_interaction_mode:
-				posCom = interaction_controller.runModel(force_data=normalized_force_data)
-			else:
-				posCom = free_space_controller.runModel()
-
-			self.NetCom = np.asarray(self.lowpassCommands.filter(np.asarray([posCom]).T).T[0])
-
-			# FIXED: Proper timing control
-			processing_time = time.time() - loop_start
-			sleep_time = target_period - processing_time
+			loop_start = time.monotonic()
 			
-			if sleep_time > 0:
-				time.sleep(sleep_time)
-			# Optional: warn if running slow
-			elif processing_time > target_period * 1.5:  # Only warn if significantly slow
-				print(f"Slow loop: {processing_time*1000:.1f}ms > {target_period*1000:.1f}ms")
+			try:
+				# 1. TIMING MANAGEMENT
+				now = time.monotonic()
+				dt = now - last_time
+				dt = min(max(dt, 0.004), 0.020)  # Clamp to 50-250 Hz
+				last_time = now
+				
+				# 2. Detecting mode changes
+				mode_just_changed = (self.in_interaction_mode != previous_mode)
+				if mode_just_changed:
+					mode_str = "INTERACTION" if self.in_interaction_mode else "FREE_SPACE"
+					print(f"Mode change: {mode_str}")
 
+				# 3. Force data processing (with zeroing)
+				force_data = self.simplified_force_processor.process_runtime_force(
+					self.sensors,
+					self.touchNames,
+					self.in_interaction_mode,
+					mode_just_changed=mode_just_changed
+				)
+
+
+				# 4. MODE SWITCHING
+				if not mode_just_changed:
+					mode_changed = self.update_interaction_mode(force_data, now)
+				
+				# 5. CONTROLLER EXECUTION
+				try:
+					if self.in_interaction_mode:
+						# Use force data for interaction controller
+						normalized_forces = force_data['normalized']
+						cmd_interaction = interaction_controller.runModel(force_data=normalized_forces)
+						cmd_free = cached_fs_command if cached_fs_command is not None else self.NetCom
+					else:
+						# Free space controller (EMG only) - forces are automatically 0
+						cmd_free = free_space_controller.runModel()
+						cmd_interaction = cached_int_command if cached_int_command is not None else self.NetCom
+					
+					# Cache commands for smooth transitions
+					if self.in_interaction_mode:
+						cached_int_command = cmd_interaction.copy() if hasattr(cmd_interaction, 'copy') else cmd_interaction
+					else:
+						cached_fs_command = cmd_free.copy() if hasattr(cmd_free, 'copy') else cmd_free
+					
+				except Exception as e:
+					print(f"Controller error: {e}")
+					# Safe fallback - hold current position
+					cmd_free = self.NetCom
+					cmd_interaction = self.NetCom
+				
+				# 6. COMMAND BLENDING
+				blended_command = self.blend_controller_commands(cmd_free, cmd_interaction, now)
+				
+				# 6. SAFETY CHECKS AND CLAMPING
+				posCom = np.asarray(blended_command, dtype=float)
+				
+				# Validate command
+				if not np.isfinite(posCom).all():
+					print("ERROR: Command contains NaN/inf - using safe fallback")
+					posCom = self.NetCom  # Hold current position
+				
+				# Joint limit clamping
+				mins = np.array([self.jointRoM[j][0] for j in self.jointNames], dtype=float)
+				maxs = np.array([self.jointRoM[j][1] for j in self.jointNames], dtype=float)
+				posCom = np.clip(posCom, mins, maxs)
+				
+				# Rate limiting 
+				if hasattr(self, 'lastPosCom') and self.lastPosCom is not None:
+					max_change_per_step = 2.0  # degrees per timestep (adjust as needed)
+					change = posCom - self.lastPosCom
+					change = np.clip(change, -max_change_per_step, max_change_per_step)
+					posCom = self.lastPosCom + change
+				
+				# APPLY COMMAND FILTERING
+				self.NetCom = np.asarray(self.lowpassCommands.filter(np.asarray([posCom]).T).T[0])
+				self.lastPosCom = posCom
+
+				# update mode tracking
+				previous_mode = self.in_interaction_mode
+				
+				# DEBUG OUTPUT (every 2 seconds)
+				loop_count += 1
+				if loop_count % (2 * self.Hz) == 0:
+					mode_str = "INTERACTION" if self.in_interaction_mode else "FREE_SPACE"
+					total_force = force_data['total_force']
+					drift_info = force_data['current_drift']
+					print(f"Mode: {mode_str} | Force: {total_force:.3f}N | "
+						f"Drift: [{drift_info[0]:.2f}, {drift_info[1]:.2f}, ...] | "
+						f"Loops: {loop_count} | Slow: {slow_loop_count}")
+				
+				# TIMING CONTROL with monitoring
+				processing_time = time.monotonic() - loop_start
+				sleep_time = target_period - processing_time
+				
+				if sleep_time > 0:
+					time.sleep(sleep_time)
+				elif processing_time > target_period * 1.5:
+					slow_loop_count += 1
+					if slow_loop_count % 10 == 1:  # No spam
+						print(f"SLOW LOOP: {processing_time*1000:.1f}ms > {target_period*1000:.1f}ms")
+				
+			except Exception as e:
+				print(f"CRITICAL ERROR in control loop: {e}")
+				# Emergency safe state
+				self.NetCom = np.array(self.getCurPos())
+				time.sleep(target_period)
+			
 			if self.exitEvent.is_set():
 				break
+		
+		print("Neural network control loop exited")
+
 # 	def runNetForward(self, free_space_controller, interaction_controller):
 # 		T = time.time()
 # 		self.NetCom = self.getCurPos()
