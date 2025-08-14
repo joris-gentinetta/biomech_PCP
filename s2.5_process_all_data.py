@@ -22,6 +22,19 @@ def get_used_channels_from_snr(scaling_yaml_path, snr_threshold=5.0):
     print(f"Selected used channels (SNR > {snr_threshold}): {used_channels}")
     return used_channels
 
+def should_scale_based_on_drift(emg_ts, ang_ts, max_rel_drift=0.02):
+    """
+    Return True only if durations differ by <= max_rel_drift (default 2%).
+    Otherwise, treat the mismatch as a start/stop offset (no scaling).
+    """
+    emg_dur = float(emg_ts[-1] - emg_ts[0])
+    ang_dur = float(ang_ts[-1] - ang_ts[0])
+    if emg_dur <= 0 or ang_dur <= 0:
+        return False
+    rel = abs(emg_dur - ang_dur) / max(ang_dur, 1e-9)
+    print(f"Duration check → EMG: {emg_dur:.3f}s, Angles: {ang_dur:.3f}s, rel diff: {rel*100:.2f}%")
+    return rel <= max_rel_drift
+
 def is_interaction_experiment(movement_name):
     """Check if this is a force interaction experiment."""
     return "_interaction" in movement_name.lower()
@@ -484,27 +497,124 @@ def warp_emg_timestamps(emg_ts, ang_ts):
     emg_ts_warped = emg_ts * slope + intercept
     return emg_ts_warped
 
-def end_align_data(emg_data, emg_timestamps, angles_data, angles_timestamps):
+def end_align_emg_to_angles(
+    emg_data: np.ndarray,
+    emg_ts: np.ndarray,
+    angles_data: np.ndarray,
+    angles_ts: np.ndarray,
+    keep_negative: bool = True,
+):
     """
-    End-align EMG to angles by shifting EMG timestamps so both datasets end at the same time.
-    Returns the aligned and cropped data.
-    """
-    # Calculate shift needed to align end times
-    shift = emg_timestamps[-1] - angles_timestamps[-1]
-    emg_timestamps_shifted = emg_timestamps - shift
-    
-    # Mask for EMG samples that overlap with angles timespan
-    mask = (emg_timestamps_shifted >= angles_timestamps[0]) & (emg_timestamps_shifted <= angles_timestamps[-1])
-    
-    # Apply mask to get overlapping data
-    emg_aligned = emg_data[:, mask] if emg_data.ndim == 2 else emg_data[mask]
-    emg_timestamps_aligned = emg_timestamps_shifted[mask]
+    End-align EMG to angles by shifting EMG timestamps so *ends* coincide.
 
-    # emg_ts_warped = warp_emg_timestamps(emg_timestamps_aligned, angles_timestamps)
-    
-    print(f"End-alignment: shifted EMG by {shift:.6f}s, kept {np.sum(mask)}/{len(mask)} EMG samples")
-    
-    return emg_aligned, emg_timestamps_aligned, angles_data, angles_timestamps
+    Example:
+      - emg_ts spans ~0..11.05s
+      - angles_ts spans ~0..5.39s
+      After end-alignment:
+        emg_ts' spans ~(-5.66)..5.39s (if keep_negative=True)
+        or it's cropped to 0..5.39s (if keep_negative=False)
+
+    Args:
+        emg_data:    (C, N) or (N,) EMG array
+        emg_ts:      (N,) EMG timestamps (seconds, increasing)
+        angles_data: (T, F) or (T,) angles/forces array
+        angles_ts:   (T,) angle timestamps (seconds, increasing)
+        keep_negative:
+            True  -> keep the leading negative portion of EMG after shifting
+            False -> immediately crop EMG to the overlap [angles_ts[0], angles_ts[-1]]
+
+    Returns:
+        emg_aligned:          EMG data after shift (and optional crop)
+        emg_ts_aligned:       shifted EMG timestamps
+        angles_data_unchanged (or cropped if keep_negative=False to the same overlap)
+        angles_ts_unchanged   (or cropped if keep_negative=False to the same overlap)
+        shift_seconds:        float, how much EMG was shifted (emg_end - angles_end)
+    """
+    emg_ts = np.asarray(emg_ts).astype(float)
+    angles_ts = np.asarray(angles_ts).astype(float)
+
+    # --- sanity ---
+    assert emg_ts.ndim == 1 and angles_ts.ndim == 1, "timestamps must be 1D"
+    assert np.all(np.diff(emg_ts) > 0), "EMG timestamps must be strictly increasing"
+    assert np.all(np.diff(angles_ts) > 0), "Angle timestamps must be strictly increasing"
+
+    # durations
+    emg_dur = emg_ts[-1] - emg_ts[0]
+    ang_dur = angles_ts[-1] - angles_ts[0]
+    print(f"\n=== End-Aligning by Tail ===")
+    print(f"EMG duration:   {emg_dur:.3f}s")
+    print(f"Angles duration:{ang_dur:.3f}s")
+
+    # shift so the *ends* match
+    shift = emg_ts[-1] - angles_ts[-1]
+    emg_ts_shifted = emg_ts - shift
+    print(f"Applied shift: {shift:+.6f}s (EMG end → {angles_ts[-1]:.3f}s)")
+    print(f"Shifted EMG time span: {emg_ts_shifted[0]:.3f}s … {emg_ts_shifted[-1]:.3f}s")
+
+    # Build masks
+    if keep_negative:
+        # keep everything up to the common end; drop only EMG that now lies *after* the angles end
+        e_mask = (emg_ts_shifted <= angles_ts[-1])
+        a_mask = slice(None)  # keep all angles for now
+    else:
+        # immediately crop to the strict overlap window
+        start = max(angles_ts[0], emg_ts_shifted[0])
+        end   = min(angles_ts[-1], emg_ts_shifted[-1])
+        e_mask = (emg_ts_shifted >= start) & (emg_ts_shifted <= end)
+        a_mask = (angles_ts      >= start) & (angles_ts      <= end)
+
+    # Apply masks
+    if emg_data.ndim == 2:
+        emg_aligned = emg_data[:, e_mask]
+    else:
+        emg_aligned = emg_data[e_mask]
+    emg_ts_aligned = emg_ts_shifted[e_mask]
+
+    if keep_negative:
+        angles_data_out = angles_data
+        angles_ts_out   = angles_ts
+    else:
+        angles_data_out = angles_data[a_mask, ...] if angles_data.ndim >= 2 else angles_data[a_mask]
+        angles_ts_out   = angles_ts[a_mask]
+
+    # Reporting
+    emg_fs_est = (len(emg_ts_aligned) - 1) / (emg_ts_aligned[-1] - emg_ts_aligned[0]) if len(emg_ts_aligned) > 1 else float("nan")
+    ang_fs_est = (len(angles_ts_out)   - 1) / (angles_ts_out[-1]   - angles_ts_out[0])   if len(angles_ts_out)   > 1 else float("nan")
+    print(f"Kept {np.count_nonzero(e_mask)}/{len(emg_ts)} EMG samples")
+    print(f"EMG fs ≈ {emg_fs_est:.1f} Hz | Angles fs ≈ {ang_fs_est:.1f} Hz")
+
+    if keep_negative:
+        print("Note: negative EMG times are preserved (you can trim them in the next step).")
+    else:
+        print("Cropped both sides to strict overlap window.")
+
+    return emg_aligned, emg_ts_aligned, angles_data_out, angles_ts_out, float(shift)
+
+
+def trim_to_overlap_window(
+    emg_data: np.ndarray,
+    emg_ts: np.ndarray,
+    angles_data: np.ndarray,
+    angles_ts: np.ndarray,
+):
+    """
+    If you ran end_align_emg_to_angles(..., keep_negative=True), call this next to
+    drop the negative EMG times and crop both signals to the strict overlap.
+    """
+    start = max(angles_ts[0], emg_ts[0])
+    end   = min(angles_ts[-1], emg_ts[-1])
+
+    e_mask = (emg_ts    >= start) & (emg_ts    <= end)
+    a_mask = (angles_ts >= start) & (angles_ts <= end)
+
+    emg_out    = emg_data[:, e_mask] if emg_data.ndim == 2 else emg_data[e_mask]
+    emg_ts_out = emg_ts[e_mask]
+    ang_out    = angles_data[a_mask, ...] if angles_data.ndim >= 2 else angles_data[a_mask]
+    ang_ts_out = angles_ts[a_mask]
+
+    print(f"Trimmed to overlap: {start:.3f}s … {end:.3f}s "
+          f"({end-start:.3f}s, EMG {e_mask.sum()} samples, Angles {a_mask.sum()} samples)")
+    return emg_out, emg_ts_out, ang_out, ang_ts_out
 
 def process_emg_zero_phase(emg_data, sampling_freq, maxVals, noiseLevel):
     """
@@ -600,7 +710,7 @@ def process_emg_and_angles(
         angles_timestamps_file='angle_timestamps.npy',
         angle_filter_cutoff=5.0,
         force_filter_cutoff=2.0,
-        use_timestamp_scaling=True,  # New parameter to enable/disable scaling
+        use_timestamp_scaling=False,  # New parameter to enable/disable scaling
         angle_shift_seconds=0.0,
     ):
     # Load the data
@@ -608,7 +718,7 @@ def process_emg_and_angles(
     emg_timestamps = np.load(os.path.join(data_dir, emg_timestamps_file))
     angles = np.load(os.path.join(data_dir, angles_file))
     angles_timestamps = np.load(os.path.join(data_dir, angles_timestamps_file))
-    
+
     print(f"Loaded data from {data_dir}")
 
     # Load experiment config and calculate contact detection offset
@@ -624,9 +734,9 @@ def process_emg_and_angles(
             )
         if total_duration is None:
             total_duration = float(angles_timestamps[-1] - angles_timestamps[0])
-        contact_offset = total_duration - duration
+        contact_offset = total_duration - duration 
         # Cap at 10s, adding 0.7 bc. after contact PID increases force to abrupt - first 0.7s not represented in emg data
-        contact_offset = max(0.0, min(float(total_duration) - duration + 0.7, 10.0))
+        contact_offset = max(0.0, min(float(total_duration) - duration + 1.0, 10.0))
         print(f"Trimming pre-contact data: Removing first {contact_offset:.3f}s")
 
         # Apply trim only if positive
@@ -690,28 +800,34 @@ def process_emg_and_angles(
         else:
             print("Force data processing skipped for unknown reason")
 
-    # TIMESTAMP SCALING - Apply before end-alignment
-    if use_timestamp_scaling:
-        print("\n=== Applying Timestamp Scaling ===")
-        # Save original timestamps for reference
-        original_emg_timestamps = emg_timestamps.copy()
-        
-        # Scale EMG timestamps to match angle duration
-        emg_timestamps = scale_emg_timestamps_to_match_angles(emg_timestamps, angles_timestamps)
-        
-        # Save both original and scaled timestamps for debugging
-        np.save(os.path.join(data_dir, 'emg_timestamps_original.npy'), original_emg_timestamps)
-        np.save(os.path.join(data_dir, 'emg_timestamps_scaled.npy'), emg_timestamps)
-        
-        print("✓ Timestamp scaling applied and saved")
-    else:
-        print("Timestamp scaling disabled - using original timestamps")
 
     # END-ALIGN the data (now using scaled timestamps if enabled)
     print("\n=== Applying End-Alignment ===")
-    emg, emg_timestamps, angles, angles_timestamps = end_align_data(
-        emg, emg_timestamps, angles, angles_timestamps
+    # Step 1: End-align by shifting EMG timestamps so ends match, keep negative portion
+    emg_shifted, emg_timestamps_shifted, angles, angles_timestamps, shift_applied = end_align_emg_to_angles(
+        emg, emg_timestamps, angles, angles_timestamps, keep_negative=True
     )
+
+    # Step 2: Trim to overlap window (removes negative EMG times)
+    emg, emg_timestamps, angles, angles_timestamps = trim_to_overlap_window(
+        emg_shifted, emg_timestamps_shifted, angles, angles_timestamps
+    )
+
+    print(f"End-alignment complete: EMG shifted by {shift_applied:.6f}s")
+
+
+    if use_timestamp_scaling:
+        if should_scale_based_on_drift(emg_timestamps, angles_timestamps, max_rel_drift=0.02):
+            print("\n=== Applying Timestamp Scaling (small drift only, post end-align) ===")
+            emg_ts_before = emg_timestamps.copy()
+            emg_timestamps = scale_emg_timestamps_to_match_angles(emg_timestamps, angles_timestamps)
+            np.save(os.path.join(data_dir, 'emg_timestamps_after_endalign.npy'), emg_ts_before)
+            np.save(os.path.join(data_dir, 'emg_timestamps_rescaled.npy'), emg_timestamps)
+            print("✓ Timestamp scaling applied and saved")
+        else:
+            print("\nTimestamp scaling requested but skipped: looks like start/stop offset, not drift.")
+    else:
+        print("Timestamp scaling disabled - using original timestamps")
 
     # Load calibration data
     scaling_yaml_path = os.path.join(
@@ -733,6 +849,19 @@ def process_emg_and_angles(
     
     # Use zero-phase filtering for EMG
     filtered_emg = process_emg_zero_phase(emg, sf, maxVals, noiseLevel)
+
+    # Cut EMG filter artifacts (critical for zero-phase filters)
+    emg_artifact_cut_samples = int(5 * sf / 3) + int(0.5 * sf)  # 5 periods of 3Hz + 0.5s safety
+    emg_artifact_cut_seconds = emg_artifact_cut_samples / sf
+
+    print(f"Cutting EMG filter artifacts: {emg_artifact_cut_samples} samples ({emg_artifact_cut_seconds:.2f}s)")
+
+    if emg_artifact_cut_samples < filtered_emg.shape[1]:
+        filtered_emg = filtered_emg[:, emg_artifact_cut_samples:]
+        emg_timestamps = emg_timestamps[emg_artifact_cut_samples:]
+        print(f"EMG after artifact cut: {filtered_emg.shape}")
+    else:
+        print(f"Warning: EMG data too short for artifact cut ({filtered_emg.shape[1]} samples available)")
 
     # Process angles
     angle_sf = (len(angles_timestamps) - 1) / (angles_timestamps[-1] - angles_timestamps[0])
@@ -756,16 +885,43 @@ def process_emg_and_angles(
 
     # Continue with the rest of existing processing...
     # Use angle timestamps as reference (EMG interpolated onto angle time base)
-    ref_t = angles_timestamps
-    aligned_angles = filtered_angles
-    aligned_emg = np.zeros((len(ref_t), filtered_emg.shape[0]))
-    for ch in range(filtered_emg.shape[0]):
-        aligned_emg[:, ch] = np.interp(ref_t, emg_timestamps, filtered_emg[ch, :])
+    # Find overlapping time period
+    angle_start = angles_timestamps[0]
+    angle_end = angles_timestamps[-1]
+    emg_start = emg_timestamps[0] 
+    emg_end = emg_timestamps[-1]
+
+    overlap_start = max(angle_start, emg_start)
+    overlap_end = min(angle_end, emg_end)
+
+    print(f"Time overlap analysis:")
+    print(f"  Angles: {angle_start:.2f}s to {angle_end:.2f}s ({angle_end-angle_start:.2f}s duration)")
+    print(f"  EMG: {emg_start:.2f}s to {emg_end:.2f}s ({emg_end-emg_start:.2f}s duration)")
+    print(f"  Overlap: {overlap_start:.2f}s to {overlap_end:.2f}s ({overlap_end-overlap_start:.2f}s duration)")
+
+    # Trim angle data to overlap period
+    angle_mask = (angles_timestamps >= overlap_start) & (angles_timestamps <= overlap_end)
+    ref_t = angles_timestamps[angle_mask]
+    aligned_angles = filtered_angles[angle_mask, :]
+
+    # Trim EMG data to overlap period BEFORE interpolation
+    emg_mask = (emg_timestamps >= overlap_start) & (emg_timestamps <= overlap_end)
+    trimmed_emg_timestamps = emg_timestamps[emg_mask]
+    trimmed_filtered_emg = filtered_emg[:, emg_mask]
+
+    print(f"After trimming:")
+    print(f"  Angles: {len(ref_t)} samples")
+    print(f"  EMG: {trimmed_filtered_emg.shape[1]} samples")
+
+    # Now interpolate the TRIMMED EMG onto angle timebase
+    aligned_emg = np.zeros((len(ref_t), trimmed_filtered_emg.shape[0]))
+    for ch in range(trimmed_filtered_emg.shape[0]):
+        aligned_emg[:, ch] = np.interp(ref_t, trimmed_emg_timestamps, trimmed_filtered_emg[ch, :])
 
     # Align force data if available
     aligned_force = None
     if filtered_force is not None:
-        aligned_force = filtered_force  # Force data is already on angle timebase
+        aligned_force = filtered_force[angle_mask, :] 
 
     # Downsample to 60Hz using windowed integration (like EMGClass)
     current_sf = (len(ref_t) - 1) / (ref_t[-1] - ref_t[0])  # Current sampling frequency
@@ -788,7 +944,7 @@ def process_emg_and_angles(
     print(f"Final sampling frequency: {final_sf:.1f} Hz")
     print(f"Final data length: {len(downsampled_t)} samples")
 
-    if angle_shift_seconds > 0:
+    if angle_shift_seconds > 0 and not is_interaction:
         print(f"\n=== Applying Time Shift: {angle_shift_seconds}s ===")
         shift_samples = int(angle_shift_seconds * final_sf)
         if shift_samples >= len(emg_60Hz):
@@ -856,11 +1012,12 @@ def process_emg_and_angles(
     if force_60Hz is not None:
         print(f"Final force samples: {len(force_60Hz)}")
     print(f"Final duration: {downsampled_t[-1]:.2f}s")
-    if angle_shift_seconds > 0:
+    if angle_shift_seconds > 0 and not is_interaction:
         print(f"Time shift applied: {angle_shift_seconds}s (EMG predicts angles {angle_shift_seconds}s into the future)")
-    
+    elif angle_shift_seconds > 0 and is_interaction:
+        print(f"Time shift skipped for interaction experiment (real-time alignment)")
 
-def process_all_experiments(person_id, out_root, movement=None, snr_threshold=3.0, hand_side='left', use_timestamp_scaling=True, angle_shift_seconds=0.0):
+def process_all_experiments(person_id, out_root, movement=None, snr_threshold=3.0, hand_side='left', use_timestamp_scaling=False, angle_shift_seconds=0.0):
     recordings_dir = os.path.join(out_root, person_id, "recordings")
     if not os.path.exists(recordings_dir):
         print(f"No such directory: {recordings_dir}")
@@ -934,7 +1091,7 @@ if __name__ == "__main__":
     parser.add_argument('--force_filter_cutoff', type=float, default=2.0, help='Force filter cutoff frequency in Hz (default: 2.0)')
     args = parser.parse_args()
 
-    use_timestamp_scaling = not args.no_timestamp_scaling  # Default is True unless --no_timestamp_scaling is specified
+    use_timestamp_scaling = not args.no_timestamp_scaling  
     
     process_all_experiments(
         args.person_id, 
