@@ -16,6 +16,46 @@ from helpers.predict_utils import Config, get_data, train_model, rescale_data, e
 from helpers.models import TimeSeriesRegressorWrapper
 from helpers.predict_utils import SimplifiedEnhancedTSDataset, TSDataLoader, EarlyStopper
 
+def get_all_experiment_dirs(person_dir, recordings):
+    """
+    Automatically find and return all experiment directories for given recordings.
+    """
+    import os
+    from os.path import join
+    
+    all_data_dirs = []
+    
+    for recording in recordings:
+        experiments_base_dir = join('data', person_dir, 'recordings', recording, 'experiments')
+        
+        if not os.path.exists(experiments_base_dir):
+            print(f"Warning: Experiments directory not found: {experiments_base_dir}")
+            continue
+            
+        # Find all experiment folders
+        experiment_folders = []
+        for item in os.listdir(experiments_base_dir):
+            item_path = join(experiments_base_dir, item)
+            if os.path.isdir(item_path):
+                experiment_folders.append(item)
+        
+        # Sort to ensure consistent order
+        experiment_folders.sort(key=lambda x: int(x) if x.isdigit() else float('inf'))
+        
+        # Add each experiment directory
+        for exp_folder in experiment_folders:
+            exp_dir = join(experiments_base_dir, exp_folder)
+            # Verify the experiment has the required files
+            required_files = ['aligned_angles.parquet', 'aligned_filtered_emg.npy', 'aligned_timestamps.npy']
+            if all(os.path.exists(join(exp_dir, f)) for f in required_files):
+                all_data_dirs.append(exp_dir)
+                print(f"✓ Added experiment: {recording}/experiments/{exp_folder}")
+            else:
+                missing_files = [f for f in required_files if not os.path.exists(join(exp_dir, f))]
+                print(f"✗ Skipping {recording}/experiments/{exp_folder} - missing files: {missing_files}")
+    
+    return all_data_dirs
+
 def wandb_process(arguments):
     config = arguments['config']
     wandb.agent(arguments['sweep_id'],
@@ -153,14 +193,14 @@ if __name__ == '__main__':
         config = configs['free_space']
 
         # Build data directordies from config
-        data_dirs = [join('data', args.person_dir, 'recordings', recording, 'experiments', '1')
-                     for recording in config.recordings]
-        test_dirs = [join('data', args.person_dir, 'recordings', recording, 'experiments', '1')
-                     for recording in config.test_recordings] if config.test_recordings is not None else []
+        data_dirs = get_all_experiment_dirs(args.person_dir, config.recordings)
+        test_dirs = get_all_experiment_dirs(args.person_dir, config.test_recordings) if config.test_recordings is not None else []
         
         print(f"Free-space recordings: {config.recordings}")
         print(f"Input features: {len(config.features)} (EMG only)")
         print(f"Output targets: {len(config.targets)} (positions)")
+        print(f"Total training experiments: {len(data_dirs)}")
+        print(f"Total test experiments: {len(test_dirs)}")
 
         # Get free-space data
         trainsets, valsets, combined_sets, testsets = get_data(
@@ -210,14 +250,14 @@ if __name__ == '__main__':
 
         config = configs['interaction']
 
-        data_dirs = [join('data', args.person_dir, 'recordings', recording, 'experiments', '1') 
-                     for recording in config.recordings]
-        test_dirs = [join('data', args.person_dir, 'recordings', recording, 'experiments', '1') 
-                     for recording in config.test_recordings] if config.test_recordings is not None else []
+        data_dirs = get_all_experiment_dirs(args.person_dir, config.recordings)
+        test_dirs = get_all_experiment_dirs(args.person_dir, config.test_recordings) if config.test_recordings is not None else []
         
         print(f"Interaction recordings: {config.recordings}")
         print(f"Input features: {len(config.features)} (EMG + Force)")
         print(f"Output targets: {len(config.targets)} (positions)")
+        print(f"Total training experiments: {len(data_dirs)}")
+        print(f"Total test experiments: {len(test_dirs)}")
         
         # Get standard data first
         trainsets, valsets, combined_sets, testsets = get_data(
@@ -333,8 +373,7 @@ if __name__ == '__main__':
 
                             # Logging
                             test_recording_names = config.test_recordings if config.test_recordings is not None else []
-                            log = {f'val_loss/{(config.recordings + test_recording_names)[set_id]}': loss 
-                                   for set_id, loss in enumerate(val_losses)}
+                            log = {f'val_loss/datasets_{set_id}': loss for set_id, loss in enumerate(val_losses)}
                             log['total_val_loss'] = val_loss
                             log['total_test_loss'] = test_loss
                             log['train_loss'] = train_loss
