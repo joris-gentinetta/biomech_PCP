@@ -6,14 +6,18 @@ import threading
 import argparse
 import os
 import yaml
+from collections import deque
+import queue 
+import struct
+import zmq
 
 # Import the new GUI module
 try:
-    from force_control_gui import SimpleForceGUI, GUI_AVAILABLE
+    from helpers.force_control_gui import SimpleForceGUI, ThreadedForceGUI, GUI_AVAILABLE
 except ImportError:
     try:
         # If the module is in same directory, try direct import
-        from force_control_gui import SimpleForceGUI, GUI_AVAILABLE
+        from helpers.force_control_gui import SimpleForceGUI, ThreadedForceGUI, GUI_AVAILABLE
     except ImportError:
         print("Warning: Could not import force_control_gui module")
         GUI_AVAILABLE = False
@@ -83,6 +87,292 @@ def make_timestamps_unique(timestamps):
         if timestamps[i] <= timestamps[i - 1]:
             timestamps[i] = timestamps[i - 1] + 1e-6
     return timestamps
+
+
+class ControlThread(threading.Thread):
+    """High-frequency control loop running in separate thread (decoupled from GUI)."""
+
+    def __init__(
+        self,
+        arm,
+        controller,
+        force_timestamps,
+        force_trajectory,
+        data_queue,
+        stop_event,
+        control_frequency=100.0,
+    ):
+        super().__init__(name="control-loop", daemon=False)
+        self.arm = arm
+        self.controller = controller
+        self.force_timestamps = force_timestamps
+        self.force_trajectory = force_trajectory
+        self.data_queue = data_queue
+        self.stop_event = stop_event
+        self.control_frequency = control_frequency
+        self.dt = 1.0 / control_frequency
+
+        # Timing diagnostics
+        self.cycle_times = deque(maxlen=2000)
+        self.deadline_misses = 0
+        self.loop_cycles = 0
+        
+        # Data collection for saving later
+        self.experiment_data = {
+            'timestamps': [],
+            'target_forces': [],
+            'actual_forces': [],
+            'grip_positions': [],
+            'phases': [],
+            'force_errors': []
+        }
+
+    def _push_gui_sample(self, sample: dict):
+        try:
+            self.data_queue.put_nowait(sample)
+        except queue.Full:
+            pass  # Drop if GUI is behind
+
+    def _push_done(self, reason: str = "done"):
+        self._push_gui_sample({"done": True, "reason": reason, "t": time.perf_counter()})
+
+    def get_experiment_data(self):
+        """Return collected experiment data for saving"""
+        return self.experiment_data.copy()
+
+    def run(self):
+        print(f"Control thread starting at {self.control_frequency:.1f} Hz")
+        start_time = time.perf_counter()
+        next_cycle_time = start_time + self.dt
+        force_start_time = None
+
+        # Init controller + recording
+        self.controller.reset_controller()
+        self.controller.phase = "APPROACH"
+        self.arm.resetRecording()
+        self.arm.recording = True
+
+        # Send signal to main thread that ARM recording is ready
+        self._push_gui_sample({"arm_recording_ready": True, "t": time.perf_counter()})
+
+        try:
+            while not self.stop_event.is_set():
+                cycle_t0 = time.perf_counter()
+                t = cycle_t0 - start_time
+
+                # Control logic 
+                target_force = 0.0
+                current_force = self.controller.get_grip_force()
+                force_error = 0.0
+
+                if self.controller.phase == "APPROACH":
+                    if self.controller.approach_phase(self.dt):
+                        self.controller.phase = "FORCE_CONTROL"
+                        force_start_time = t
+                        print(f"CONTACT detected at {t:.2f}s - starting FORCE CONTROL")
+
+                elif self.controller.phase == "FORCE_CONTROL":
+                    if force_start_time is None:
+                        force_start_time = t
+                    tau = t - force_start_time
+
+                    if tau <= self.force_timestamps[-1]:
+                        target_force = np.interp(
+                            tau, self.force_timestamps, self.force_trajectory
+                        )
+                        current_force, force_error, pid_out = self.controller.force_control_phase(
+                            target_force, self.dt
+                        )
+                    else:
+                        print(f"Trajectory completed at {t:.2f}s")
+                        self.stop_event.set()
+                        self._push_done("trajectory_complete")
+                        break
+
+                # Command position to the hand
+                pos_cmd = self.controller.current_position.reshape(1, -1)
+                self.arm.mainControlLoop(posDes=pos_cmd, period=0.001, emg=None)
+
+                # Store data for saving (high frequency)
+                self.experiment_data['timestamps'].append(t)
+                self.experiment_data['target_forces'].append(float(target_force))
+                self.experiment_data['actual_forces'].append(float(current_force))
+                self.experiment_data['grip_positions'].append(self.controller.current_position.copy())
+                self.experiment_data['phases'].append(self.controller.phase)
+                self.experiment_data['force_errors'].append(float(force_error))
+
+                # Send to GUI (non-blocking)
+                self._push_gui_sample({
+                    "timestamp": t,
+                    "measured_force": float(current_force),
+                    "target_force": float(target_force),
+                    "force_error": float(force_error),
+                    "phase": self.controller.phase,
+                    "grip_position": self.controller.current_position.copy(),
+                })
+
+                # Timing
+                self.loop_cycles += 1
+                cycle_t1 = time.perf_counter()
+                dt_actual = cycle_t1 - cycle_t0
+                self.cycle_times.append(dt_actual)
+
+                # Precise scheduling
+                sleep_time = next_cycle_time - cycle_t1
+                if sleep_time > 0:
+                    if self.stop_event.wait(timeout=sleep_time):
+                        break
+                    next_cycle_time += self.dt
+                else:
+                    self.deadline_misses += 1
+                    missed = int(-sleep_time / self.dt) + 1
+                    next_cycle_time += missed * self.dt
+
+                # Diagnostics (every 5s)
+                if self.loop_cycles % int(self.control_frequency * 5) == 0:
+                    avg = float(np.mean(self.cycle_times)) if self.cycle_times else 0.0
+                    hz = (1.0 / avg) if avg > 0 else 0.0
+                    miss_rate = 100.0 * self.deadline_misses / max(1, self.loop_cycles)
+                    print(f"Control: {hz:.1f} Hz, misses: {miss_rate:.1f}%, phase: {self.controller.phase}")
+
+                # Safety timeout
+                if t > 300.0:
+                    print("Safety timeout reached")
+                    self.stop_event.set()
+                    self._push_done("timeout")
+                    break
+
+        except Exception as e:
+            print(f"[ControlThread] Exception: {e}")
+            self._push_done("exception")
+            self.stop_event.set()
+
+        finally:
+            self.arm.recording = False
+            if self.cycle_times:
+                avg = float(np.mean(self.cycle_times))
+                hz = (1.0 / avg) if avg > 0 else 0.0
+                print(f"Control thread finished. Final avg freq: {hz:.1f} Hz")
+            self._push_done("finished")
+
+
+def run_force_control_with_threaded_gui(arm, grip_name, duration, max_force, pattern, 
+                                       control_frequency, person_id, out_root, enable_emg=True):
+    """NEW threaded version of your GUI experiment"""
+    
+    if not GUI_AVAILABLE:
+        print("Error: GUI module not available")
+        return False
+    
+    grip_config = GRIP_CONFIGURATIONS[grip_name]
+    
+    print(f"\n=== Starting THREADED Force Control Experiment ===")
+    print(f"Control Loop: {control_frequency}Hz (dedicated thread)")
+    print(f"GUI Updates: 30Hz (Qt timer)")
+    print(f"This should achieve true {control_frequency}Hz control!")
+    
+    # Create thread-safe communication
+    control_to_gui_queue = queue.Queue(maxsize=500)
+    stop_control_event = threading.Event()
+    
+    # Generate force trajectory (same as before)
+    force_timestamps, force_trajectory = generate_force_trajectory(
+        duration, max_force, pattern, min_force=grip_config["min_force"], 
+        control_frequency=control_frequency
+    )
+    
+    # Initialize controller (same as before)
+    controller = SimpleAdaptiveGripController(arm, grip_config, control_frequency)
+    
+    # Move to neutral (same as before)
+    neutral_pos = np.array(grip_config["neutral_position"], dtype=np.float64)
+    arm.mainControlLoop(posDes=neutral_pos.reshape(1, -1), period=2, emg=None)
+    controller.current_position = neutral_pos.copy()
+    
+    # Initialize Qt Application (same as before)
+    from PyQt5.QtWidgets import QApplication
+    app = QApplication.instance()
+    if app is None:
+        app = QApplication(sys.argv)
+    
+    # Create control thread
+    control_thread = ControlThread(
+        arm=arm,
+        controller=controller,
+        force_timestamps=force_timestamps,
+        force_trajectory=force_trajectory,
+        data_queue=control_to_gui_queue,
+        stop_event=stop_control_event,
+        control_frequency=control_frequency
+    )
+    
+    # Create threaded GUI
+    gui = ThreadedForceGUI(
+        grip_name, duration, max_force, pattern, grip_config, 
+        control_to_gui_queue, control_thread, sampling_frequency=control_frequency
+    )
+    gui.show()
+    app.processEvents()
+    
+    input("\nPlace object in hand and press Enter to start THREADED experiment...")
+    
+    # Start EMG recording (same as before)
+    stop_emg_recording, start_emg_sync = start_emg_recording(enable_emg)
+    time.sleep(0.2)
+
+    print(f"Start control thread and GUI...")
+    control_thread.start()
+    
+    # Wait for arm recording to be ready, then sync emg
+    print("Waiting for arm recording to be ready...")
+    time.sleep(0.01)
+    start_emg_sync()
+    print("EMG sync triggered - both recordings now active")
+    
+    gui.start_updates()     # This starts the 30Hz GUI timer
+    
+    ########### DEBUG ################################################
+    print(f"GUI timer active after start: {gui.gui_timer.isActive()}")
+    print(f"GUI timer interval: {gui.gui_timer.interval()}")
+
+    try:
+        # Run Qt event loop on main thread (same as before)
+        app.exec_()
+    except KeyboardInterrupt:
+        print("\nExperiment interrupted")
+    finally:
+        # Clean shutdown
+        print("Shutting down...")
+        stop_control_event.set()  # Tell control thread to stop
+        gui.stop_updates()
+        
+        # Wait for control thread to finish
+        control_thread.join(timeout=5.0)
+        if control_thread.is_alive():
+            print("Warning: Control thread did not stop cleanly")
+        
+        # Stop EMG (same as before)
+        raw_emg_data, raw_emg_timestamps = stop_emg_recording()
+        
+        # Return to neutral (same as before)
+        neutral_pos = np.array(grip_config["neutral_position"], dtype=np.float64)
+        arm.mainControlLoop(posDes=neutral_pos.reshape(1, -1), period=2, emg=None)
+        
+        # Save data using the high-frequency data from control thread
+        experiment_data = control_thread.get_experiment_data()
+        if experiment_data and experiment_data['timestamps']:
+            print("Saving high-frequency experiment data...")
+            save_experiment_data(person_id, out_root, grip_name, experiment_data, 
+                                raw_emg_data, raw_emg_timestamps, arm, grip_config, 
+                                max_force, duration, pattern, control_frequency, enable_emg)
+            
+            # Analyze results
+            analyze_experiment_results(experiment_data, grip_config)
+        else:
+            print("No experiment data collected")
+    
+    print("Threaded experiment completed!")
+    return True
 
 class SimpleAdaptiveGripController:
     """Simplified controller for adaptive grip force control without GUI overhead"""
@@ -360,86 +650,139 @@ def generate_force_trajectory(duration, max_force, pattern, min_force=0.0, contr
 
 # Keep your existing start_emg_recording function
 def start_emg_recording(enable_emg=True):
-    """Start EMG recording in background thread if enabled"""
+    """Start EMG recording using direct connection to port 1236 for full 1kHz"""
     if not enable_emg:
         print("EMG recording disabled via --no_emg flag")
         def dummy_stop_recording():
-            return [], []  # Return empty EMG data
-        return dummy_stop_recording
-    
-    if not EMG_AVAILABLE:
-        print("EMG class not available. Skipping EMG recording.")
-        def dummy_stop_recording():
             return [], []
-        return dummy_stop_recording
+        def dummy_start_sync():
+            pass
+        return dummy_stop_recording, dummy_start_sync
+
+    # Connect to the RAW EMG stream (port 1236, not the processed 1235)
+    SOCKET_ADDR = "tcp://127.0.0.1:1236"
     
-    emg = EMG()
+    # Exact packet format from EMGStreamer.pack() - with explicit little-endian
+    FMT = "<BBBBIHH" + "f"*16 + "BBBB"
+    SIZE = struct.calcsize(FMT)
+    
+    print(f"EMG: Connecting to raw 1kHz stream at {SOCKET_ADDR}")
+
     raw_emg_data = []
     raw_emg_timestamps = []
-    recording_emg = True
     
+    # Threading controls
+    stop_event = threading.Event()
+    sync_event = threading.Event()
+
     def emg_capture_loop():
-        nonlocal recording_emg
         try:
-            print("Starting EMG communication...")
-            emg.startCommunication()
+            # Setup ZMQ connection
+            ctx = zmq.Context()
+            sock = ctx.socket(zmq.SUB)
+            sock.connect(SOCKET_ADDR)
+            sock.setsockopt_string(zmq.SUBSCRIBE, "")  # Subscribe to all
             
-            # Wait for first data
-            print("Waiting for first EMG data...")
-            timeout_counter = 0
-            while getattr(emg, 'OS_time', None) is None and timeout_counter < 100:
-                time.sleep(0.01)
-                timeout_counter += 1
+            # ZMQ socket options for robust high-frequency capture
+            sock.setsockopt(zmq.RCVHWM, 10000)     # Large buffer for brief hiccups
+            sock.setsockopt(zmq.LINGER, 0)         # Quick shutdown
+            sock.setsockopt(zmq.RCVTIMEO, 100)     # 100ms timeout
             
-            if getattr(emg, 'OS_time', None) is None:
-                print("WARNING: EMG not responding, continuing without EMG")
+            print("EMG: Connected to ZMQ, waiting for sync signal...")
+            
+            # Wait for sync signal before recording
+            while not sync_event.is_set() and not stop_event.is_set():
+                time.sleep(0.001)
+            
+            if stop_event.is_set():
+                sock.close()
+                ctx.term()
                 return
             
-            print("EMG data detected, starting recording...")
-            first_emg_time = emg.OS_time
-            last_time = emg.OS_time
+            print("EMG: Starting 1kHz capture...")
+            first_timestamp_us = None
+            samples_collected = 0
+            last_timestamp_us = None
             
-            while recording_emg:
+            while not stop_event.is_set():
                 try:
-                    time_sample = emg.OS_time
+                    # Receive packet (non-blocking with timeout)
+                    msg = sock.recv()
                     
-                    if (time_sample - last_time)/1e6 > 0.1:
-                        print(f'EMG Read time: {time_sample}, expected time: {last_time}')
-                        print('EMG alignment lost. Please restart the EMG board.')
-                        break
+                    # Validate packet size
+                    if len(msg) != SIZE:
+                        continue
                     
-                    elif time_sample > last_time:
-                        emg_sample = np.asarray(emg.rawEMG)
-                        raw_emg_data.append(list(emg_sample))
-                        raw_emg_timestamps.append((time_sample - first_emg_time) / 1e6)
+                    # Unpack the packet
+                    packet = struct.unpack(FMT, msg)
                     
-                    last_time = time_sample
-                    time.sleep(0.001)
+                    # Extract data (indices match the pack format)
+                    timestamp_us = packet[4]  # osTime_us (microseconds)
+                    emg_channels = packet[7:23]  # 16 EMG channels (floats)
+                    
+                    # Initialize timing on first packet
+                    if first_timestamp_us is None:
+                        first_timestamp_us = timestamp_us
+                        last_timestamp_us = timestamp_us
+                    
+                    # Check for duplicate timestamps
+                    if timestamp_us > last_timestamp_us:
+                        # Convert to relative time in seconds
+                        relative_time_s = (timestamp_us - first_timestamp_us) / 1e6
+                        
+                        # Store the data (emg_channels is already a tuple from slice)
+                        raw_emg_data.append(emg_channels)
+                        raw_emg_timestamps.append(relative_time_s)
+                        
+                        last_timestamp_us = timestamp_us
+                        samples_collected += 1
+                        
+                        # Progress report every 1000 samples
+                        if samples_collected % 1000 == 0:
+                            print(f"EMG: {samples_collected} samples, {relative_time_s:.1f}s elapsed")
+                
+                except zmq.Again:
+                    # Timeout - no packet received, continue
+                    continue
+                    
                 except Exception as e:
-                    print(f"EMG read error: {e}")
+                    print(f"EMG: Packet processing error: {e}")
                     break
-                    
+            
+            # Clean shutdown
+            sock.close()
+            ctx.term()
+            print(f"EMG: Recording stopped. Collected {samples_collected} samples")
+        
         except Exception as e:
-            print(f"EMG capture setup error: {e}")
-        finally:
-            try:
-                if hasattr(emg, 'exitEvent'):
-                    emg.exitEvent.set()
-                time.sleep(0.1)
-                print("EMG recording thread finished")
-            except:
-                pass
-    
+            print(f"EMG: Capture thread error: {e}")
+
+    # Start the capture thread
     emg_thread = threading.Thread(target=emg_capture_loop, daemon=True)
     emg_thread.start()
-    
+
+    def start_emg_sync():
+        """Signal the EMG capture to start recording (defines t=0)"""
+        print("EMG: Sync signal sent - starting 1kHz recording")
+        sync_event.set()
+
     def stop_recording():
-        nonlocal recording_emg
-        recording_emg = False
-        emg_thread.join(timeout=3.0)
+        """Stop EMG recording and return collected data"""
+        print("EMG: Stopping recording...")
+        stop_event.set()
+        emg_thread.join(timeout=5.0)
+        
+        print(f"EMG: Recording stopped cleanly. Final count: {len(raw_emg_data)} samples")
+
+        # Final statistics
+        if raw_emg_timestamps and len(raw_emg_timestamps) > 1:
+            duration = raw_emg_timestamps[-1] - raw_emg_timestamps[0]
+            mean_rate = len(raw_emg_timestamps) / duration if duration > 0 else 0
+            print(f"EMG: Duration {duration:.2f}s, rate {mean_rate:.1f}Hz")
+
         return raw_emg_data, raw_emg_timestamps
-    
-    return stop_recording
+
+    return stop_recording, start_emg_sync
 
 # Updated GUI function to use the new module
 def run_force_control_with_gui(arm, grip_name, duration, max_force, pattern, 
@@ -509,8 +852,8 @@ def run_force_control_with_gui(arm, grip_name, duration, max_force, pattern,
         print("Starting EMG recording...")
     else:
         print("Skipping EMG recording (disabled via --no_emg flag)")
-    stop_emg_recording = start_emg_recording(enable_emg)
-    time.sleep(0.5)
+    stop_emg_recording, start_emg_sync = start_emg_recording(enable_emg)
+    time.sleep(0.2)
     
     # Start experiment
     print("Starting experiment with enhanced GUI...")
@@ -520,11 +863,15 @@ def run_force_control_with_gui(arm, grip_name, duration, max_force, pattern,
     # Reset controller
     controller.reset_controller()
     controller.phase = "APPROACH"
-    
+
     # Start hand recording
     arm.resetRecording()
     arm.recording = True
     
+    # Short pause to ensure arm rec is ready
+    time.sleep(0.005)
+    start_emg_sync()
+
     # Data storage (same as original)
     experiment_data = {
         'timestamps': [],
@@ -730,9 +1077,17 @@ def run_force_control_experiment(arm, grip_name, duration, max_force, pattern,
         print("Starting EMG recording...")
     else:
         print("Skipping EMG recording (disabled via --no_emg flag)")
-    stop_emg_recording = start_emg_recording(enable_emg)
-    time.sleep(0.5)  # Give EMG time to initialize (or just a brief pause)
+    stop_emg_recording, start_emg_sync = start_emg_recording(enable_emg)
+    time.sleep(0.2)  # Give EMG time to initialize (or just a brief pause)
     
+    # Start hand recording
+    arm.resetRecording()
+    arm.recording = True
+    
+    time.sleep(0.005)  # Short pause to ensure arm rec is ready
+
+    start_emg_sync()  # Signal EMG to start recording at t=0
+
     # Start experiment
     print("Starting experiment...")
     experiment_start_time = time.time()
@@ -742,10 +1097,7 @@ def run_force_control_experiment(arm, grip_name, duration, max_force, pattern,
     controller.reset_controller()
     controller.phase = "APPROACH"
     
-    # Start hand recording
-    arm.resetRecording()
-    arm.recording = True
-    
+
     # Data storage
     experiment_data = {
         'timestamps': [],
@@ -1020,7 +1372,7 @@ def main():
     parser.add_argument("--grip", "-g", required=True, 
                         choices=list(GRIP_CONFIGURATIONS.keys()),
                         help="Grip type")
-    parser.add_argument("--duration", "-d", type=float, default=25.0,
+    parser.add_argument("--duration", "-d", type=float, default=10.0,
                         help="Experiment duration in seconds (default: 20)")
     parser.add_argument("--max_force", "-f", type=float, default=7.5,
                         help="Maximum trajectory force in Newtons (default: 6.0, will be clamped to grip max)")
@@ -1080,7 +1432,7 @@ def main():
     try:
         if args.gui:
             # Run with enhanced GUI
-            success = run_force_control_with_gui(
+            success = run_force_control_with_threaded_gui(
                 arm=arm,
                 grip_name=args.grip,
                 duration=args.duration,
