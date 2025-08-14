@@ -8,6 +8,9 @@ import sys
 import numpy as np
 from scipy import signal
 from collections import deque
+import queue as queue_module
+import threading
+import time 
 
 # GUI imports
 try:
@@ -680,6 +683,79 @@ class SimpleForceGUI(QMainWindow):
             pass
         event.accept()
 
+class ThreadedForceGUI(SimpleForceGUI):
+    """Modified GUI that consumes data from control thread via queue"""
+    
+    def __init__(self, grip_name, duration, max_force, pattern, grip_config, 
+                 data_queue, control_thread=None, sampling_frequency=60.0):
+        super().__init__(grip_name, duration, max_force, pattern, grip_config, sampling_frequency)
+        
+        self.data_queue = data_queue
+        self.control_thread = control_thread
+        self.experiment_completed = False
+        
+        # GUI update timer (replaces the direct update calls)
+        from PyQt5.QtCore import QTimer
+        self.gui_timer = QTimer()
+        self.gui_timer.timeout.connect(self.consume_control_data)
+        self.gui_timer.setInterval(33)  # 30Hz GUI updates
+        
+    def start_updates(self):
+        """Start GUI updates via timer"""
+        self.gui_timer.start()
+        self.status_label.setText("Status: Experiment Running")
+        print("GUI updates started at 30Hz")
+    
+    def stop_updates(self):
+        """Stop GUI updates"""
+        self.gui_timer.stop()
+        self.status_label.setText("Status: Experiment Completed")
+        print("GUI updates stopped")
+    
+    def consume_control_data(self):
+        """Consume data from control thread (runs at 30Hz)"""
+        latest_sample = None
+        
+        # Drain the queue - only keep latest for GUI
+        while True:
+            try:
+                sample = self.data_queue.get_nowait()
+                
+                # Check for completion
+                if isinstance(sample, dict) and sample.get("done", False):
+                    self.experiment_completed = True
+                    reason = sample.get("reason", "unknown")
+                    print(f"Experiment completed: {reason}")
+                    self.stop_updates()
+                    return
+                
+                latest_sample = sample
+            except queue_module.Empty:
+                break
+        
+        if latest_sample is None:
+            return
+        
+        # Update GUI data (same as before)
+        self.gui_data['timestamps'].append(latest_sample['timestamp'])
+        self.gui_data['measured_forces'].append(latest_sample['measured_force'])
+        
+        # Keep only recent data
+        max_samples = 2000
+        if len(self.gui_data['timestamps']) > max_samples:
+            for key in self.gui_data:
+                self.gui_data[key] = self.gui_data[key][-max_samples:]
+        
+        self.current_phase = latest_sample['phase']
+        
+        # Update display (same as before)
+        self.update_display()
+    
+    def get_experiment_data(self):
+        """Get full experiment data from control thread"""
+        if self.control_thread:
+            return self.control_thread.get_experiment_data()
+        return None
 
 # Convenience function for backward compatibility
 def create_force_gui(grip_name, duration, max_force, pattern, grip_config):

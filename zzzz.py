@@ -3,9 +3,15 @@ import pandas as pd
 import matplotlib.pyplot as plt
 
 # Load data
-emg = np.load('data/GG/recordings/handOpCl/experiments/12/aligned_filtered_emg.npy')  # shape [N,16]
-ts  = np.load('data/GG/recordings/handOpCl/experiments/12/aligned_timestamps.npy')
-angles = pd.read_parquet('data/GG/recordings/handOpCl/experiments/12/aligned_angles.parquet')
+movement = 'indexFlEx'
+emg = np.load(f'data/Ema/recordings/{movement}/experiments/1/aligned_filtered_emg.npy')  # shape [N,16]
+ts  = np.load(f'data/Ema/recordings/{movement}/experiments/1/aligned_timestamps.npy')
+angles = pd.read_parquet(f'data/Ema/recordings/{movement}/experiments/1/aligned_angles.parquet')
+
+# movement = 'Calibration'
+# emg = np.load(f'data/Emanuel/recordings/{movement}/experiments/1/calib_rest_emg.npy')  # shape [N,16]
+# ts  = np.load(f'data/Emanuel/recordings/{movement}/experiments/1/calib_rest_timestamps.npy')
+# angles = pd.read_parquet(f'data/Emanuel/recordings/{movement}/experiments/1/aligned_angles.parquet')
 
 # Pick out index finger position column
 idx_cols = [c for c in angles.columns if 'index_Pos' in c]
@@ -14,23 +20,23 @@ if not idx_cols:
 angle_series = angles[idx_cols[0]].values
 
 # Your mapped channel indices and pretty names
-# mapped_channels = [0, 1, 2, 3, 4, 5, 6, 7]
-mapped_channels = [0]
-# labels = [
-#     'EMG 0 (mapped 0)', 'EMG 1 (mapped 1)', 'EMG 2 (mapped 2)', 'EMG 4 (mapped 3)',
-#     'EMG 12 (mapped 4)', 'EMG 13 (mapped 5)', 'EMG 14 (mapped 6)', 'EMG 15 (mapped 7)'
-# ]
-labels = ['EMG 0 (mapped 0)']
+mapped_channels = [0, 1, 2, 3, 4, 5, 6]
+# mapped_channels = [0]
+labels = [
+    'EMG 0 (mapped 0)', 'EMG 1 (mapped 1)', 'EMG 2 (mapped 2)', 'EMG 4 (mapped 3)',
+    'EMG 12 (mapped 4)', 'EMG 13 (mapped 5)', 'EMG 14 (mapped 6)', 'EMG 15 (mapped 7)'
+]
+# labels = ['EMG 0 (mapped 0)']
 
-# plt.figure(figsize=(15, 6))
-# for ch, lab in zip(mapped_channels, labels):
-#     plt.plot(ts, emg[:, ch], label=lab, alpha=0.8)
-# plt.xlabel('Time (s)')
-# plt.ylabel('EMG (a.u.)')
-# plt.title('Mapped EMG Channels vs Time')
-# plt.legend(ncol=2, fontsize=9)
-# plt.tight_layout()
-# plt.show()
+plt.figure(figsize=(15, 6))
+for ch, lab in zip(mapped_channels, labels):
+    plt.plot(ts, emg[:, ch], label=lab, alpha=0.8)
+plt.xlabel('Time (s)')
+plt.ylabel('EMG (a.u.)')
+plt.title('Mapped EMG Channels vs Time')
+plt.legend(ncol=2, fontsize=9)
+plt.tight_layout()
+plt.show()
 
 # Create figure and primary axis
 fig, ax1 = plt.subplots(figsize=(15, 6))

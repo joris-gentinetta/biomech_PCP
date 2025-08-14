@@ -271,48 +271,30 @@ def extract_finger_forces(angles_data, headers):
 
 
 def process_force_realtime_style(force_data, sampling_freq, static_offsets=None):
-    """
-    Process force data to match the real-time filtering pipeline in s5_inference.py
-    BUT using zero-phase filtering for superior offline processing.
-    
-    This matches the real-time filter characteristics (Butterworth, 3Hz, 2nd order)
-    while providing zero-lag filtering for training data.
-    
-    Args:
-        force_data: numpy array of shape (n_samples, 5) for per-finger forces
-        sampling_freq: sampling frequency in Hz
-        static_offsets: numpy array of shape (5,) with static baseline offsets
-                       If None, uses mean of first 10% of data as baseline
-    
-    Returns:
-        filtered_force: processed force data with same characteristics as real-time
-                       but with zero-phase filtering for better training data
-    """
     from scipy import signal
     
-    # 1. Static baseline correction (like zeroJoints calibration in real-time)
+    # 1. Static baseline correction
     if static_offsets is None:
-        # Estimate static baseline from first 10% of data (assuming start is baseline)
         baseline_samples = int(0.1 * len(force_data))
         static_offsets = np.mean(force_data[:baseline_samples, :], axis=0)
         print(f"Estimated static offsets: {static_offsets}")
     
-    static_corrected = np.maximum(force_data - static_offsets[None, :], 0)
+    ######################## TODO ######################################
+    # TODO here find baseline from approach phase if necessary
     
-    # 2. Butterworth filter - SAME CHARACTERISTICS as real-time but zero-phase
-    # Real-time uses: 3Hz cutoff, 2nd order Butterworth
-    # We use: 3Hz cutoff, 2nd order Butterworth + filtfilt (zero-phase)
+    # static_corrected = np.maximum(force_data - static_offsets[None, :], 0)
+    static_corrected = force_data
+
+    
+    # 2. Butterworth filter - use b,a for force (works better than SOS for force)
     nyquist = 0.5 * sampling_freq
     normal_cutoff = min(3.0 / nyquist, 0.99)
     b, a = signal.butter(2, normal_cutoff, btype='low')
     
-    # Apply ZERO-PHASE filtering to each finger (this is the key advantage for training)
     hf_filtered = np.zeros_like(static_corrected)
     for finger_idx in range(static_corrected.shape[1]):
         hf_filtered[:, finger_idx] = signal.filtfilt(b, a, static_corrected[:, finger_idx])
     
-    # 3. Since all your data is "during contact", skip adaptive baseline correction
-    # Just ensure non-negative values (matching real-time clipping)
     final_filtered = np.maximum(hf_filtered, 0)
     
     print(f"Applied zero-phase Butterworth filter (3Hz, 2nd order) - matches real-time characteristics")
@@ -430,7 +412,8 @@ def scale_emg_timestamps_to_match_angles(emg_timestamps, angle_timestamps):
     print(f"Duration difference: {emg_duration - angle_duration:.3f}s")
     
     # Calculate scaling factor
-    scale_factor = angle_duration / emg_duration
+    # scale_factor = angle_duration / emg_duration
+    scale_factor = 1.006
     print(f"Scaling factor: {scale_factor:.6f}")
     
     # Scale the EMG timestamps
@@ -624,6 +607,8 @@ def process_emg_zero_phase(emg_data, sampling_freq, maxVals, noiseLevel):
     from scipy import signal
     import numpy as np
     
+    emg_data = emg_data.astype(np.float64)  # Ensure float64 for precision
+
     # Create the same filters as in EMGClass but get their coefficients for filtfilt
     numElectrodes = emg_data.shape[0]
     
@@ -662,9 +647,11 @@ def process_emg_zero_phase(emg_data, sampling_freq, maxVals, noiseLevel):
     normalized_emg = filtered_emg / maxVals[:, None]
     normalized_emg = np.clip(normalized_emg, 0, 1)
     
+    normalized_emg = normalized_emg.astype(np.float32)
+
     return normalized_emg
 
-def process_angles_zero_phase(angles_data, sampling_freq, cutoff_freq=5.0):
+def process_angles_zero_phase(angles_data, sampling_freq, cutoff_freq=2.0):
     """
     Smooth angle data using zero-phase low-pass filtering to remove high-frequency noise.
     
@@ -698,6 +685,21 @@ def process_angles_zero_phase(angles_data, sampling_freq, cutoff_freq=5.0):
     print(f"Applied zero-phase low-pass filter ({cutoff_freq} Hz) to angle data")
     return filtered_angles
 
+
+def validate_and_fix_data(data, name):
+    """Validate data and fix any issues"""
+    data = np.asarray(data, dtype=np.float32)
+    n_nan = np.isnan(data).sum()
+    n_inf = np.isinf(data).sum()
+    if n_nan or n_inf:
+        print(f"[{name}] fixing {n_nan} NaNs, {n_inf} Infs")
+        data = np.nan_to_num(data, nan=0.0, posinf=1e6, neginf=-1e6)
+    if np.max(np.abs(data)) > 1e6:
+        print(f"[{name}] extreme magnitude; clipping to ±1e6")
+        data = np.clip(data, -1e6, 1e6)
+    print(f"[{name}] min={data.min():.3f}, max={data.max():.3f}, dtype={data.dtype}")
+    return data
+
 def process_emg_and_angles(
         data_dir, 
         person_id,
@@ -708,7 +710,7 @@ def process_emg_and_angles(
         emg_timestamps_file='raw_timestamps.npy',
         angles_file='angles.npy',
         angles_timestamps_file='angle_timestamps.npy',
-        angle_filter_cutoff=5.0,
+        angle_filter_cutoff=2.0,
         force_filter_cutoff=2.0,
         use_timestamp_scaling=False,  # New parameter to enable/disable scaling
         angle_shift_seconds=0.0,
@@ -718,6 +720,9 @@ def process_emg_and_angles(
     emg_timestamps = np.load(os.path.join(data_dir, emg_timestamps_file))
     angles = np.load(os.path.join(data_dir, angles_file))
     angles_timestamps = np.load(os.path.join(data_dir, angles_timestamps_file))
+
+    emg_timestamps = emg_timestamps.astype(np.float64)
+    angles_timestamps = angles_timestamps.astype(np.float64)
 
     print(f"Loaded data from {data_dir}")
 
@@ -848,7 +853,9 @@ def process_emg_and_angles(
     print(f"EMG sampling frequency: {sf:.1f} Hz")
     
     # Use zero-phase filtering for EMG
-    filtered_emg = process_emg_zero_phase(emg, sf, maxVals, noiseLevel)
+    # filtered_emg = process_emg_zero_phase(emg, sf, maxVals, noiseLevel)
+    filtered_emg = process_emg_zero_phase(emg.astype(np.float64), sf, maxVals, noiseLevel)
+    filtered_emg = filtered_emg.astype(np.float32, copy=False)
 
     # Cut EMG filter artifacts (critical for zero-phase filters)
     emg_artifact_cut_samples = int(5 * sf / 3) + int(0.5 * sf)  # 5 periods of 3Hz + 0.5s safety
@@ -866,14 +873,18 @@ def process_emg_and_angles(
     # Process angles
     angle_sf = (len(angles_timestamps) - 1) / (angles_timestamps[-1] - angles_timestamps[0])
     print(f"Angle sampling frequency: {angle_sf:.1f} Hz")
-    filtered_angles = process_angles_zero_phase(angles, angle_sf, angle_filter_cutoff)
+    # filtered_angles = process_angles_zero_phase(angles, angle_sf, angle_filter_cutoff)
+    filtered_angles = process_angles_zero_phase(angles.astype(np.float64), angle_sf, angle_filter_cutoff)
+    filtered_angles = filtered_angles.astype(np.float32, copy=False)
 
     # Process force data if available
     filtered_force = None
     if force_data is not None:
         print(f"\n=== Filtering Force Data ===")
         # filtered_force = process_force_zero_phase(force_data, angle_sf, force_filter_cutoff)
-        filtered_force = process_force_realtime_style(force_data, angle_sf)
+        # filtered_force = process_force_realtime_style(force_data, angle_sf)
+        filtered_force = process_force_realtime_style(force_data.astype(np.float64), angle_sf)
+        filtered_force = filtered_force.astype(np.float32, copy=False)
         
         # Normalize force data
         print(f"\n=== Normalizing Force Data ===")
@@ -927,16 +938,24 @@ def process_emg_and_angles(
     current_sf = (len(ref_t) - 1) / (ref_t[-1] - ref_t[0])  # Current sampling frequency
     target_sf = 60.0  # Target 60Hz
     downsample_ratio = current_sf / target_sf # Hz
-    downsample_step = int(round(downsample_ratio))
+    # downsample_step = int(round(downsample_ratio))
+
+    total_duration = ref_t[-1] - ref_t[0]
+    target_samples = int(total_duration * target_sf)
+    indices = np.linspace(0, len(ref_t) - 1, target_samples).astype(int)
     
-    emg_60Hz = aligned_emg[::downsample_step, :]
-    angles_60Hz = aligned_angles[::downsample_step, :]
-    downsampled_t = ref_t[::downsample_step]
+    # emg_60Hz = aligned_emg[::downsample_step, :]
+    # angles_60Hz = aligned_angles[::downsample_step, :]
+    # downsampled_t = ref_t[::downsample_step]
+    emg_60Hz = aligned_emg[indices, :]
+    angles_60Hz = aligned_angles[indices, :]
+    downsampled_t = ref_t[indices]
 
     # Downsample force data if available
     force_60Hz = None
     if aligned_force is not None:
-        force_60Hz = aligned_force[::downsample_step, :]
+        # force_60Hz = aligned_force[::downsample_step, :]
+        force_60Hz = aligned_force[indices, :]
 
     downsampled_t = downsampled_t - downsampled_t[0]
 
@@ -988,6 +1007,13 @@ def process_emg_and_angles(
         if force_60Hz is not None:
             force_60Hz = force_60Hz[start_idx:]
         downsampled_t = downsampled_t[start_idx:] - drop_secs
+
+    print("\n=== Final Data Validation ===")
+    emg_60Hz = validate_and_fix_data(emg_60Hz, "Final EMG")
+    angles_60Hz = validate_and_fix_data(angles_60Hz, "Final Angles")
+    if force_60Hz is not None:
+        force_60Hz = validate_and_fix_data(force_60Hz, "Final Force")
+    downsampled_t = validate_and_fix_data(downsampled_t, "Final Timestamps")
 
     # Save results
     np.save(os.path.join(data_dir, 'aligned_filtered_emg.npy'), emg_60Hz)
@@ -1087,11 +1113,11 @@ if __name__ == "__main__":
     parser.add_argument('--snr_threshold', type=float, default=0.9, help='SNR threshold for channel selection')
     parser.add_argument("--hand_side", "-s", choices=["left", "right"], default="left", help="Side of the prosthetic hand")
     parser.add_argument('--no_timestamp_scaling', action='store_true', help='Disable timestamp scaling (use original timestamps)')
-    parser.add_argument('--angle_shift', type=float, default=0.5, help= 'Shift angles to the left by this many seconds')
+    parser.add_argument('--angle_shift', type=float, default=0.7, help= 'Shift angles to the left by this many seconds')
     parser.add_argument('--force_filter_cutoff', type=float, default=2.0, help='Force filter cutoff frequency in Hz (default: 2.0)')
     args = parser.parse_args()
 
-    use_timestamp_scaling = not args.no_timestamp_scaling  
+    use_timestamp_scaling = True 
     
     process_all_experiments(
         args.person_id, 

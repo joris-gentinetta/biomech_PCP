@@ -910,7 +910,7 @@ class TimeSeriesRegressorWrapper:
             # Use enhanced loss if requested and data is available
             if use_enhanced_loss and muscle_activations is not None and force_data is not None:
 
-                print("→ Using simplified enhanced loss...")
+                # print("Using simplified enhanced loss...")
                 assert muscle_activations is not None, "Muscle_activations is None!"
                 assert force_data is not None, "Force_data is None!"
 

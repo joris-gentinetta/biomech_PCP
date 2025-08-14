@@ -2,7 +2,7 @@ import pandas as pd
 import matplotlib.pyplot as plt
 
 # --- Config ---
-filename = "C:/Users/Emanuel Wicki/Documents/MIT/biomech_PCP/data/Emanuel6/logs/zzgg.csv"
+filename = "C:/Users/Emanuel Wicki/Documents/MIT/biomech_PCP/data/Emanuel9.12/logs/xx.csv"
 
 # --- Load CSV ---
 df = pd.read_csv(filename, sep='\t')  # Note: Your data appears to be tab-separated
@@ -13,7 +13,7 @@ channel_map = [
     'iEMG0',   # 0
     'iEMG1',   # 1
     'iEMG2',   # 2
-    'iEMG4',   # 3
+    # 'iEMG4',   # 3
     'iEMG12',  # 4
     'iEMG13',  # 5
     'iEMG14',  # 6

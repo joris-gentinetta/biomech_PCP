@@ -7,12 +7,26 @@ import numpy as np
 import cv2
 import yaml
 import matplotlib.pyplot as plt
+import sys
 from os.path import join
 from helpers.hand_poses import hand_poses
 from psyonicHand import psyonicArm
 from helpers.EMGClass import EMG
 from helpers.BesselFilter import BesselFilterArr
 import pandas as pd
+
+# PyQt5 imports for GUI
+from PyQt5 import QtWidgets, QtCore, QtGui
+from PyQt5.QtWidgets import QApplication
+from PyQt5.QtCore import QTimer, pyqtSignal, QThread
+
+# Import GUI components from ForceControlGui.py
+try:
+    from ForceControlGui import AdaptiveGripGUI, connect_prosthetic_hand, GRIP_CONFIGURATIONS
+    GUI_AVAILABLE = True
+except ImportError:
+    print("Warning: GUI components not available. Running in command-line mode only.")
+    GUI_AVAILABLE = False
 
 # Define grip configurations with neutral and target positions
 GRIP_CONFIGURATIONS = {
@@ -53,6 +67,202 @@ GRIP_CONFIGURATIONS = {
         "max_approach_speed": 15.0,
     }
 }
+
+class DataRecorder:
+    """Enhanced data recorder that matches s1.5_collect_calib_data.py recording style"""
+    
+    def __init__(self, base_dir):
+        self.base_dir = base_dir
+        self.recording = False
+        self.sync_event = None
+        
+        # Data storage
+        self.all_records = []
+        self.headers = None
+        self.raw_history = []
+        self.raw_timestamps = []
+        self.video_timestamps = []
+        
+        # Threading
+        self.stop_event = None
+        self.emg_thread = None
+        self.video_thread = None
+        
+    def make_timestamps_unique(self, timestamps):
+        """Make timestamps unique by adding small increments"""
+        timestamps = np.array(timestamps)
+        for i in range(1, len(timestamps)):
+            if timestamps[i] <= timestamps[i - 1]:
+                timestamps[i] = timestamps[i - 1] + 1e-6  # add 1 microsecond
+        return timestamps
+    
+    def start_synchronized_recording(self, enable_emg=True, enable_video=False):
+        """Start synchronized recording of prosthetic data, EMG, and video"""
+        print("Setting up synchronized recording...")
+        
+        # Create sync event for coordination
+        self.sync_event = threading.Event()
+        
+        # Start EMG and video recording threads if requested
+        if enable_emg or enable_video:
+            self.stop_event, self.emg_thread, self.video_thread, self.raw_history, self.raw_timestamps, self.video_timestamps = \
+                self.start_raw_emg_recorder(enable_video=enable_video, sync_event=self.sync_event)
+        
+        print("Recording threads initialized. Ready to start synchronized recording.")
+        return self.sync_event
+    
+    def start_raw_emg_recorder(self, enable_video=False, sync_event=None):
+        """Start EMG and video recording threads (adapted from s1.5_collect_calib_data.py)"""
+        emg = EMG()
+        
+        raw_history = []
+        raw_timestamps = []
+        video_timestamps = []
+        stop_event = threading.Event()
+        
+        # Video thread
+        video_thread = None
+        if enable_video:
+            def video_loop():
+                cap = cv2.VideoCapture(0)
+                fourcc = cv2.VideoWriter_fourcc(*'mp4v')
+                out_path = join(self.base_dir, 'webcam.mp4')
+                width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+                height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+                fps = 30.0
+                writer = cv2.VideoWriter(out_path, fourcc, fps, (width, height))
+                
+                if sync_event:
+                    sync_event.wait()
+                
+                video_first_time = None
+                while not stop_event.is_set():
+                    ret, frame = cap.read()
+                    if not ret:
+                        break
+                    now = time.time()
+                    if video_first_time is None:
+                        video_first_time = now
+                    video_timestamps.append(now - video_first_time)
+                    writer.write(frame)
+                    time.sleep(1.0 / fps)
+                
+                cap.release()
+                writer.release()
+            
+            video_thread = threading.Thread(target=video_loop, daemon=True)
+            video_thread.start()
+        
+        # EMG thread (adapted from s1.5_collect_calib_data.py)
+        def emg_loop():
+            try:
+                emg.startCommunication()
+                
+                while getattr(emg, 'OS_time', None) is None:
+                    time.sleep(0.001)
+                
+                if sync_event:
+                    sync_event.wait()
+                
+                first_emg_time = emg.OS_time
+                last_time = emg.OS_time
+                
+                while not stop_event.is_set():
+                    time_sample = emg.OS_time
+                    
+                    if (time_sample - last_time) / 1e6 > 0.1:
+                        raise ValueError('EMG alignment lost')
+                    elif time_sample > last_time:
+                        emg_sample = np.asarray(emg.rawEMG)
+                        raw_history.append(list(emg_sample))
+                        raw_timestamps.append((time_sample - first_emg_time) / 1e6)
+                    
+                    last_time = time_sample
+                    time.sleep(0.001)
+            
+            except Exception as e:
+                print(f"EMG error: {e}")
+            finally:
+                emg.exitEvent.set()
+        
+        emg_thread = threading.Thread(target=emg_loop, daemon=True)
+        emg_thread.start()
+        
+        return stop_event, emg_thread, video_thread, raw_history, raw_timestamps, video_timestamps
+    
+    def start_prosthetic_recording(self, arm):
+        """Start prosthetic data recording"""
+        arm.resetRecording()
+        arm.recording = True
+        self.recording = True
+        print("Prosthetic data recording started")
+    
+    def stop_prosthetic_recording(self, arm):
+        """Stop prosthetic data recording and collect data"""
+        arm.recording = False
+        self.recording = False
+        
+        # Collect prosthetic data (same as s1.5_collect_calib_data.py)
+        raw_data = arm.recordedData
+        if raw_data and len(raw_data) > 0:
+            if self.headers is None:
+                self.headers = raw_data[0]  # first row is header names
+            data_rows = raw_data[1:]
+            self.all_records.extend(data_rows)
+        
+        print("Prosthetic data recording stopped")
+    
+    def stop_all_recording(self):
+        """Stop all recording threads"""
+        if self.stop_event:
+            self.stop_event.set()
+            
+        if self.emg_thread:
+            self.emg_thread.join()
+            
+        if self.video_thread:
+            self.video_thread.join()
+            
+        print("All recording stopped")
+    
+    def save_all_data(self, experiment_name="force_control"):
+        """Save all recorded data (prosthetic, EMG, video) - same format as s1.5_collect_calib_data.py"""
+        print("Saving recorded data...")
+        
+        # Save EMG data
+        if self.raw_history:
+            np.save(join(self.base_dir, f"raw_emg_{experiment_name}.npy"), np.vstack(self.raw_history))
+            raw_timestamps_unique = self.make_timestamps_unique(self.raw_timestamps)
+            np.save(join(self.base_dir, f"raw_timestamps_{experiment_name}.npy"), np.array(raw_timestamps_unique))
+            print(f"Saved EMG data: {len(self.raw_history)} samples, duration: {self.raw_timestamps[-1] - self.raw_timestamps[0]:.2f}s")
+        
+        # Save video timestamps
+        if self.video_timestamps:
+            np.save(join(self.base_dir, f"video_timestamps_{experiment_name}.npy"), np.array(self.video_timestamps))
+            print(f"Saved video timestamps: {len(self.video_timestamps)} frames")
+        
+        # Save prosthetic data
+        if self.all_records and self.headers:
+            rec = np.array(self.all_records, dtype=float)
+            ts = rec[:, 0]
+            ts -= ts[0]  # normalize timestamps
+            np.save(join(self.base_dir, f"prosthetic_data_{experiment_name}.npy"), rec)
+            
+            angle_timestamps_unique = self.make_timestamps_unique(ts)
+            np.save(join(self.base_dir, f"prosthetic_timestamps_{experiment_name}.npy"), angle_timestamps_unique)
+            
+            with open(join(self.base_dir, f"prosthetic_header_{experiment_name}.txt"), "w") as f:
+                f.write(",".join(self.headers))
+            
+            print(f"Saved prosthetic data: {len(rec)} frames, duration: {ts[-1]:.2f}s")
+            
+            # Sync quality check
+            if self.raw_history:
+                emg_duration = self.raw_timestamps[-1] - self.raw_timestamps[0]
+                prosthetic_duration = ts[-1]
+                print(f"Sync quality - Duration difference: {abs(emg_duration - prosthetic_duration):.2f}s")
+        
+        print(f"All data saved to: {self.base_dir}")
 
 class AdaptiveGripController:
     """
@@ -334,106 +544,61 @@ def generate_test_force_trajectory(duration=20.0, pattern="sine"):
     
     return timestamps, forces
 
-def start_raw_emg_recorder(base_dir, enable_video=False, sync_event=None):
-    """Start EMG and video recording threads"""
-    emg = EMG()
-    
-    raw_history = []
-    raw_timestamps = []
-    video_timestamps = []
-    stop_event = threading.Event()
-    
-    # Video thread
-    video_thread = None
-    if enable_video:
-        def video_loop():
-            cap = cv2.VideoCapture(0)
-            fourcc = cv2.VideoWriter_fourcc(*'mp4v')
-            out_path = join(base_dir, 'webcam.mp4')
-            width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
-            height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-            fps = 30.0
-            writer = cv2.VideoWriter(out_path, fourcc, fps, (width, height))
-            
-            if sync_event:
-                sync_event.wait()
-            
-            video_first_time = None
-            while not stop_event.is_set():
-                ret, frame = cap.read()
-                if not ret:
-                    break
-                now = time.time()
-                if video_first_time is None:
-                    video_first_time = now
-                video_timestamps.append(now - video_first_time)
-                writer.write(frame)
-                time.sleep(1.0 / fps)
-            
-            cap.release()
-            writer.release()
-        
-        video_thread = threading.Thread(target=video_loop, daemon=True)
-        video_thread.start()
-    
-    # EMG thread
-    def emg_loop():
-        try:
-            emg.startCommunication()
-            
-            while getattr(emg, 'OS_time', None) is None:
-                time.sleep(0.001)
-            
-            if sync_event:
-                sync_event.wait()
-            
-            first_emg_time = emg.OS_time
-            last_time = emg.OS_time
-            
-            while not stop_event.is_set():
-                time_sample = emg.OS_time
-                
-                if (time_sample - last_time) / 1e6 > 0.1:
-                    raise ValueError('EMG alignment lost')
-                elif time_sample > last_time:
-                    emg_sample = np.asarray(emg.rawEMG)
-                    raw_history.append(list(emg_sample))
-                    raw_timestamps.append((time_sample - first_emg_time) / 1e6)
-                
-                last_time = time_sample
-                time.sleep(0.001)
-        
-        except Exception as e:
-            print(f"EMG error: {e}")
-        finally:
-            emg.exitEvent.set()
-    
-    emg_thread = threading.Thread(target=emg_loop, daemon=True)
-    emg_thread.start()
-    
-    return stop_event, emg_thread, video_thread, raw_history, raw_timestamps, video_timestamps
-
-def run_adaptive_grip_experiment(arm, grip_name, grip_config, force_trajectory_data, 
-                                base_dir, enable_emg=False, enable_video=False):
+def run_adaptive_grip_experiment_with_gui(arm, grip_name, grip_config, force_trajectory_data, 
+                                        base_dir, enable_emg=False, enable_video=False):
     """
-    Run complete adaptive grip experiment
+    Run adaptive grip experiment with real-time GUI monitoring and enhanced data recording
     """
     print(f"\n{'='*60}")
-    print(f"ADAPTIVE GRIP EXPERIMENT: {grip_name}")
+    print(f"ADAPTIVE GRIP EXPERIMENT WITH GUI: {grip_name}")
     print(f"{'='*60}")
     
     target_timestamps, target_forces = force_trajectory_data
     
+    # Initialize data recorder
+    recorder = DataRecorder(base_dir)
+    
+    # Start synchronized recording
+    sync_event = recorder.start_synchronized_recording(enable_emg=enable_emg, enable_video=enable_video)
+    
+    # Launch GUI in separate thread for real-time monitoring
+    if GUI_AVAILABLE:
+        print("Starting real-time monitoring GUI...")
+        app = QApplication(sys.argv)
+        
+        # Create GUI with connected arm
+        gui = AdaptiveGripGUI(arm)
+        gui.show()
+        
+        # Auto-configure GUI with current experiment settings
+        grip_index = list(GRIP_CONFIGURATIONS.keys()).index(grip_name)
+        gui.grip_combo.setCurrentIndex(grip_index)
+        gui.max_force_spin.setValue(int(np.max(target_forces)))
+        gui.duration_spin.setValue(int(target_timestamps[-1]))
+        
+        # Set custom trajectory if provided
+        gui.force_timestamps = target_timestamps
+        gui.force_trajectory = target_forces
+        
+        print("GUI launched successfully!")
+        print("Configure experiment in GUI and click 'Prepare Experiment' to continue...")
+        
+        # Run the GUI event loop
+        try:
+            app.exec_()
+        except KeyboardInterrupt:
+            print("\nGUI interrupted by user")
+        finally:
+            # Stop all recording when GUI closes
+            recorder.stop_all_recording()
+            recorder.save_all_data(grip_name)
+            return
+    
+    # Fallback: Run without GUI if not available
+    print("Running experiment without GUI...")
+    
     # Initialize controller
     controller = AdaptiveGripController(arm, grip_config)
-    
-    # Start EMG/video recording if enabled
-    sync_event = None
-    emg_data = None
-    if enable_emg or enable_video:
-        sync_event = threading.Event()
-        stop_event, emg_thread, video_thread, raw_history, raw_timestamps, video_timestamps = \
-            start_raw_emg_recorder(base_dir, enable_video, sync_event)
     
     # Experiment data collection
     experiment_data = {
@@ -446,10 +611,6 @@ def run_adaptive_grip_experiment(arm, grip_name, grip_config, force_trajectory_d
         'contact_position': None,
         'pid_outputs': []
     }
-    
-    # Start recording
-    arm.resetRecording()
-    arm.recording = True
     
     print("\n1. MOVING TO NEUTRAL POSITION...")
     # Move to neutral position - ensure float64 for arm.mainControlLoop
@@ -466,6 +627,9 @@ def run_adaptive_grip_experiment(arm, grip_name, grip_config, force_trajectory_d
     if sync_event:
         sync_event.set()
         time.sleep(0.1)
+    
+    # Start prosthetic recording
+    recorder.start_prosthetic_recording(arm)
     
     print("\n3. STARTING ADAPTIVE GRIP SEQUENCE...")
     print("   Phase 1: APPROACH - Moving towards target until contact")
@@ -545,14 +709,12 @@ def run_adaptive_grip_experiment(arm, grip_name, grip_config, force_trajectory_d
     # Cleanup
     print("\n4. RETURNING TO NEUTRAL POSITION...")
     arm.mainControlLoop(posDes=neutral_pos.reshape(1, -1), period=3, emg=None)
-    arm.recording = False
     
-    # Stop EMG/video recording
-    if enable_emg or enable_video:
-        stop_event.set()
-        emg_thread.join()
-        if enable_video:
-            video_thread.join()
+    # Stop prosthetic recording
+    recorder.stop_prosthetic_recording(arm)
+    
+    # Stop all recording
+    recorder.stop_all_recording()
     
     print("\n5. SAVING EXPERIMENT DATA...")
     
@@ -560,21 +722,8 @@ def run_adaptive_grip_experiment(arm, grip_name, grip_config, force_trajectory_d
     experiment_file = join(base_dir, f"adaptive_grip_{grip_name}.npy")
     np.save(experiment_file, experiment_data)
     
-    # Save prosthetic data
-    if hasattr(arm, 'recordedData') and arm.recordedData:
-        prosthetic_data = np.array(arm.recordedData[1:], dtype=float)
-        np.save(join(base_dir, f"prosthetic_data_{grip_name}.npy"), prosthetic_data)
-        
-        with open(join(base_dir, f"prosthetic_header_{grip_name}.txt"), "w") as f:
-            f.write(",".join(arm.recordedData[0]))
-    
-    # Save EMG data
-    if enable_emg and raw_history:
-        np.save(join(base_dir, f"raw_emg_{grip_name}.npy"), np.vstack(raw_history))
-        np.save(join(base_dir, f"raw_timestamps_{grip_name}.npy"), np.array(raw_timestamps))
-    
-    if enable_video and video_timestamps:
-        np.save(join(base_dir, f"video_timestamps_{grip_name}.npy"), np.array(video_timestamps))
+    # Save all synchronized data
+    recorder.save_all_data(grip_name)
     
     print(f"   Experiment data saved to: {base_dir}")
     
@@ -623,7 +772,8 @@ def analyze_experiment_results(experiment_data, grip_name):
     
     print(f"Total Experiment Duration: {timestamps[-1]:.1f}s")
 
-def main():
+def run_command_line_mode():
+    """Run the original command line interface when GUI is not available"""
     parser = argparse.ArgumentParser(description="Adaptive Grip Force Control Training")
     parser.add_argument("--person_id", "-p", required=True, help="Person ID")
     parser.add_argument("--grip_type", "-g", required=True, 
@@ -640,6 +790,7 @@ def main():
     parser.add_argument("--emg", action="store_true", help="Enable EMG recording")
     parser.add_argument("--video", action="store_true", help="Enable video recording")
     parser.add_argument("--iterations", type=int, default=1, help="Number of experiment iterations")
+    parser.add_argument("--no_gui", action="store_true", help="Force command line mode even if GUI is available")
     
     args = parser.parse_args()
     
@@ -687,12 +838,21 @@ def main():
             iter_dir = join(base_dir, f"iteration_{iteration + 1}")
             os.makedirs(iter_dir, exist_ok=True)
             
-            # Run experiment
-            experiment_data = run_adaptive_grip_experiment(
-                arm, args.grip_type, grip_config, 
-                (target_timestamps, target_forces),
-                iter_dir, args.emg, args.video
-            )
+            # Choose mode based on GUI availability and user preference
+            if GUI_AVAILABLE and not args.no_gui:
+                # Run with GUI
+                experiment_data = run_adaptive_grip_experiment_with_gui(
+                    arm, args.grip_type, grip_config, 
+                    (target_timestamps, target_forces),
+                    iter_dir, args.emg, args.video
+                )
+            else:
+                # Run without GUI (original mode)
+                experiment_data = run_adaptive_grip_experiment_without_gui(
+                    arm, args.grip_type, grip_config, 
+                    (target_timestamps, target_forces),
+                    iter_dir, args.emg, args.video
+                )
             
             # Rest between iterations
             if iteration < args.iterations - 1:
@@ -707,7 +867,11 @@ def main():
             'duration': args.duration,
             'max_force': args.max_force,
             'iterations': args.iterations,
-            'person_id': args.person_id
+            'person_id': args.person_id,
+            'recording_enabled': {
+                'emg': args.emg,
+                'video': args.video
+            }
         }
         
         with open(join(base_dir, "experiment_summary.yaml"), 'w') as f:
@@ -721,6 +885,207 @@ def main():
     finally:
         arm.close()
         print("Prosthetic arm disconnected.")
+
+def run_adaptive_grip_experiment_without_gui(arm, grip_name, grip_config, force_trajectory_data, 
+                                           base_dir, enable_emg=False, enable_video=False):
+    """
+    Original experiment function for command-line mode with enhanced data recording
+    """
+    print(f"\n{'='*60}")
+    print(f"ADAPTIVE GRIP EXPERIMENT (COMMAND LINE): {grip_name}")
+    print(f"{'='*60}")
+    
+    target_timestamps, target_forces = force_trajectory_data
+    
+    # Initialize controller and data recorder
+    controller = AdaptiveGripController(arm, grip_config)
+    recorder = DataRecorder(base_dir)
+    
+    # Start synchronized recording
+    sync_event = recorder.start_synchronized_recording(enable_emg=enable_emg, enable_video=enable_video)
+    
+    # Experiment data collection
+    experiment_data = {
+        'timestamps': [],
+        'target_forces': [],
+        'actual_forces': [],
+        'grip_positions': [],
+        'phases': [],
+        'force_errors': [],
+        'contact_position': None,
+        'pid_outputs': []
+    }
+    
+    print("\n1. MOVING TO NEUTRAL POSITION...")
+    neutral_pos = np.array(grip_config["neutral_position"], dtype=np.float64)
+    arm.mainControlLoop(posDes=neutral_pos.reshape(1, -1), period=2, emg=None)
+    controller.current_position = neutral_pos.copy().astype(np.float64)
+    
+    print("\n2. READY FOR OBJECT PLACEMENT")
+    print(f"   Place object for {grip_config['description']}")
+    input("   Press Enter when object is positioned and ready...")
+    
+    # Start synchronized recording
+    if sync_event:
+        sync_event.set()
+        time.sleep(0.1)
+    
+    # Start prosthetic recording
+    recorder.start_prosthetic_recording(arm)
+    
+    print("\n3. STARTING ADAPTIVE GRIP SEQUENCE...")
+    print("   Phase 1: APPROACH - Moving towards target until contact")
+    
+    # Control loop (same as original)
+    start_time = time.time()
+    dt = 1.0 / controller.control_rate
+    force_start_time = None
+    controller.phase = "APPROACH"
+    
+    try:
+        while True:
+            loop_start = time.time()
+            current_time = time.time() - start_time
+            current_force = controller.get_grip_force()
+            
+            if controller.phase == "APPROACH":
+                contact_detected = controller.approach_phase(dt)
+                target_force = 0.0
+                force_error = 0.0
+                pid_output = 0.0
+                
+                if contact_detected:
+                    controller.phase = "FORCE_CONTROL"
+                    force_start_time = current_time
+                    print(f"\n   Phase 2: FORCE CONTROL - Following target force trajectory")
+                    print(f"   Contact detected at {current_time:.1f}s, force: {current_force:.2f}N")
+            
+            elif controller.phase == "FORCE_CONTROL":
+                trajectory_time = current_time - force_start_time
+                
+                if trajectory_time <= target_timestamps[-1]:
+                    target_force = np.interp(trajectory_time, target_timestamps, target_forces)
+                    current_force, force_error, pid_output = controller.force_control_phase(target_force, dt)
+                else:
+                    print(f"\n   TRAJECTORY COMPLETE at {current_time:.1f}s")
+                    break
+            
+            # Send position command to hand
+            position_command = controller.current_position.tolist()
+            arm.handCom = position_command
+            
+            # Record data
+            experiment_data['timestamps'].append(current_time)
+            experiment_data['target_forces'].append(target_force)
+            experiment_data['actual_forces'].append(current_force)
+            experiment_data['grip_positions'].append(controller.current_position.copy())
+            experiment_data['phases'].append(controller.phase)
+            experiment_data['force_errors'].append(force_error)
+            experiment_data['pid_outputs'].append(pid_output)
+            
+            if controller.contact_detected and experiment_data['contact_position'] is None:
+                experiment_data['contact_position'] = controller.contact_position.copy()
+            
+            # Print progress
+            if len(experiment_data['timestamps']) % 120 == 0:
+                print(f"   Time: {current_time:5.1f}s | Phase: {controller.phase:12s} | "
+                      f"Force: {current_force:5.1f}N | Target: {target_force:5.1f}N")
+            
+            # Control loop timing
+            elapsed = time.time() - loop_start
+            sleep_time = max(0, dt - elapsed)
+            time.sleep(sleep_time)
+    
+    except KeyboardInterrupt:
+        print("\n   EXPERIMENT INTERRUPTED")
+    
+    # Cleanup
+    print("\n4. RETURNING TO NEUTRAL POSITION...")
+    arm.mainControlLoop(posDes=neutral_pos.reshape(1, -1), period=3, emg=None)
+    
+    # Stop all recording
+    recorder.stop_prosthetic_recording(arm)
+    recorder.stop_all_recording()
+    
+    print("\n5. SAVING EXPERIMENT DATA...")
+    
+    # Save experiment data
+    experiment_file = join(base_dir, f"adaptive_grip_{grip_name}.npy")
+    np.save(experiment_file, experiment_data)
+    
+    # Save all synchronized data using the enhanced recorder
+    recorder.save_all_data(grip_name)
+    
+    print(f"   Experiment data saved to: {base_dir}")
+    
+    # Analyze results
+    analyze_experiment_results(experiment_data, grip_name)
+    
+    return experiment_data
+
+def run_gui_mode():
+    """Run GUI mode directly (when called without command line arguments)"""
+    print("=== Adaptive Grip Control with Real-Time GUI ===")
+    
+    if not GUI_AVAILABLE:
+        print("Error: GUI components not available. Please ensure ForceControlGui.py is accessible.")
+        print("Falling back to command line mode...")
+        return run_command_line_mode()
+    
+    # Simple GUI mode - let user configure everything in GUI
+    hand_side = "left"  # Default, can be changed via GUI if needed
+    
+    print(f"Starting GUI mode with {hand_side} hand...")
+    
+    # Connect to prosthetic hand
+    arm = connect_prosthetic_hand(hand_side)
+    if arm is None:
+        print("Failed to connect to prosthetic hand. Exiting.")
+        return
+    
+    print("Prosthetic hand connected successfully!")
+    print("Starting GUI...")
+    
+    # Start GUI application
+    app = QApplication(sys.argv)
+    
+    # Create and show the main window
+    window = AdaptiveGripGUI(arm)
+    window.show()
+    
+    print("GUI started successfully!")
+    print()
+    print("Instructions:")
+    print("1. Select grip type and force pattern in the GUI")
+    print("2. Click 'Prepare Experiment' to move to neutral position")
+    print("3. Place object in hand")
+    print("4. Click 'Start Experiment' to begin adaptive grip control")
+    print("5. Watch real-time force control in the plots")
+    print("6. Data will be automatically recorded and saved")
+    print()
+    
+    try:
+        sys.exit(app.exec_())
+    except KeyboardInterrupt:
+        print("\nShutting down...")
+    finally:
+        try:
+            if arm:
+                arm.close()
+                print("Prosthetic hand disconnected.")
+        except:
+            pass
+
+def main():
+    """Main function that determines whether to run GUI or command line mode"""
+    
+    # Check if command line arguments are provided
+    if len(sys.argv) > 1:
+        # Command line mode
+        run_command_line_mode()
+    else:
+        # GUI mode (default when no arguments provided)
+        run_gui_mode()
 
 if __name__ == "__main__":
     main()
