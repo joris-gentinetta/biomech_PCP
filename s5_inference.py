@@ -891,7 +891,7 @@ class psyonicArm():
 				# EMG control
 				elif emg is not None:
 					# interpolate between outputs from the neural net model
-					handCom = (self.NetCom - self.lastposCom)/self.loopRate*interpCount + self.lastposCom
+					handCom = (self.NetCom - self.lastPosCom)/self.loopRate*interpCount + self.lastPosCom
 					handCom = np.clip(handCom, [self.jointRoM[joint][0] for joint in self.jointNames], [self.jointRoM[joint][1] for joint in self.jointNames])
 
 				# sinusoidal control
