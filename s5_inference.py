@@ -229,6 +229,14 @@ class psyonicArm():
 		self.exitEvent = threading.Event()
 		self.replyChangedFlag = False
 
+		# Force processing at 60Hz
+		self.force_processing_counter = 0
+		self.last_processed_forces = {}  # Cache last processed force values
+		for finger in self.touchNames:
+			for site in range(6):
+				sensor_name = f'{finger}{site}_Force'
+				self.last_processed_forces[sensor_name] = 0.0
+
 		# neural net control loop rate
 		self.Hz = 60
 		self.loopRate = 10 # this is how much faster this should run than the neural net
@@ -508,20 +516,32 @@ class psyonicArm():
 		# 	print(f'Limitation status: {limitBitStatus}')
 		# 	raise Exception('Limitation status detected')
 
+		process_forces_this_cycle = (self.force_processing_counter % self.loopRate == 0)
+		self.force_processing_counter += 1
+
 		# unpack the force sensor readings all at once, then store them properly
 		# unpacking 12 bit values from 8 bit bytearray to store as 16 bit integers
 		if self.replyVariant in [0, 1]:
-			forceBytes = response[25:70]
+			if process_forces_this_cycle:
 
-			Ds = [0]*self.numForce
-			
-			for bitIdx in range(self.numForce * 12 - 4, -1, -4):
-					dIdx = bitIdx // 12  # Calculate the index in the output list
-					byteIdx = bitIdx // 8   # Calculate the byte index in the input array
-					shiftVal = bitIdx % 8 # Calculate the shift value for bit extraction
-					
-					# Extract 4 bits, adjust them based on their position, and store in the output list
-					Ds[dIdx] |= ((forceBytes[byteIdx] >> shiftVal) & 0x0F) << (bitIdx % 12)
+				forceBytes = response[25:70]
+
+				Ds = [0]*self.numForce
+				
+				for bitIdx in range(self.numForce * 12 - 4, -1, -4):
+						dIdx = bitIdx // 12  # Calculate the index in the output list
+						byteIdx = bitIdx // 8   # Calculate the byte index in the input array
+						shiftVal = bitIdx % 8 # Calculate the shift value for bit extraction
+						
+						# Extract 4 bits, adjust them based on their position, and store in the output list
+						Ds[dIdx] |= ((forceBytes[byteIdx] >> shiftVal) & 0x0F) << (bitIdx % 12)
+			else:
+				# Skip sensor processing and use cached values
+				for finger in self.touchNames:
+					for site in range(6):
+						sensor_name = f'{finger}{site}_Force'
+						self.sensors[sensor_name] = self.last_processed_forces[sensor_name]
+
 			
 		# unpack the bytes finger by finger
 		for motor in range(self.numMotors):
@@ -554,7 +574,7 @@ class psyonicArm():
 
 			# touch sensors - there are 6 sites for each of 5 fingers (the thumb would otherwise be double counted)
 			# each site takes a byte and a half, so these need to be converted appropriately as 12 bit unsigned integers
-			if self.replyVariant in [0, 1] and (motor < self.numMotors - 1):
+			if self.replyVariant in [0, 1] and (motor < self.numMotors - 1) and process_forces_this_cycle:
 				thisFingerTouch = Ds[motor*6:(motor + 1)*6]
 				
 				for site in range(6):
@@ -563,14 +583,25 @@ class psyonicArm():
 					V = D*self.volConversion # voltage
 					R = (self.resConversion/V) + self.resAdd if V > 0 else float('inf') # resistance
 					F = (self.forceResConversion[0]/R) + self.forceResConversion[1] # force
-					self.sensors[f'{self.touchNames[motor]}{site}_Force'] = max(F - self.sensorForceOffsets[f'{self.touchNames[motor]}{site}_Force'], 0)
+
+					sensor_name = f'{self.touchNames[motor]}{site}_Force'
+					processed_force = max(F - self.sensorForceOffsets[sensor_name], 0)
+
+					# self.sensors[f'{self.touchNames[motor]}{site}_Force'] = max(F - self.sensorForceOffsets[f'{self.touchNames[motor]}{site}_Force'], 0)
 					# self.sensors[f'{self.touchNames[motor]}{site}_Force'] = int(max([D - self.sensorForceOffsets[f'{self.touchNames[motor]}{site}_Force'], 0]))
-					if self.sensorForceOffsets[f'{self.touchNames[motor]}{site}_Force'] != 0:
+					if self.sensorForceOffsets[sensor_name] != 0:
 						# self.sensors[f'{self.touchNames[motor]}{site}_Force'] = int(self.filterForce.filterByIndex(self.sensors[f'{self.touchNames[motor]}{site}_Force'], motor*6 + site)[0])
-						self.sensors[f'{self.touchNames[motor]}{site}_Force'] = self.filterForce.filterByIndex(self.sensors[f'{self.touchNames[motor]}{site}_Force'], motor*6 + site)[0]
+						# self.sensors[f'{self.touchNames[motor]}{site}_Force'] = self.filterForce.filterByIndex(self.sensors[f'{self.touchNames[motor]}{site}_Force'], motor*6 + site)[0]
+						processed_force = self.filterForce.filterByIndex(processed_force, motor*6 + site)[0]
 
 						if D == 0:
 							self.filterForce.resetFilterByIndex(motor*6 + site)
+
+					
+					self.sensors[sensor_name] = processed_force
+					# Cache the processed value for next cycles
+					self.last_processed_forces[sensor_name] = processed_force
+
 
 	def sendToPlots(self):
 		# send the commanded and actual arm position for plotting
