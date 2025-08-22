@@ -62,9 +62,9 @@ from typing import List, Tuple
 @dataclass
 class HardConfig:
     # ---- data / run ----
-    data_root: str = "data/P5_869_interaction"
-    out_dir: str   = "results/p01_emg_vs_force"
-    intact_hand: str = "Left"
+    data_root: str = "data/patient1"
+    out_dir: str   = "results/patient1_emg_vs_force"
+    intact_hand: str = "Right"
     device: str = "auto"
     seed: int = 42
     make_plots: bool = True
@@ -85,7 +85,7 @@ class HardConfig:
     weight_decay: float = 1e-4
     early_stopping_patience: int = 20
     early_stopping_delta: float = 5e-3
-    n_epochs: int = 8           # choose what you used in FS model
+    n_epochs: int = 14           # choose what you used in FS model
     learning_rate: float = 1e-3  # choose what you used in FS model
     wandb_mode: str = "disabled"
     wandb_project: str = "emg_vs_force_comparison"
@@ -107,8 +107,8 @@ class HardConfig:
     ])
     force_features: list = field(default_factory=list)  # filled by finalize()
     targets: list = field(default_factory=lambda: [
-        ['Left','index_Pos'], ['Left','middle_Pos'], ['Left','ring_Pos'],
-        ['Left','pinky_Pos'], ['Left','thumbFlex_Pos'], ['Left','thumbRot_Pos']
+        ['Right','index_Pos'], ['Right','middle_Pos'], ['Right','ring_Pos'],
+        ['Right','pinky_Pos'], ['Right','thumbFlex_Pos'], ['Right','thumbRot_Pos']
     ])
 
     def finalize(self):
@@ -152,6 +152,58 @@ def parse_args():
     
     return parser.parse_args()
 
+def _as_tuple_str(x):
+    """Return the canonical string form of a 2-tuple, e.g. ('Left','index_Force')."""
+    if isinstance(x, (list, tuple)) and len(x) == 2:
+        return f"('{x[0]}', '{x[1]}')"
+    return str(x)
+
+def normalize_cols_to_df(cols, df_cols):
+    """
+    Given a list of feature/target names (tuples/lists/strings) and the actual df columns,
+    return the same names converted to the exact type/representation used by df.columns.
+    """
+    df_cols_set = set(df_cols)
+    # Case 1: df uses real tuples
+    if all(isinstance(c, tuple) for c in df_cols):
+        out = []
+        for c in cols:
+            if isinstance(c, tuple):
+                out.append(c)
+            elif isinstance(c, list):
+                out.append(tuple(c))
+            else:  # string -> try to parse minimal ('Left','index_Force') form
+                # Very conservative fallback: leave as-is; user data shouldn't need this path
+                out.append(c)
+        return out
+    # Case 2: df uses strings (should be rare in your case)
+    df_cols_str_set = set(map(str, df_cols))
+    out = []
+    for c in cols:
+        s = _as_tuple_str(c)
+        if s in df_cols_str_set:
+            out.append(s)
+        else:
+            # Also try plain str(c) as a fallback
+            s2 = str(c)
+            out.append(s2 if s2 in df_cols_str_set else s)
+    return out
+
+def col_in_df(col, df_cols):
+    """Robust membership check for tuple-or-string column labels."""
+    if col in df_cols:
+        return True
+    col_str = _as_tuple_str(col)
+    return col_str in set(map(str, df_cols))
+
+def _to_hashable(cols):
+    out = []
+    for c in cols:
+        if isinstance(c, list):
+            out.append(tuple(c))
+        else:
+            out.append(c)
+    return out
 
 def set_seeds(seed: int):
     """Set all random seeds for reproducibility."""
@@ -762,6 +814,128 @@ def plot_error_vs_force(merged_df: pd.DataFrame, out_dir: Path):
     print(f"📊 Saved error comparison plot to {out_dir / 'error_comparison.png'}")
 
 
+def plot_active_fingers_only(merged_df: pd.DataFrame, out_dir: Path, movement: str):
+    """Generate plots focusing only on fingers active in the specific interaction."""
+    
+    # Define active fingers for each interaction type
+    active_fingers_map = {
+        'pinch_interaction': ['index', 'thumbFlex'],  # index finger + thumb
+        'tripod_interaction': ['index', 'middle', 'thumbFlex'],  # index + middle + thumb  
+        'hook_interaction': ['index', 'middle', 'ring', 'pinky'],  # all fingers except thumb
+        'power_grip_interaction': ['index', 'middle', 'ring', 'pinky', 'thumbFlex']  # all fingers + thumb
+    }
+    
+    if movement not in active_fingers_map:
+        print(f"⚠️  Unknown movement type: {movement}")
+        return
+    
+    active_joints = active_fingers_map[movement]
+    print(f"📊 Creating active finger plots for {movement}: {active_joints}")
+    
+    # Check if we have data to plot
+    if len(merged_df) == 0:
+        print("⚠️  No data to plot")
+        return
+    
+    # Remove NaN values for plotting
+    plot_df = merged_df.dropna()
+    if len(plot_df) == 0:
+        print("⚠️  No valid data after dropping NaN values")
+        return
+    
+    # === ACTIVE FINGERS QUICKLOOK PLOT ===
+    n_joints = len(active_joints)
+    if n_joints <= 3:
+        fig, axes = plt.subplots(1, n_joints, figsize=(5*n_joints, 4))
+    else:
+        fig, axes = plt.subplots(2, (n_joints+1)//2, figsize=(5*((n_joints+1)//2), 8))
+    
+    if n_joints == 1:
+        axes = [axes]
+    elif n_joints > 1:
+        axes = axes.flatten()
+    
+    for i, joint in enumerate(active_joints):
+        ax = axes[i] if n_joints > 1 else axes[0]
+        
+        gt_col = f'{joint}_gt_deg'
+        pred_emg_col = f'{joint}_pred_deg_emg' 
+        pred_force_col = f'{joint}_pred_deg_force'
+        
+        # Check if columns exist
+        if not all(col in plot_df.columns for col in [gt_col, pred_emg_col, pred_force_col]):
+            ax.text(0.5, 0.5, f'Missing data\nfor {joint}', 
+                   ha='center', va='center', transform=ax.transAxes)
+            ax.set_title(f'{joint.title()} Position (Active)')
+            continue
+        
+        # Plot ground truth and both predictions
+        ax.plot(plot_df['timestamp'], plot_df[gt_col], 
+                label='Ground Truth', color='black', linewidth=2)
+        ax.plot(plot_df['timestamp'], plot_df[pred_emg_col], 
+                label='EMG Only', color='blue', alpha=0.7)
+        ax.plot(plot_df['timestamp'], plot_df[pred_force_col], 
+                label='EMG + Force', color='red', alpha=0.7)
+        
+        ax.set_title(f'{joint.title()} Position (Active)')
+        ax.set_ylabel('Angle (degrees)')
+        ax.legend()
+        ax.grid(True, alpha=0.3)
+    
+    # Hide unused subplots
+    if n_joints > 1:
+        for j in range(n_joints, len(axes)):
+            axes[j].set_visible(False)
+    
+    plt.suptitle(f'{movement.replace("_", " ").title()} - Active Fingers Only')
+    plt.tight_layout()
+    plt.savefig(out_dir / 'quicklook_active_fingers.png', dpi=150, bbox_inches='tight')
+    plt.close()
+    print(f"📊 Saved active fingers quicklook to {out_dir / 'quicklook_active_fingers.png'}")
+    
+    # === ACTIVE FINGERS ERROR COMPARISON PLOT ===
+    error_data = []
+    for joint in active_joints:
+        gt_col = f'{joint}_gt_deg'
+        pred_emg_col = f'{joint}_pred_deg_emg'
+        pred_force_col = f'{joint}_pred_deg_force'
+        
+        # Check if columns exist
+        if not all(col in plot_df.columns for col in [gt_col, pred_emg_col, pred_force_col]):
+            continue
+        
+        gt = plot_df[gt_col]
+        pred_emg = plot_df[pred_emg_col]
+        pred_force = plot_df[pred_force_col]
+        
+        error_emg = np.abs(pred_emg - gt)
+        error_force = np.abs(pred_force - gt)
+        
+        error_data.extend([
+            {'joint': joint, 'model': 'EMG Only', 'error': e} for e in error_emg
+        ])
+        error_data.extend([
+            {'joint': joint, 'model': 'EMG + Force', 'error': e} for e in error_force
+        ])
+    
+    if not error_data:
+        print("⚠️  No error data to plot for active fingers")
+        return
+    
+    error_df = pd.DataFrame(error_data)
+    
+    plt.figure(figsize=(max(6, len(active_joints)*1.5), 6))
+    sns.boxplot(data=error_df, x='joint', y='error', hue='model')
+    plt.title(f'{movement.replace("_", " ").title()} - Active Fingers Error Comparison')
+    plt.ylabel('Absolute Error (degrees)')
+    plt.xlabel('Active Joints')
+    if len(active_joints) > 3:
+        plt.xticks(rotation=45)
+    plt.tight_layout()
+    plt.savefig(out_dir / 'error_active_fingers.png', dpi=150, bbox_inches='tight')
+    plt.close()
+    print(f"📊 Saved active fingers error plot to {out_dir / 'error_active_fingers.png'}")
+
 def write_manifest(out_path: Path, args, recordings: List[str], groups: Dict):
     """Write run manifest for reproducibility."""
     manifest = {
@@ -781,7 +955,24 @@ def write_manifest(out_path: Path, args, recordings: List[str], groups: Dict):
 
 
 def main():
+    import ast  # needed to parse stringified tuple column names
     CFG = HardConfig().finalize()
+
+    def _to_hashable(cols):
+        out = []
+        for c in cols:
+            if isinstance(c, list):
+                out.append(tuple(c))
+            elif isinstance(c, str) and c.startswith("("):
+                # parse "('Left', 'index_Force')" -> ('Left','index_Force')
+                try:
+                    parsed = ast.literal_eval(c)
+                    out.append(tuple(parsed) if isinstance(parsed, (list, tuple)) else c)
+                except Exception:
+                    out.append(c)
+            else:
+                out.append(c)
+        return out
 
     set_seeds(CFG.seed)
     out_dir = Path(CFG.out_dir)
@@ -809,135 +1000,160 @@ def main():
     print(f"Free-space units: {len(free_space_units)}")
     print(f"Interaction units: {len(interaction_units)}")
 
-    # 3) Use your FS features/targets (already set in CFG)
-    emg_features   = CFG.emg_features
-    force_features = CFG.force_features
-    targets        = CFG.targets
+    # 3) Start from CFG features/targets (will be normalized later)
+    emg_features_cfg   = CFG.emg_features
+    force_features_cfg = CFG.force_features
+    targets_cfg        = CFG.targets
 
     all_metric_rows, all_significance_rows = [], []
 
-    # 4) COMPARISON 1: Free-space trials (EMG-only vs EMG-only)
-    print("\n" + "="*80)
-    print("COMPARISON 1: FREE-SPACE TRIALS (EMG-only vs EMG-only baseline)")
-    print("="*80)
-    print("Note: Both models will be identical since free-space has no force data")
-    
-    for fold_id, test_unit in enumerate(free_space_units):
-        print(f"\nFOLD {fold_id+1}/{len(free_space_units)}: Testing on {test_unit['trial_id']}")
-        
-        # Train on other free-space trials only
-        train_dirs = [u["dir"] for u in free_space_units if u["trial_id"] != test_unit["trial_id"]]
-        test_dir = test_unit["dir"]
-        
-        if not train_dirs:
-            print("⚠️  Not enough free-space trials for cross-validation")
-            continue
+    if not interaction_units:
+        print("❌ No interaction units found for comparison")
+        return 1
 
-        num_train_dirs = len(train_dirs)
-        num_test_dirs = 1
-
-        # EMG-only model
-        print("Training EMG-only model...")
-        cfg_emg = build_config(CFG, emg_features, targets, f"fs_emg_only_fold_{fold_id}", num_train_dirs, num_test_dirs)
-        tr_emg, va_emg, _, te_emg = get_data(cfg_emg, train_dirs, CFG.intact_hand, visualize=False, test_dirs=[test_dir])
-        model_path_emg = train_one_fold("fs_emg_only", cfg_emg, tr_emg, va_emg, te_emg, out_dir / 'models', device, fold_id)
-
-        # EMG+Force model (same as EMG-only for free-space)
-        print("Training EMG+Force model (same as EMG-only for free-space)...")
-        cfg_force = build_config(CFG, emg_features, targets, f"fs_emg_force_fold_{fold_id}", num_train_dirs, num_test_dirs)  # No force features
-        tr_f, va_f, _, te_f = get_data(cfg_force, train_dirs, CFG.intact_hand, visualize=False, test_dirs=[test_dir])
-        model_path_force = train_one_fold("fs_emg_force", cfg_force, tr_f, va_f, te_f, out_dir / 'models', device, fold_id)
-
-        # Generate predictions and metrics
-        model_emg = load_model_for_prediction(model_path_emg, cfg_emg, device)
-        model_for = load_model_for_prediction(model_path_force, cfg_force, device)
-
-        pred_emg = predict_on_trial(model_emg, te_emg[0], cfg_emg.features, cfg_emg.targets, CFG.intact_hand, device)
-        pred_for = predict_on_trial(model_for, te_f[0], cfg_force.features, cfg_force.targets, CFG.intact_hand, device)
-
-        preds_dir = out_dir / 'predictions' / f"free_space_{test_unit['trial_id'].replace('#','_')}"
-        preds_dir.mkdir(parents=True, exist_ok=True)
-        pred_emg.to_csv(preds_dir / 'preds_emg_only.csv', index=False)
-        pred_for.to_csv(preds_dir / 'preds_emg_plus_force.csv', index=False)
-
-        merged = align_predictions(pred_emg, pred_for)
-        merged.to_csv(preds_dir / 'merged_comparison.csv', index=False)
-
-        joints = ['index','middle','ring','pinky','thumbFlex','thumbRot']
-        all_metric_rows += compute_metrics(merged, joints, 'EMG Only', test_unit['trial_id'], pred_suffix="_emg")
-        all_metric_rows += compute_metrics(merged, joints, 'EMG + Force', test_unit['trial_id'], pred_suffix="_force")
-        all_significance_rows += compute_paired_significance(merged, joints, test_unit['trial_id'])
-
-        if CFG.make_plots:
-            plot_quicklook(merged, preds_dir)
-            plot_error_vs_force(merged, preds_dir)
-
-    # 5) COMPARISON 2: Interaction trials (EMG-only vs EMG+Force)
-    print("\n" + "="*80)
-    print("COMPARISON 2: INTERACTION TRIALS (EMG-only vs EMG+Force)")
-    print("="*80)
-    print("Note: This is the real comparison since interaction trials have force data")
-    print(f"Training on ALL interaction trials from {len(CFG.interaction_movements)} movements")
-    print(f"Using Leave-One-Trial-Out across {len(interaction_units)} total interaction trials")
-    
-    # Check force availability once using any interaction trial
-    print("\nChecking force feature availability in interaction data...")
+    # 4) Check force availability once using any interaction trial
+    print("\n--- Checking Force Feature Availability ---")
     force_final = []
-    if interaction_units:
-        try:
-            sample_df = pd.read_parquet(os.path.join(interaction_units[0]["dir"], 'aligned_angles.parquet'))
-            force_final = [f for f in force_features if f in sample_df.columns]
-            if force_final:
-                force_final = drop_constant_columns(sample_df, force_final)
-                print(f"✅ Using force features: {force_final}")
+    try:
+        sample_df = pd.read_parquet(os.path.join(interaction_units[0]["dir"], 'aligned_angles.parquet'))
+
+        print(f"🔍 Available columns in interaction data:")
+        for i, col in enumerate(sample_df.columns):
+            print(f"  {i:2d}: {col!r}")  # repr shows if they are strings
+
+        # Normalize CFG.force_features to whatever sample_df actually uses
+        candidate_force = normalize_cols_to_df(CFG.force_features, sample_df.columns)
+
+        for raw, norm in zip(CFG.force_features, candidate_force):
+            if col_in_df(norm, sample_df.columns):
+                force_final.append(norm)
+                print(f"✅ Found force feature: {norm}")
             else:
-                print("⚠️  No force features found in interaction data")
-        except Exception as e:
-            print(f"⚠️  Error checking force features: {e}")
+                print(f"❌ Missing force feature: {norm}")
+
+        if force_final:
+            print(f"🔍 Checking variance for force features...")
+            keep = []
+            for f in force_final:
+                try:
+                    vals = sample_df[f]
+                except KeyError:
+                    vals = sample_df[str(f)]
+                if np.nanstd(vals.values) > 1e-8:
+                    keep.append(f)
+                    print(f"✅ Keeping force feature: {f} (std={np.nanstd(vals.values):.2e})")
+                else:
+                    print(f"ℹ️  Dropping constant force feature: {f} (std={np.nanstd(vals.values):.2e})")
+            force_final = keep
+
+            print(f"🔍 DEBUG: Final force features:")
+            for i, f in enumerate(force_final):
+                print(f"  {i}: {f!r} (type: {type(f)})")
+
+            print(f"✅ Using force features: {force_final}")
+        else:
+            print("⚠️  No force features found in interaction data")
+    except Exception as e:
+        print(f"⚠️  Error checking force features: {e}")
+        traceback.print_exc()
+        force_final = []
+
+    # 5) Split interaction trials: train on all except the one you want to test
+    target_test_trial = "pinch_interaction#2"
+    test_units = [u for u in interaction_units if u['trial_id'] == target_test_trial]
+    train_units = [u for u in interaction_units if u['trial_id'] != target_test_trial]
+
+    print(f"🎯 Testing specifically on: {target_test_trial}")
+    print(f"Training on {len(train_units)} other interaction trials")
     
-    for fold_id, test_unit in enumerate(interaction_units):
-        print(f"\nFOLD {fold_id+1}/{len(interaction_units)}: Testing on {test_unit['trial_id']}")
-        
-        # Train on ALL OTHER interaction trials (from all interaction movements)
-        train_dirs = [u["dir"] for u in interaction_units if u["trial_id"] != test_unit["trial_id"]]
-        test_dir = test_unit["dir"]
-        
-        print(f"  Training on {len(train_dirs)} interaction trials from all movements")
-        print(f"  Testing on 1 trial: {test_unit['movement']}#{test_unit['trial_id'].split('#')[1]}")
-        
-        if not train_dirs:
-            print("⚠️  Not enough interaction trials for cross-validation")
-            continue
+    train_dirs = [u["dir"] for u in train_units]
+    test_dirs = [u["dir"] for u in test_units]
+    
+    print(f"\n🔍 DEBUG: Checking training directories:")
+    for i, train_dir in enumerate(train_dirs[:3]):
+        print(f"  {i}: {train_dir}")
+    print(f"🔍 Sample train_unit: {train_units[0] if train_units else 'None'}")
 
-        num_train_dirs = len(train_dirs)
-        num_test_dirs = 1
+    print(f"\n🎯 TRAIN/TEST SPLIT:")
+    print(f"Training on {len(train_dirs)} interaction trials")
+    print(f"Testing on {len(test_dirs)} interaction trials: {[u['trial_id'] for u in test_units]}")
+    
+    if len(train_dirs) == 0:
+        print("❌ No training data available")
+        return 1
 
-        # EMG-only model (trained on all interaction movements)
-        print("Training EMG-only model on all interaction data...")
-        cfg_emg = build_config(CFG, emg_features, targets, f"int_emg_only_fold_{fold_id}", num_train_dirs, num_test_dirs)
-        tr_emg, va_emg, _, te_emg = get_data(cfg_emg, train_dirs, CFG.intact_hand, visualize=False, test_dirs=[test_dir])
-        model_path_emg = train_one_fold("int_emg_only", cfg_emg, tr_emg, va_emg, te_emg, out_dir / 'models', device, fold_id)
+    # === OPTION A CRITICAL STEP: convert features/targets to HASHABLE TUPLES ===
+    emg_features   = _to_hashable(emg_features_cfg)
+    targets        = _to_hashable(targets_cfg)
+    force_features = _to_hashable(force_final)  # handles list->tuple and "('L','x')" -> ('L','x')
 
-        # EMG+Force model (trained on all interaction movements)
-        print("Training EMG+Force model on all interaction data...")
-        cfg_force = build_config(CFG, emg_features + force_final, targets, f"int_emg_force_fold_{fold_id}", num_train_dirs, num_test_dirs)
-        tr_f, va_f, _, te_f = get_data(cfg_force, train_dirs, CFG.intact_hand, visualize=False, test_dirs=[test_dir])
-        model_path_force = train_one_fold("int_emg_force", cfg_force, tr_f, va_f, te_f, out_dir / 'models', device, fold_id)
+    # 6) Train TWO models on the same interaction training data
+    print("\n" + "="*80)
+    print("TRAINING INTERACTION MODELS: EMG-only vs EMG+Force")
+    print("="*80)
+    print("Both models trained on the same interaction data for fair comparison")
 
-        # Generate predictions and metrics
-        model_emg = load_model_for_prediction(model_path_emg, cfg_emg, device)
-        model_for = load_model_for_prediction(model_path_force, cfg_force, device)
+    num_train_dirs = len(train_dirs)
+    num_test_dirs = len(test_dirs)
 
-        pred_emg = predict_on_trial(model_emg, te_emg[0], cfg_emg.features, cfg_emg.targets, CFG.intact_hand, device)
-        pred_for = predict_on_trial(model_for, te_f[0], cfg_force.features, cfg_force.targets, CFG.intact_hand, device)
+    # Model 2: EMG+Force
+    print(f"\n🚀 Training EMG+Force model on {len(train_dirs)} interaction trials...")
+    cfg_force = build_config(CFG, emg_features + force_features, targets, "int_emg_force", num_train_dirs, num_test_dirs)
+    tr_force, va_force, _, te_force_all = get_data(cfg_force, train_dirs, CFG.intact_hand, visualize=False, test_dirs=test_dirs)
+    force_model = train_model(
+        tr_force, va_force, te_force_all, device,
+        cfg_force.wandb_mode, cfg_force.wandb_project, cfg_force.name,
+        cfg_force, person_dir=str(out_dir)
+    )
+    force_dir = out_dir / 'models' / 'int_emg_force'
+    force_dir.mkdir(parents=True, exist_ok=True)
+    force_model_path = force_dir / 'best.pt'
+    force_model.save(str(force_model_path))
+    with open(force_dir / 'config.json', 'w') as f:
+        json.dump(cfg_force.to_dict(), f, indent=2)
+    print(f"✅ Saved EMG+Force model to {force_model_path}")
+
+    # Model 1: EMG-only
+    print(f"\n🚀 Training EMG-only model on {len(train_dirs)} interaction trials...")
+    cfg_emg = build_config(CFG, emg_features, targets, "int_emg_only", num_train_dirs, num_test_dirs)
+    tr_emg, va_emg, _, te_emg_all = get_data(cfg_emg, train_dirs, CFG.intact_hand, visualize=False, test_dirs=test_dirs)
+    emg_model = train_model(
+        tr_emg, va_emg, te_emg_all, device,
+        cfg_emg.wandb_mode, cfg_emg.wandb_project, cfg_emg.name,
+        cfg_emg, person_dir=str(out_dir)
+    )
+    emg_dir = out_dir / 'models' / 'int_emg_only'
+    emg_dir.mkdir(parents=True, exist_ok=True)
+    emg_model_path = emg_dir / 'best.pt'
+    emg_model.save(str(emg_model_path))
+    with open(emg_dir / 'config.json', 'w') as f:
+        json.dump(cfg_emg.to_dict(), f, indent=2)
+    print(f"✅ Saved EMG-only model to {emg_model_path}")
+
+    # 7) Load both models for testing
+    print("\n📊 Loading trained models for predictions...")
+    emg_model.eval()
+    force_model.eval()
+
+    # 8) Test both models on the same test trials
+    print(f"\n📈 Testing both models on {len(test_units)} trials...")
+    for i, test_unit in enumerate(test_units):
+        print(f"\nTesting on {test_unit['trial_id']} ({i+1}/{len(test_units)})")
+
+        te_emg_single = [te_emg_all[i]]
+        te_force_single = [te_force_all[i]]
+
+        pred_emg = predict_on_trial(emg_model, te_emg_single[0], cfg_emg.features, cfg_emg.targets, CFG.intact_hand, device)
+        pred_force = predict_on_trial(force_model, te_force_single[0], cfg_force.features, cfg_force.targets, CFG.intact_hand, device)
 
         preds_dir = out_dir / 'predictions' / f"interaction_{test_unit['trial_id'].replace('#','_')}"
         preds_dir.mkdir(parents=True, exist_ok=True)
         pred_emg.to_csv(preds_dir / 'preds_emg_only.csv', index=False)
-        pred_for.to_csv(preds_dir / 'preds_emg_plus_force.csv', index=False)
+        pred_force.to_csv(preds_dir / 'preds_emg_plus_force.csv', index=False)
 
-        merged = align_predictions(pred_emg, pred_for)
+        merged = align_predictions(pred_emg, pred_force)
         merged.to_csv(preds_dir / 'merged_comparison.csv', index=False)
+        print(f"  Aligned {len(merged)} prediction points")
 
         joints = ['index','middle','ring','pinky','thumbFlex','thumbRot']
         all_metric_rows += compute_metrics(merged, joints, 'EMG Only', test_unit['trial_id'], pred_suffix="_emg")
@@ -947,20 +1163,19 @@ def main():
         if CFG.make_plots:
             plot_quicklook(merged, preds_dir)
             plot_error_vs_force(merged, preds_dir)
+            plot_active_fingers_only(merged, preds_dir, test_unit['movement'])
 
-    # 6) Save results
+    # 9) Save results
+    print("\n📊 Saving results...")
     per_trial = pd.DataFrame(all_metric_rows)
     per_trial.to_csv(out_dir / 'metrics' / 'per_trial_metrics.csv', index=False)
 
     if all_significance_rows:
         pd.DataFrame(all_significance_rows).to_csv(out_dir / 'metrics' / 'significance_tests.csv', index=False)
 
-    # Update groups for summary
     updated_groups = {
-        'free_space': [u['trial_id'] for u in free_space_units],
-        'interaction': [u['trial_id'] for u in interaction_units]
+        'interaction': [u['trial_id'] for u in test_units]
     }
-    
     summary = aggregate_metrics(per_trial, updated_groups)
     summary.to_csv(out_dir / 'metrics' / 'summary_metrics.csv', index=False)
     with open(out_dir / 'metrics' / 'summary.json','w') as f:
@@ -970,9 +1185,18 @@ def main():
 
     print("\n✅ Comparison complete!")
     print("\nSUMMARY:")
-    print("- Free-space trials: EMG-only vs EMG-only (baseline, should be identical)")
-    print("- Interaction trials: EMG-only vs EMG+Force (real comparison)")
+    print("- Trained 2 models on the same interaction training data")
+    print("- EMG-only model: uses only EMG features")
+    print("- EMG+Force model: uses EMG + force features")
+    print(f"- Tested both models on {len(test_units)} held-out interaction trials")
+
+    if len(per_trial) > 0:
+        print("\n📈 QUICK RESULTS PREVIEW:")
+        avg_metrics = per_trial.groupby('model').agg({'mae': 'mean', 'rmse': 'mean', 'r_squared': 'mean'}).round(3)
+        print(avg_metrics)
+
     return 0
+
 
 if __name__ == "__main__":
     sys.exit(main())    
