@@ -192,11 +192,11 @@ def extract_finger_forces_by_indices(angles_data):
     
     # Define the starting column index for each finger's force sensors
     force_start_indices = {
-        'index': 48,   # index0_Force through index5_Force
-        'middle': 54,  # middle0_Force through middle5_Force  
-        'ring': 60,    # ring0_Force through ring5_Force
-        'pinky': 66,   # pinky0_Force through pinky5_Force
-        'thumb': 72    # thumb0_Force through thumb5_Force
+        'index': 50,   # index0_Force through index5_Force
+        'middle': 56,  # middle0_Force through middle5_Force  
+        'ring': 62,    # ring0_Force through ring5_Force
+        'pinky': 68,   # pinky0_Force through pinky5_Force
+        'thumb': 74    # thumb0_Force through thumb5_Force
     }
     
     print(f"Extracting force data using known column indices")
@@ -288,8 +288,8 @@ def process_force_realtime_style(force_data, sampling_freq, static_offsets=None)
     
     # 2. Butterworth filter - use b,a for force (works better than SOS for force)
     nyquist = 0.5 * sampling_freq
-    normal_cutoff = min(3.0 / nyquist, 0.99)
-    b, a = signal.butter(2, normal_cutoff, btype='low')
+    normal_cutoff = min(1.0 / nyquist, 0.99)
+    b, a = signal.butter(4, normal_cutoff, btype='low')
     
     hf_filtered = np.zeros_like(static_corrected)
     for finger_idx in range(static_corrected.shape[1]):
@@ -710,7 +710,7 @@ def process_emg_and_angles(
         emg_timestamps_file='raw_timestamps.npy',
         angles_file='angles.npy',
         angles_timestamps_file='angle_timestamps.npy',
-        angle_filter_cutoff=2.0,
+        angle_filter_cutoff=1.5,
         force_filter_cutoff=2.0,
         use_timestamp_scaling=False,  # New parameter to enable/disable scaling
         angle_shift_seconds=0.0,
@@ -1098,7 +1098,7 @@ def process_all_experiments(person_id, out_root, movement=None, snr_threshold=3.
                     hand_side=hand_side,
                     use_timestamp_scaling=use_timestamp_scaling,  # Pass the parameter
                     angle_shift_seconds=angle_shift_seconds,
-                    angle_filter_cutoff=5.0
+                    angle_filter_cutoff=2.0
                 )
             except Exception as e:
                 print(f"Failed to process {exp_dir}: {e}")
@@ -1113,8 +1113,8 @@ if __name__ == "__main__":
     parser.add_argument('--snr_threshold', type=float, default=0.9, help='SNR threshold for channel selection')
     parser.add_argument("--hand_side", "-s", choices=["left", "right"], default="left", help="Side of the prosthetic hand")
     parser.add_argument('--no_timestamp_scaling', action='store_true', help='Disable timestamp scaling (use original timestamps)')
-    parser.add_argument('--angle_shift', type=float, default=0.7, help= 'Shift angles to the left by this many seconds')
-    parser.add_argument('--force_filter_cutoff', type=float, default=2.0, help='Force filter cutoff frequency in Hz (default: 2.0)')
+    parser.add_argument('--angle_shift', type=float, default=0.6, help= 'Shift angles to the left by this many seconds')
+    parser.add_argument('--force_filter_cutoff', type=float, default=1.0, help='Force filter cutoff frequency in Hz (default: 2.0)')
     args = parser.parse_args()
 
     use_timestamp_scaling = True 
