@@ -5,12 +5,15 @@ Standalone comparison script for EMG-only vs EMG+Force models.
 Trains two models with identical architectures and hyperparameters,
 differing only in input features (EMG vs EMG+Force).
 
+NEW: Added --test_trial option with "all" for leave-one-out cross-validation
+
 Usage:
 python compare_emg_vs_force.py \
   --data_root data/Person01 \
   --recordings_yaml configs/recordings_p01.yaml \
   --out_dir results/p01_emg_vs_force \
   --intact_hand Left \
+  --test_trial all \
   --model_type DenseNet \
   --hidden_size 128 \
   --n_layers 3 \
@@ -62,12 +65,13 @@ from typing import List, Tuple
 @dataclass
 class HardConfig:
     # ---- data / run ----
-    data_root: str = "data/patient1"
-    out_dir: str   = "results/patient1_emg_vs_force"
-    intact_hand: str = "Right"
+    data_root: str = "data/P5_869_interaction"
+    out_dir: str   = "results/P5_869_interaction_emg_vs_force"
+    intact_hand: str = "Left"
     device: str = "auto"
     seed: int = 42
     make_plots: bool = True
+    test_trial: str = "pinch_interaction#2"  # NEW: which trial(s) to test on
 
     # Movement sets (names per your actual folder structure)
     free_space_movements: list = field(default_factory=lambda: [
@@ -107,8 +111,8 @@ class HardConfig:
     ])
     force_features: list = field(default_factory=list)  # filled by finalize()
     targets: list = field(default_factory=lambda: [
-        ['Right','index_Pos'], ['Right','middle_Pos'], ['Right','ring_Pos'],
-        ['Right','pinky_Pos'], ['Right','thumbFlex_Pos'], ['Right','thumbRot_Pos']
+        ['Left','index_Pos'], ['Left','middle_Pos'], ['Left','ring_Pos'],
+        ['Left','pinky_Pos'], ['Left','thumbFlex_Pos'], ['Left','thumbRot_Pos']
     ])
 
     def finalize(self):
@@ -120,34 +124,91 @@ class HardConfig:
             ]
         return self
 
+# --- Compatibility shim so all model.forward calls tolerate "states=..." ---
+
+
+class _StatesKeywordShim(torch.nn.Module):
+    """Wrap a model so forward(x, states=...) works even if the base
+    forward doesn't accept the 'states' keyword. Also proxy attrs like .device.
+    """
+    def __init__(self, base):
+        super().__init__()
+        self.base = base  # register as submodule so .to(), .eval(), etc. work
+
+    @property
+    def device(self):
+        # Prefer base.device; otherwise infer from parameters
+        if hasattr(self.base, "device"):
+            return self.base.device
+        try:
+            return next(self.base.parameters()).device
+        except StopIteration:
+            return torch.device("cpu")
+
+    def forward(self, x, *args, **kwargs):
+        # Accept states=... as keyword; pass positionally to be universal
+        states = kwargs.pop("states", None)
+        try:
+            return self.base(x, states)
+        except TypeError:
+            # Base may actually accept 'states' as kwarg; try that
+            return self.base(x, *args, states=states, **kwargs)
+        except Exception:
+            # Last resort: ignore 'states' entirely
+            return self.base(x, *args, **kwargs)
+
+    def __getattr__(self, name):
+        # Delegate everything not found on this shim to the base model
+        try:
+            return super().__getattr__(name)
+        except AttributeError:
+            return getattr(self.base, name)
+
+# Monkey-patch the wrapper so every created model is wrapped with the shim
+__orig_tsrw_init = TimeSeriesRegressorWrapper.__init__
+
+def __patched_tsrw_init(self, *args, **kwargs):
+    __orig_tsrw_init(self, *args, **kwargs)
+    # Wrap underlying model once
+    try:
+        self.model = _StatesKeywordShim(self.model)
+    except Exception:
+        pass
+
+TimeSeriesRegressorWrapper.__init__ = __patched_tsrw_init
+
+
+
+
 def parse_args():
     parser = argparse.ArgumentParser(description='Compare EMG-only vs EMG+Force models')
     
     # Data and setup
-    parser.add_argument('--data_root', type=str, required=True, help='Root data directory (e.g., data/Person01)')
-    parser.add_argument('--recordings_yaml', type=str, required=True, help='YAML file listing recordings to use')
-    parser.add_argument('--out_dir', type=str, required=True, help='Output directory for results')
-    parser.add_argument('--intact_hand', type=str, required=True, choices=['Left', 'Right'], help='Intact hand side')
+    # parser.add_argument('--data_root', type=str, default='data/patient1', required=True, help='Root data directory (e.g., data/Person01)')
+    # parser.add_argument('--recordings_yaml', type=str, required=False, help='YAML file listing recordings to use')
+    # parser.add_argument('--out_dir', type=str, required=True, help='Output directory for results')
+    # parser.add_argument('--intact_hand', type=str, default='Right', required=True, choices=['Left', 'Right'], help='Intact hand side')
+    parser.add_argument('--test_trial', type=str, default='pinch_interaction#2', help='Trial to test on, or "all" for leave-one-out')
     
     # Model architecture
-    parser.add_argument('--model_type', type=str, default='DenseNet', help='Model type (DenseNet, GRU, etc.)')
-    parser.add_argument('--hidden_size', type=int, default=128, help='Hidden layer size')
-    parser.add_argument('--n_layers', type=int, default=3, help='Number of layers')
-    parser.add_argument('--seq_len', type=int, default=20, help='Sequence length')
+    parser.add_argument('--model_type', type=str, default='GRU', help='Model type (DenseNet, GRU, etc.)')
+    parser.add_argument('--hidden_size', type=int, default=32, help='Hidden layer size')
+    parser.add_argument('--n_layers', type=int, default=2, help='Number of layers')
+    parser.add_argument('--seq_len', type=int, default=64, help='Sequence length')
     
     # Training
-    parser.add_argument('--batch_size', type=int, default=64, help='Batch size')
-    parser.add_argument('--n_epochs', type=int, default=80, help='Number of epochs')
+    parser.add_argument('--batch_size', type=int, default=8, help='Batch size')
+    parser.add_argument('--n_epochs', type=int, default=15, help='Number of epochs')
     parser.add_argument('--learning_rate', type=float, default=1e-3, help='Learning rate')
     parser.add_argument('--weight_decay', type=float, default=0.0, help='Weight decay')
-    parser.add_argument('--warmup_steps', type=int, default=5, help='Warmup steps')
+    parser.add_argument('--warmup_steps', type=int, default=3, help='Warmup steps')
     parser.add_argument('--early_stopping_patience', type=int, default=10, help='Early stopping patience')
     parser.add_argument('--early_stopping_delta', type=float, default=1e-4, help='Early stopping delta')
     
     # Misc
     parser.add_argument('--wandb_mode', type=str, default='disabled', choices=['online', 'offline', 'disabled'], help='WandB mode')
     parser.add_argument('--seed', type=int, default=42, help='Random seed')
-    parser.add_argument('--make_plots', action='store_true', help='Generate plots')
+    parser.add_argument('--make_plots', choices=['true', 'false'], default='true', help='Generate plots')
     parser.add_argument('--device', type=str, default='auto', help='Device (auto, cpu, cuda)')
     
     return parser.parse_args()
@@ -212,7 +273,7 @@ def set_seeds(seed: int):
     torch.manual_seed(seed)
     if torch.cuda.is_available():
         torch.cuda.manual_seed_all(seed)
-    print(f"✓ Set all seeds to {seed}")
+    print(f"✅ Set all seeds to {seed}")
 
 
 def infer_emg_channels(trial_dir: str) -> int:
@@ -223,7 +284,7 @@ def infer_emg_channels(trial_dir: str) -> int:
     
     emg = np.load(emg_path)
     n_channels = emg.shape[1] if emg.ndim > 1 else 1
-    print(f"✓ Detected {n_channels} EMG channels from {trial_dir}")
+    print(f"✅ Detected {n_channels} EMG channels from {trial_dir}")
     return n_channels
 
 
@@ -259,6 +320,7 @@ def drop_constant_columns(df: pd.DataFrame, cols: List) -> List:
             print(f"ℹ️  Dropping constant feature: {c} (std={np.nanstd(values):.2e})")
     
     return keep
+
 def discover_features_and_targets(sample_parquet_path: str, intact_hand: str, n_emg_channels: int) -> Tuple[List, List, List]:
     """
     Inspect a sample parquet file to discover available features and targets.
@@ -314,9 +376,9 @@ def discover_features_and_targets(sample_parquet_path: str, intact_hand: str, n_
         if len(force_features) == 0:
             print("⚠️  No force features available - EMG+Force model will be identical to EMG-only")
     
-    print(f"✓ EMG features: {len(emg_features)} channels")
-    print(f"✓ Force features: {len(force_features)} fingers")
-    print(f"✓ Targets: {len(targets)} joints")
+    print(f"✅ EMG features: {len(emg_features)} channels")
+    print(f"✅ Force features: {len(force_features)} fingers")
+    print(f"✅ Targets: {len(targets)} joints")
     
     return emg_features, force_features, targets
 
@@ -455,7 +517,7 @@ def train_one_fold(
     with open(config_path, 'w') as f:
         json.dump(config.to_dict(), f, indent=2)
     
-    print(f"✓ Saved {model_name} model to {model_path}")
+    print(f"✅ Saved {model_name} model to {model_path}")
     return str(model_path)
 
 
@@ -662,6 +724,7 @@ def compute_paired_significance(merged_df: pd.DataFrame, joint_names: List[str],
         })
     
     return results
+
 def aggregate_metrics(per_trial_metrics: pd.DataFrame, groups: Dict[str, List[str]]) -> pd.DataFrame:
     """Aggregate per-trial metrics into summary statistics."""
     if len(per_trial_metrics) == 0:
@@ -936,6 +999,58 @@ def plot_active_fingers_only(merged_df: pd.DataFrame, out_dir: Path, movement: s
     plt.close()
     print(f"📊 Saved active fingers error plot to {out_dir / 'error_active_fingers.png'}")
 
+def plot_cross_validation_summary(per_trial_metrics: pd.DataFrame, out_dir: Path):
+    """Generate cross-validation summary plots when using leave-one-out."""
+    if len(per_trial_metrics) == 0:
+        print("⚠️  No metrics to plot for CV summary")
+        return
+    
+    # Plot MAE across all test trials
+    plt.figure(figsize=(15, 10))
+    
+    # Subplot 1: MAE by trial and model
+    plt.subplot(2, 2, 1)
+    mae_pivot = per_trial_metrics.pivot_table(index='trial_id', columns='model', values='mae', aggfunc='mean')
+    mae_pivot.plot(kind='bar', ax=plt.gca(), width=0.8)
+    plt.title('Mean Absolute Error by Test Trial')
+    plt.ylabel('MAE (degrees)')
+    plt.xticks(rotation=45)
+    plt.legend()
+    plt.grid(True, alpha=0.3)
+    
+    # Subplot 2: RMSE by trial and model
+    plt.subplot(2, 2, 2)
+    rmse_pivot = per_trial_metrics.pivot_table(index='trial_id', columns='model', values='rmse', aggfunc='mean')
+    rmse_pivot.plot(kind='bar', ax=plt.gca(), width=0.8)
+    plt.title('Root Mean Square Error by Test Trial')
+    plt.ylabel('RMSE (degrees)')
+    plt.xticks(rotation=45)
+    plt.legend()
+    plt.grid(True, alpha=0.3)
+    
+    # Subplot 3: R² by trial and model
+    plt.subplot(2, 2, 3)
+    r2_pivot = per_trial_metrics.pivot_table(index='trial_id', columns='model', values='r_squared', aggfunc='mean')
+    r2_pivot.plot(kind='bar', ax=plt.gca(), width=0.8)
+    plt.title('R² Score by Test Trial')
+    plt.ylabel('R² Score')
+    plt.xticks(rotation=45)
+    plt.legend()
+    plt.grid(True, alpha=0.3)
+    
+    # Subplot 4: Overall comparison boxplot
+    plt.subplot(2, 2, 4)
+    sns.boxplot(data=per_trial_metrics, x='model', y='mae')
+    plt.title('Overall MAE Distribution')
+    plt.ylabel('MAE (degrees)')
+    plt.xticks(rotation=45)
+    
+    plt.tight_layout()
+    plt.savefig(out_dir / 'cross_validation_summary.png', dpi=150, bbox_inches='tight')
+    plt.close()
+    print(f"📊 Saved cross-validation summary to {out_dir / 'cross_validation_summary.png'}")
+
+
 def write_manifest(out_path: Path, args, recordings: List[str], groups: Dict):
     """Write run manifest for reproducibility."""
     manifest = {
@@ -954,9 +1069,149 @@ def write_manifest(out_path: Path, args, recordings: List[str], groups: Dict):
         yaml.dump(manifest, f, indent=2)
 
 
+def run_single_fold_comparison(
+    cfg: HardConfig,
+    emg_features: List,
+    force_features: List,
+    targets: List,
+    train_units: List,
+    test_units: List,
+    fold_idx: int,
+    device: torch.device,
+    out_dir: Path
+) -> Tuple[List[Dict], List[Dict]]:
+    """
+    Run comparison for a single fold (train/test split).
+    
+    Returns:
+        fold_metrics: List of metric dictionaries for this fold
+        fold_significance: List of significance test results for this fold
+    """
+    print(f"\n{'='*60}")
+    print(f"FOLD {fold_idx}: Testing on {[u['trial_id'] for u in test_units]}")
+    print(f"Training on {len(train_units)} trials")
+    print(f"{'='*60}")
+    
+    train_dirs = [u["dir"] for u in train_units]
+    test_dirs = [u["dir"] for u in test_units]
+    
+    num_train_dirs = len(train_dirs)
+    num_test_dirs = len(test_dirs)
+    
+    # Train EMG+Force model
+    print(f"\n🚀 Training EMG+Force model for fold {fold_idx}...")
+    cfg_force = build_config(cfg, emg_features + force_features, targets, f"fold_{fold_idx}_emg_force", num_train_dirs, num_test_dirs)
+    tr_force, va_force, _, te_force_all = get_data(cfg_force, train_dirs, cfg.intact_hand, visualize=False, test_dirs=test_dirs)
+    force_model = train_model(
+        tr_force, va_force, te_force_all, device,
+        cfg_force.wandb_mode, cfg_force.wandb_project, cfg_force.name,
+        cfg_force, person_dir=str(out_dir)
+    )
+    
+    # Train EMG-only model
+    print(f"\n🚀 Training EMG-only model for fold {fold_idx}...")
+    cfg_emg = build_config(cfg, emg_features, targets, f"fold_{fold_idx}_emg_only", num_train_dirs, num_test_dirs)
+    tr_emg, va_emg, _, te_emg_all = get_data(cfg_emg, train_dirs, cfg.intact_hand, visualize=False, test_dirs=test_dirs)
+    emg_model = train_model(
+        tr_emg, va_emg, te_emg_all, device,
+        cfg_emg.wandb_mode, cfg_emg.wandb_project, cfg_emg.name,
+        cfg_emg, person_dir=str(out_dir)
+    )
+    
+    # Save models for this fold
+    fold_models_dir = out_dir / 'models' / f'fold_{fold_idx}'
+    fold_models_dir.mkdir(parents=True, exist_ok=True)
+    
+    emg_model_path = fold_models_dir / 'emg_only_best.pt'
+    force_model_path = fold_models_dir / 'emg_force_best.pt'
+    
+    emg_model.save(str(emg_model_path))
+    force_model.save(str(force_model_path))
+    
+    # Save configs
+    with open(fold_models_dir / 'emg_only_config.json', 'w') as f:
+        json.dump(cfg_emg.to_dict(), f, indent=2)
+    with open(fold_models_dir / 'emg_force_config.json', 'w') as f:
+        json.dump(cfg_force.to_dict(), f, indent=2)
+    
+    print(f"✅ Saved fold {fold_idx} models to {fold_models_dir}")
+    
+    # Test both models
+    emg_model.eval()
+    force_model.eval()
+    
+    fold_metrics = []
+    fold_significance = []
+    
+    for i, test_unit in enumerate(test_units):
+        print(f"\nTesting on {test_unit['trial_id']} (fold {fold_idx}, test {i+1}/{len(test_units)})")
+        
+        te_emg_single = [te_emg_all[i]]
+        te_force_single = [te_force_all[i]]
+        
+        pred_emg = predict_on_trial(emg_model, te_emg_single[0], cfg_emg.features, cfg_emg.targets, cfg.intact_hand, device)
+        pred_force = predict_on_trial(force_model, te_force_single[0], cfg_force.features, cfg_force.targets, cfg.intact_hand, device)
+        
+        # Save predictions
+        preds_dir = out_dir / 'predictions' / f"fold_{fold_idx}" / f"{test_unit['trial_id'].replace('#','_')}"
+        preds_dir.mkdir(parents=True, exist_ok=True)
+        pred_emg.to_csv(preds_dir / 'preds_emg_only.csv', index=False)
+        pred_force.to_csv(preds_dir / 'preds_emg_plus_force.csv', index=False)
+        
+        merged = align_predictions(pred_emg, pred_force)
+        merged.to_csv(preds_dir / 'merged_comparison.csv', index=False)
+        print(f"  Aligned {len(merged)} prediction points")
+        
+        # Compute metrics and significance tests
+        joints = ['index','middle','ring','pinky','thumbFlex','thumbRot']
+        trial_metrics_emg = compute_metrics(merged, joints, 'EMG Only', test_unit['trial_id'], pred_suffix="_emg")
+        trial_metrics_force = compute_metrics(merged, joints, 'EMG + Force', test_unit['trial_id'], pred_suffix="_force")
+        trial_significance = compute_paired_significance(merged, joints, test_unit['trial_id'])
+        
+        # Add fold information to metrics
+        for metric in trial_metrics_emg + trial_metrics_force:
+            metric['fold'] = fold_idx
+        for sig in trial_significance:
+            sig['fold'] = fold_idx
+        
+        fold_metrics.extend(trial_metrics_emg + trial_metrics_force)
+        fold_significance.extend(trial_significance)
+        
+        # Generate plots for this trial
+        if cfg.make_plots:
+            plot_quicklook(merged, preds_dir)
+            plot_error_vs_force(merged, preds_dir)
+            plot_active_fingers_only(merged, preds_dir, test_unit['movement'])
+    
+    return fold_metrics, fold_significance
+
+
 def main():
     import ast  # needed to parse stringified tuple column names
-    CFG = HardConfig().finalize()
+    
+    # Parse command line arguments
+    args = parse_args()
+    
+    # Update config with command line arguments
+    CFG = HardConfig()
+    # CFG.data_root = args.data_root
+    # CFG.out_dir = args.out_dir
+    # CFG.intact_hand = args.intact_hand
+    CFG.test_trial = args.test_trial
+    CFG.model_type = args.model_type
+    CFG.seq_len = args.seq_len
+    CFG.batch_size = args.batch_size
+    CFG.n_epochs = args.n_epochs
+    CFG.learning_rate = args.learning_rate
+    CFG.weight_decay = args.weight_decay
+    CFG.warmup_steps = args.warmup_steps
+    CFG.early_stopping_patience = args.early_stopping_patience
+    CFG.early_stopping_delta = args.early_stopping_delta
+    CFG.wandb_mode = args.wandb_mode
+    CFG.seed = args.seed
+    CFG.make_plots = args.make_plots == 'true'
+    CFG.device = args.device
+    CFG = CFG.finalize()
 
     def _to_hashable(cols):
         out = []
@@ -1000,18 +1255,11 @@ def main():
     print(f"Free-space units: {len(free_space_units)}")
     print(f"Interaction units: {len(interaction_units)}")
 
-    # 3) Start from CFG features/targets (will be normalized later)
-    emg_features_cfg   = CFG.emg_features
-    force_features_cfg = CFG.force_features
-    targets_cfg        = CFG.targets
-
-    all_metric_rows, all_significance_rows = [], []
-
     if not interaction_units:
         print("❌ No interaction units found for comparison")
         return 1
 
-    # 4) Check force availability once using any interaction trial
+    # 3) Check force availability using first interaction trial
     print("\n--- Checking Force Feature Availability ---")
     force_final = []
     try:
@@ -1058,145 +1306,146 @@ def main():
         traceback.print_exc()
         force_final = []
 
-    # 5) Split interaction trials: train on all except the one you want to test
-    target_test_trial = "pinch_interaction#2"
-    test_units = [u for u in interaction_units if u['trial_id'] == target_test_trial]
-    train_units = [u for u in interaction_units if u['trial_id'] != target_test_trial]
-
-    print(f"🎯 Testing specifically on: {target_test_trial}")
-    print(f"Training on {len(train_units)} other interaction trials")
-    
-    train_dirs = [u["dir"] for u in train_units]
-    test_dirs = [u["dir"] for u in test_units]
-    
-    print(f"\n🔍 DEBUG: Checking training directories:")
-    for i, train_dir in enumerate(train_dirs[:3]):
-        print(f"  {i}: {train_dir}")
-    print(f"🔍 Sample train_unit: {train_units[0] if train_units else 'None'}")
-
-    print(f"\n🎯 TRAIN/TEST SPLIT:")
-    print(f"Training on {len(train_dirs)} interaction trials")
-    print(f"Testing on {len(test_dirs)} interaction trials: {[u['trial_id'] for u in test_units]}")
-    
-    if len(train_dirs) == 0:
-        print("❌ No training data available")
-        return 1
-
     # === OPTION A CRITICAL STEP: convert features/targets to HASHABLE TUPLES ===
-    emg_features   = _to_hashable(emg_features_cfg)
-    targets        = _to_hashable(targets_cfg)
+    emg_features   = _to_hashable(CFG.emg_features)
+    targets        = _to_hashable(CFG.targets)
     force_features = _to_hashable(force_final)  # handles list->tuple and "('L','x')" -> ('L','x')
 
-    # 6) Train TWO models on the same interaction training data
-    print("\n" + "="*80)
-    print("TRAINING INTERACTION MODELS: EMG-only vs EMG+Force")
-    print("="*80)
-    print("Both models trained on the same interaction data for fair comparison")
+    # 4) Determine test strategy based on test_trial argument
+    all_metric_rows = []
+    all_significance_rows = []
+    
+    if CFG.test_trial.lower() == "all":
+        print(f"\n🔄 LEAVE-ONE-OUT CROSS-VALIDATION MODE")
+        print(f"Will test each of {len(interaction_units)} interaction trials separately")
+        
+        # Leave-one-out: each interaction trial becomes test set once
+        for fold_idx, test_unit in enumerate(interaction_units):
+            train_units = [u for u in interaction_units if u['trial_id'] != test_unit['trial_id']]
+            test_units = [test_unit]
+            
+            if len(train_units) == 0:
+                print(f"⚠️  Skipping fold {fold_idx} - no training data")
+                continue
+            
+            fold_metrics, fold_significance = run_single_fold_comparison(
+                CFG, emg_features, force_features, targets,
+                train_units, test_units, fold_idx, device, out_dir
+            )
+            
+            all_metric_rows.extend(fold_metrics)
+            all_significance_rows.extend(fold_significance)
+        
+        test_strategy = "leave_one_out"
+        
+    else:
+        print(f"\n🎯 SINGLE TEST TRIAL MODE")
+        print(f"Testing specifically on: {CFG.test_trial}")
+        
+        # Single test trial mode (original behavior)
+        test_units = [u for u in interaction_units if u['trial_id'] == CFG.test_trial]
+        train_units = [u for u in interaction_units if u['trial_id'] != CFG.test_trial]
+        
+        if not test_units:
+            print(f"❌ Test trial '{CFG.test_trial}' not found in interaction units")
+            available_trials = [u['trial_id'] for u in interaction_units]
+            print(f"Available trials: {available_trials}")
+            return 1
+        
+        if len(train_units) == 0:
+            print("❌ No training data available")
+            return 1
+        
+        fold_metrics, fold_significance = run_single_fold_comparison(
+            CFG, emg_features, force_features, targets,
+            train_units, test_units, 0, device, out_dir
+        )
+        
+        all_metric_rows.extend(fold_metrics)
+        all_significance_rows.extend(fold_significance)
+        
+        test_strategy = "single_trial"
 
-    num_train_dirs = len(train_dirs)
-    num_test_dirs = len(test_dirs)
-
-    # Model 2: EMG+Force
-    print(f"\n🚀 Training EMG+Force model on {len(train_dirs)} interaction trials...")
-    cfg_force = build_config(CFG, emg_features + force_features, targets, "int_emg_force", num_train_dirs, num_test_dirs)
-    tr_force, va_force, _, te_force_all = get_data(cfg_force, train_dirs, CFG.intact_hand, visualize=False, test_dirs=test_dirs)
-    force_model = train_model(
-        tr_force, va_force, te_force_all, device,
-        cfg_force.wandb_mode, cfg_force.wandb_project, cfg_force.name,
-        cfg_force, person_dir=str(out_dir)
-    )
-    force_dir = out_dir / 'models' / 'int_emg_force'
-    force_dir.mkdir(parents=True, exist_ok=True)
-    force_model_path = force_dir / 'best.pt'
-    force_model.save(str(force_model_path))
-    with open(force_dir / 'config.json', 'w') as f:
-        json.dump(cfg_force.to_dict(), f, indent=2)
-    print(f"✅ Saved EMG+Force model to {force_model_path}")
-
-    # Model 1: EMG-only
-    print(f"\n🚀 Training EMG-only model on {len(train_dirs)} interaction trials...")
-    cfg_emg = build_config(CFG, emg_features, targets, "int_emg_only", num_train_dirs, num_test_dirs)
-    tr_emg, va_emg, _, te_emg_all = get_data(cfg_emg, train_dirs, CFG.intact_hand, visualize=False, test_dirs=test_dirs)
-    emg_model = train_model(
-        tr_emg, va_emg, te_emg_all, device,
-        cfg_emg.wandb_mode, cfg_emg.wandb_project, cfg_emg.name,
-        cfg_emg, person_dir=str(out_dir)
-    )
-    emg_dir = out_dir / 'models' / 'int_emg_only'
-    emg_dir.mkdir(parents=True, exist_ok=True)
-    emg_model_path = emg_dir / 'best.pt'
-    emg_model.save(str(emg_model_path))
-    with open(emg_dir / 'config.json', 'w') as f:
-        json.dump(cfg_emg.to_dict(), f, indent=2)
-    print(f"✅ Saved EMG-only model to {emg_model_path}")
-
-    # 7) Load both models for testing
-    print("\n📊 Loading trained models for predictions...")
-    emg_model.eval()
-    force_model.eval()
-
-    # 8) Test both models on the same test trials
-    print(f"\n📈 Testing both models on {len(test_units)} trials...")
-    for i, test_unit in enumerate(test_units):
-        print(f"\nTesting on {test_unit['trial_id']} ({i+1}/{len(test_units)})")
-
-        te_emg_single = [te_emg_all[i]]
-        te_force_single = [te_force_all[i]]
-
-        pred_emg = predict_on_trial(emg_model, te_emg_single[0], cfg_emg.features, cfg_emg.targets, CFG.intact_hand, device)
-        pred_force = predict_on_trial(force_model, te_force_single[0], cfg_force.features, cfg_force.targets, CFG.intact_hand, device)
-
-        preds_dir = out_dir / 'predictions' / f"interaction_{test_unit['trial_id'].replace('#','_')}"
-        preds_dir.mkdir(parents=True, exist_ok=True)
-        pred_emg.to_csv(preds_dir / 'preds_emg_only.csv', index=False)
-        pred_force.to_csv(preds_dir / 'preds_emg_plus_force.csv', index=False)
-
-        merged = align_predictions(pred_emg, pred_force)
-        merged.to_csv(preds_dir / 'merged_comparison.csv', index=False)
-        print(f"  Aligned {len(merged)} prediction points")
-
-        joints = ['index','middle','ring','pinky','thumbFlex','thumbRot']
-        all_metric_rows += compute_metrics(merged, joints, 'EMG Only', test_unit['trial_id'], pred_suffix="_emg")
-        all_metric_rows += compute_metrics(merged, joints, 'EMG + Force', test_unit['trial_id'], pred_suffix="_force")
-        all_significance_rows += compute_paired_significance(merged, joints, test_unit['trial_id'])
-
-        if CFG.make_plots:
-            plot_quicklook(merged, preds_dir)
-            plot_error_vs_force(merged, preds_dir)
-            plot_active_fingers_only(merged, preds_dir, test_unit['movement'])
-
-    # 9) Save results
-    print("\n📊 Saving results...")
+    # 5) Save and analyze results
+    print(f"\n📊 Saving results for {test_strategy} strategy...")
+    
     per_trial = pd.DataFrame(all_metric_rows)
     per_trial.to_csv(out_dir / 'metrics' / 'per_trial_metrics.csv', index=False)
 
     if all_significance_rows:
-        pd.DataFrame(all_significance_rows).to_csv(out_dir / 'metrics' / 'significance_tests.csv', index=False)
+        significance_df = pd.DataFrame(all_significance_rows)
+        significance_df.to_csv(out_dir / 'metrics' / 'significance_tests.csv', index=False)
 
-    updated_groups = {
-        'interaction': [u['trial_id'] for u in test_units]
-    }
+    # Updated groups for aggregation
+    if test_strategy == "leave_one_out":
+        updated_groups = {
+            'interaction': [u['trial_id'] for u in interaction_units]
+        }
+    else:
+        updated_groups = {
+            'interaction': [u['trial_id'] for u in test_units]
+        }
+    
     summary = aggregate_metrics(per_trial, updated_groups)
     summary.to_csv(out_dir / 'metrics' / 'summary_metrics.csv', index=False)
     with open(out_dir / 'metrics' / 'summary.json','w') as f:
         json.dump(summary.to_dict(orient='records'), f, indent=2)
 
-    write_manifest(out_dir / 'run_manifest.yaml', CFG, [u['trial_id'] for u in units], updated_groups)
+    # Generate cross-validation summary plots if using leave-one-out
+    if CFG.make_plots and test_strategy == "leave_one_out":
+        plot_cross_validation_summary(per_trial, out_dir)
+
+    # Write manifest with test strategy info
+    manifest_data = {
+        'test_strategy': test_strategy,
+        'test_trial': CFG.test_trial,
+        'n_folds': len(interaction_units) if test_strategy == "leave_one_out" else 1,
+        'recordings': [u['trial_id'] for u in units],
+        'groups': updated_groups
+    }
+    write_manifest(out_dir / 'run_manifest.yaml', args, [u['trial_id'] for u in units], manifest_data)
 
     print("\n✅ Comparison complete!")
-    print("\nSUMMARY:")
-    print("- Trained 2 models on the same interaction training data")
-    print("- EMG-only model: uses only EMG features")
-    print("- EMG+Force model: uses EMG + force features")
-    print(f"- Tested both models on {len(test_units)} held-out interaction trials")
+    print(f"\nSTRATEGY: {test_strategy}")
+    
+    if test_strategy == "leave_one_out":
+        print(f"- Performed leave-one-out cross-validation on {len(interaction_units)} interaction trials")
+        print(f"- Each trial was used as test set exactly once")
+        print(f"- Total models trained: {2 * len(interaction_units)} (EMG-only + EMG+Force for each fold)")
+    else:
+        print("- Trained 2 models on the same interaction training data")
+        print("- EMG-only model: uses only EMG features")
+        print("- EMG+Force model: uses EMG + force features")
+        print(f"- Tested both models on 1 held-out interaction trial: {CFG.test_trial}")
 
     if len(per_trial) > 0:
         print("\n📈 QUICK RESULTS PREVIEW:")
-        avg_metrics = per_trial.groupby('model').agg({'mae': 'mean', 'rmse': 'mean', 'r_squared': 'mean'}).round(3)
-        print(avg_metrics)
+        if test_strategy == "leave_one_out":
+            # Show cross-validation results
+            cv_metrics = per_trial.groupby('model').agg({
+                'mae': ['mean', 'std'], 
+                'rmse': ['mean', 'std'], 
+                'r_squared': ['mean', 'std']
+            }).round(3)
+            print("Cross-validation results (mean ± std):")
+            print(cv_metrics)
+            
+            # Show per-trial breakdown
+            print(f"\nPer-trial results:")
+            trial_summary = per_trial.groupby(['trial_id', 'model']).agg({
+                'mae': 'mean', 
+                'rmse': 'mean', 
+                'r_squared': 'mean'
+            }).round(3)
+            print(trial_summary)
+            
+        else:
+            # Single trial results
+            avg_metrics = per_trial.groupby('model').agg({'mae': 'mean', 'rmse': 'mean', 'r_squared': 'mean'}).round(3)
+            print(avg_metrics)
 
     return 0
 
 
 if __name__ == "__main__":
-    sys.exit(main())    
+    sys.exit(main())
