@@ -58,7 +58,10 @@ import sys, os
 sys.path.append(os.path.dirname(os.path.dirname(__file__)))
 from helpers.predict_utils import get_data, rescale_data, train_model, Config, TSDataset, TSDataLoader
 from helpers.models import TimeSeriesRegressorWrapper
+from helpers.models import TimeSeriesRegressorWrapper as _TSRW
 
+_ORIG_TRAIN_ONE_EPOCH = getattr(_TSRW, "train_one_epoch", None)
+_ORIG_TRAIN_ONE_EPOCH_ENH = getattr(_TSRW, "train_one_epoch_enhanced", None)
 
 # ---- hardcoded_config.py (inline at top of your script) ----
 from dataclasses import dataclass, field
@@ -68,12 +71,13 @@ from typing import List, Tuple
 class HardConfig:
     # ---- data / run ----
     data_root: str = "data/patient1"
-    out_dir: str   = "results/patient1_full_ana_emg_vs_force"
+    out_dir: str   = "results/patient1_full_ana_MSELOSS_emg_vs_force"
     intact_hand: str = "Right"
     device: str = "auto"
     seed: int = 42
     make_plots: bool = True
-    test_trial: str = "pinch_interaction#2"  # NEW: which trial(s) to test on
+    test_trial: str = "pinch_interaction#2"  # which trial(s) to test on
+    loss_mode: str = "mse"  # "mse" for plain MSE, "enhanced" for physiology-aware
 
     # Movement sets (names per your actual folder structure)
     free_space_movements: list = field(default_factory=lambda: [
@@ -197,6 +201,8 @@ def parse_args():
     parser.add_argument('--hidden_size', type=int, default=32, help='Hidden layer size')
     parser.add_argument('--n_layers', type=int, default=2, help='Number of layers')
     parser.add_argument('--seq_len', type=int, default=64, help='Sequence length')
+    parser.add_argument('--loss_mode', type=str, default='mse', choices=['mse', 'enhanced'], 
+                       help='Loss function mode (mse, enhanced)')
     
     # Training
     parser.add_argument('--batch_size', type=int, default=8, help='Batch size')
@@ -277,6 +283,31 @@ def set_seeds(seed: int):
         torch.cuda.manual_seed_all(seed)
     print(f"✅ Set all seeds to {seed}")
 
+def set_loss_mode_for_training(loss_mode: str):
+    """
+    loss_mode: "mse" or "enhanced"
+    - "mse": use the vanilla train_one_epoch (position-only MSE + any built-in regularizers)
+    - "enhanced": route training through train_one_epoch_enhanced(..., use_enhanced_loss=True)
+      (only adds physiology term if dataloader actually yields force_data + model exposes muscle activations)
+    """
+    if loss_mode.lower() == "mse":
+        if _ORIG_TRAIN_ONE_EPOCH is None:
+            raise RuntimeError("train_one_epoch not found on TimeSeriesRegressorWrapper")
+        # Restore/keep default
+        _TSRW.train_one_epoch = _ORIG_TRAIN_ONE_EPOCH
+
+    elif loss_mode.lower() == "enhanced":
+        if _ORIG_TRAIN_ONE_EPOCH_ENH is None:
+            raise RuntimeError("train_one_epoch_enhanced not found on TimeSeriesRegressorWrapper")
+
+        def _patched_train_one_epoch(self, dataloader):
+            # call the enhanced loop with the flag set to True
+            return _ORIG_TRAIN_ONE_EPOCH_ENH(self, dataloader, use_enhanced_loss=True)
+
+        _TSRW.train_one_epoch = _patched_train_one_epoch
+
+    else:
+        raise ValueError(f"Unknown loss_mode: {loss_mode}")
 
 def infer_emg_channels(trial_dir: str) -> int:
     """Infer number of EMG channels from data file."""
@@ -1712,6 +1743,7 @@ def main():
     CFG.seed = args.seed
     CFG.make_plots = args.make_plots == 'true'
     CFG.device = args.device
+    CFG.loss_mode = args.loss_mode
     CFG = CFG.finalize()
 
     def _to_hashable(cols):
@@ -1738,7 +1770,10 @@ def main():
     (out_dir / 'logs').mkdir(exist_ok=True)
 
     device = torch.device('cuda' if (CFG.device == 'auto' and torch.cuda.is_available()) else (CFG.device if CFG.device != 'auto' else 'cpu'))
-    print(f"✅ Using device: {device}")
+    print(f"Using device: {device}")
+
+    set_loss_mode_for_training(CFG.loss_mode)
+    print(f"Using loss mode: {CFG.loss_mode}")
 
     # 1) Enumerate all trial units per your folder layout
     units = enumerate_trial_units(CFG)
