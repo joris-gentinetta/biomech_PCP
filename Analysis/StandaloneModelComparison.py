@@ -45,6 +45,8 @@ import torch
 import yaml
 import matplotlib.pyplot as plt
 import seaborn as sns
+from scipy.interpolate import interp1d
+from scipy.stats import pearsonr
 
 # Suppress warnings for cleaner output
 warnings.filterwarnings('ignore')
@@ -66,7 +68,7 @@ from typing import List, Tuple
 class HardConfig:
     # ---- data / run ----
     data_root: str = "data/P5_869_interaction"
-    out_dir: str   = "results/P5_869_interaction_emg_vs_force"
+    out_dir: str   = "results/P5_869_interaction_RemappedForces_emg_vs_force"
     intact_hand: str = "Left"
     device: str = "auto"
     seed: int = 42
@@ -770,6 +772,352 @@ def aggregate_metrics(per_trial_metrics: pd.DataFrame, groups: Dict[str, List[st
     return pd.concat(summary_rows, ignore_index=True)
 
 
+def get_force_mapping():
+    """Define mapping between joint names and force fingers."""
+    return {
+        'index': 'index_Force',
+        'middle': 'middle_Force', 
+        'ring': 'ring_Force',
+        'pinky': 'pinky_Force',
+        'thumbFlex': 'thumb_Force',  # Both thumb joints use same force sensor
+        'thumbRot': 'thumb_Force'
+    }
+
+def get_force_data_for_plots(merged_df: pd.DataFrame, intact_hand: str) -> pd.DataFrame:
+    """
+    Extract force data from the test dataframe for plotting.
+    Force data should be in the original test dataset.
+    
+    Returns DataFrame with force columns ready for plotting.
+    """
+    hand_cap = intact_hand.capitalize()
+    force_mapping = get_force_mapping()
+    
+    # Check what force columns are available in the merged dataframe
+    available_cols = merged_df.columns.tolist()
+    print(f"Available columns in merged_df: {len(available_cols)} columns")
+    
+    # Look for force data - it might be in the original test data that was merged
+    # Force data columns should be named like ('Left', 'index_Force') 
+    force_cols_available = [col for col in available_cols if 'Force' in str(col)]
+    print(f"Force columns found: {force_cols_available}")
+    
+    return merged_df
+
+def plot_quicklook_with_force(merged_df: pd.DataFrame, test_df: pd.DataFrame, out_dir: Path, intact_hand: str):
+    """Generate quicklook plots including force data for each finger."""
+    joint_names = ['index', 'middle', 'ring', 'pinky', 'thumbFlex', 'thumbRot']
+    force_mapping = get_force_mapping()
+    hand_cap = intact_hand.capitalize()
+    
+    # Check if we have data to plot
+    if len(merged_df) == 0:
+        print("⚠️  No data to plot")
+        return
+    
+    # Remove NaN values for plotting
+    plot_df = merged_df.dropna()
+    if len(plot_df) == 0:
+        print("⚠️  No valid data after dropping NaN values")
+        return
+    
+    fig, axes = plt.subplots(3, 2, figsize=(15, 18))  # Made taller for 3 rows
+    axes = axes.flatten()
+    
+    for i, joint in enumerate(joint_names):
+        ax = axes[i]
+        
+        gt_col = f'{joint}_gt_deg'
+        pred_emg_col = f'{joint}_pred_deg_emg' 
+        pred_force_col = f'{joint}_pred_deg_force'
+        
+        # Get corresponding force column
+        force_finger = force_mapping[joint]
+        force_col = (hand_cap, force_finger)
+        
+        # Check if position columns exist
+        if not all(col in plot_df.columns for col in [gt_col, pred_emg_col, pred_force_col]):
+            ax.text(0.5, 0.5, f'Missing position data\nfor {joint}', 
+                   ha='center', va='center', transform=ax.transAxes)
+            ax.set_title(f'{joint.title()} Position + Force')
+            continue
+        
+        # Create twin axis for force
+        ax2 = ax.twinx()
+        
+        # Plot position data on primary y-axis
+        ax.plot(plot_df['timestamp'], plot_df[gt_col], 
+                label='Ground Truth', color='black', linewidth=2)
+        ax.plot(plot_df['timestamp'], plot_df[pred_emg_col], 
+                label='EMG Only', color='blue', alpha=0.7)
+        ax.plot(plot_df['timestamp'], plot_df[pred_force_col], 
+                label='EMG + Force', color='red', alpha=0.7)
+        
+        # Plot force data on secondary y-axis if available
+        if force_col in test_df.columns:
+            # Align force data with prediction timestamps
+            force_data = test_df[force_col].values
+            timestamps = test_df.index if hasattr(test_df, 'index') else range(len(force_data))
+            
+            # Interpolate force to match prediction timestamps if needed
+            if len(force_data) != len(plot_df):
+                print(f"Interpolating force data for {joint}: {len(force_data)} -> {len(plot_df)}")
+                from scipy.interpolate import interp1d
+                if len(force_data) > 1 and len(timestamps) == len(force_data):
+                    f_interp = interp1d(timestamps, force_data, kind='linear', 
+                                      bounds_error=False, fill_value='extrapolate')
+                    force_data = f_interp(plot_df['timestamp'])
+                else:
+                    force_data = np.full(len(plot_df), np.nan)
+            
+            ax2.plot(plot_df['timestamp'], force_data, 
+                    label=f'{force_finger.replace("_", " ").title()}', 
+                    color='green', alpha=0.6, linestyle='--', linewidth=2)
+            ax2.set_ylabel('Force (N)', color='green')
+            ax2.tick_params(axis='y', labelcolor='green')
+        else:
+            print(f"Force column {force_col} not found for {joint}")
+        
+        ax.set_title(f'{joint.title()} Position + Force')
+        ax.set_ylabel('Angle (degrees)')
+        ax.legend(loc='upper left')
+        if force_col in test_df.columns:
+            ax2.legend(loc='upper right')
+        ax.grid(True, alpha=0.3)
+    
+    plt.tight_layout()
+    plt.savefig(out_dir / 'quicklook_comparison_with_force.png', dpi=150, bbox_inches='tight')
+    plt.close()
+    print(f"📊 Saved quicklook with force plot to {out_dir / 'quicklook_comparison_with_force.png'}")
+
+
+def plot_active_fingers_with_force(merged_df: pd.DataFrame, test_df: pd.DataFrame, out_dir: Path, movement: str, intact_hand: str):
+    """Generate plots focusing only on fingers active in the specific interaction, including force."""
+    
+    # Define active fingers for each interaction type
+    active_fingers_map = {
+        'pinch_interaction': ['index', 'thumbFlex'],  # index finger + thumb
+        'tripod_interaction': ['index', 'middle', 'thumbFlex'],  # index + middle + thumb  
+        'hook_interaction': ['index', 'middle', 'ring', 'pinky'],  # all fingers except thumb
+        'power_grip_interaction': ['index', 'middle', 'ring', 'pinky', 'thumbFlex']  # all fingers + thumb
+    }
+    
+    if movement not in active_fingers_map:
+        print(f"⚠️  Unknown movement type: {movement}")
+        return
+    
+    active_joints = active_fingers_map[movement]
+    force_mapping = get_force_mapping()
+    hand_cap = intact_hand.capitalize()
+    
+    print(f"📊 Creating active finger plots with force for {movement}: {active_joints}")
+    
+    # Check if we have data to plot
+    if len(merged_df) == 0:
+        print("⚠️  No data to plot")
+        return
+    
+    # Remove NaN values for plotting
+    plot_df = merged_df.dropna()
+    if len(plot_df) == 0:
+        print("⚠️  No valid data after dropping NaN values")
+        return
+    
+    # === ACTIVE FINGERS QUICKLOOK PLOT WITH FORCE ===
+    n_joints = len(active_joints)
+    if n_joints <= 2:
+        fig, axes = plt.subplots(1, n_joints, figsize=(8*n_joints, 6))
+    elif n_joints <= 4:
+        fig, axes = plt.subplots(2, 2, figsize=(16, 12))
+    else:
+        fig, axes = plt.subplots(2, 3, figsize=(24, 12))
+    
+    if n_joints == 1:
+        axes = [axes]
+    elif n_joints > 1:
+        axes = axes.flatten()
+    
+    for i, joint in enumerate(active_joints):
+        ax = axes[i] if n_joints > 1 else axes[0]
+        
+        gt_col = f'{joint}_gt_deg'
+        pred_emg_col = f'{joint}_pred_deg_emg' 
+        pred_force_col = f'{joint}_pred_deg_force'
+        
+        # Get corresponding force column
+        force_finger = force_mapping[joint]
+        force_col = (hand_cap, force_finger)
+        
+        # Check if columns exist
+        if not all(col in plot_df.columns for col in [gt_col, pred_emg_col, pred_force_col]):
+            ax.text(0.5, 0.5, f'Missing data\nfor {joint}', 
+                   ha='center', va='center', transform=ax.transAxes)
+            ax.set_title(f'{joint.title()} Position + Force (Active)')
+            continue
+        
+        # Create twin axis for force
+        ax2 = ax.twinx()
+        
+        # Plot ground truth and both predictions
+        ax.plot(plot_df['timestamp'], plot_df[gt_col], 
+                label='Ground Truth', color='black', linewidth=3)
+        ax.plot(plot_df['timestamp'], plot_df[pred_emg_col], 
+                label='EMG Only', color='blue', alpha=0.8, linewidth=2)
+        ax.plot(plot_df['timestamp'], plot_df[pred_force_col], 
+                label='EMG + Force', color='red', alpha=0.8, linewidth=2)
+        
+        # Plot force data if available
+        if force_col in test_df.columns:
+            force_data = test_df[force_col].values
+            timestamps = test_df.index if hasattr(test_df, 'index') else range(len(force_data))
+            
+            # Interpolate force to match prediction timestamps if needed
+            if len(force_data) != len(plot_df):
+                print(f"Interpolating force data for {joint}: {len(force_data)} -> {len(plot_df)}")
+                from scipy.interpolate import interp1d
+                if len(force_data) > 1 and len(timestamps) == len(force_data):
+                    f_interp = interp1d(timestamps, force_data, kind='linear', 
+                                      bounds_error=False, fill_value='extrapolate')
+                    force_data = f_interp(plot_df['timestamp'])
+                else:
+                    force_data = np.full(len(plot_df), np.nan)
+            
+            ax2.fill_between(plot_df['timestamp'], 0, force_data, 
+                           alpha=0.3, color='green', label=f'{force_finger.replace("_", " ").title()}')
+            ax2.plot(plot_df['timestamp'], force_data, 
+                    color='green', alpha=0.8, linestyle='--', linewidth=2)
+            ax2.set_ylabel('Force (N)', color='green')
+            ax2.tick_params(axis='y', labelcolor='green')
+        else:
+            print(f"Force column {force_col} not found for {joint}")
+        
+        ax.set_title(f'{joint.title()} Position + Force (Active)')
+        ax.set_ylabel('Angle (degrees)')
+        ax.legend(loc='upper left')
+        if force_col in test_df.columns:
+            ax2.legend(loc='upper right')
+        ax.grid(True, alpha=0.3)
+    
+    # Hide unused subplots
+    if n_joints > 1:
+        for j in range(n_joints, len(axes)):
+            axes[j].set_visible(False)
+    
+    plt.suptitle(f'{movement.replace("_", " ").title()} - Active Fingers + Force', fontsize=16)
+    plt.tight_layout()
+    plt.savefig(out_dir / 'quicklook_active_fingers_with_force.png', dpi=150, bbox_inches='tight')
+    plt.close()
+    print(f"📊 Saved active fingers with force plot to {out_dir / 'quicklook_active_fingers_with_force.png'}")
+
+
+def plot_force_correlation_analysis(merged_df: pd.DataFrame, test_df: pd.DataFrame, out_dir: Path, intact_hand: str):
+    """Generate correlation analysis between force and prediction errors."""
+    joint_names = ['index', 'middle', 'ring', 'pinky', 'thumbFlex', 'thumbRot']
+    force_mapping = get_force_mapping()
+    hand_cap = intact_hand.capitalize()
+    
+    # Check if we have data to plot
+    if len(merged_df) == 0 or len(test_df) == 0:
+        print("⚠️  No data for force correlation analysis")
+        return
+    
+    plot_df = merged_df.dropna()
+    if len(plot_df) == 0:
+        print("⚠️  No valid data after dropping NaN values")
+        return
+    
+    correlation_data = []
+    
+    fig, axes = plt.subplots(2, 3, figsize=(18, 12))
+    axes = axes.flatten()
+    
+    for i, joint in enumerate(joint_names):
+        ax = axes[i]
+        
+        gt_col = f'{joint}_gt_deg'
+        pred_emg_col = f'{joint}_pred_deg_emg'
+        pred_force_col = f'{joint}_pred_deg_force'
+        
+        force_finger = force_mapping[joint]
+        force_col = (hand_cap, force_finger)
+        
+        # Check if all required columns exist
+        if not all(col in plot_df.columns for col in [gt_col, pred_emg_col, pred_force_col]):
+            ax.text(0.5, 0.5, f'Missing data\nfor {joint}', ha='center', va='center', transform=ax.transAxes)
+            continue
+        
+        if force_col not in test_df.columns:
+            ax.text(0.5, 0.5, f'Missing force data\nfor {joint}', ha='center', va='center', transform=ax.transAxes)
+            continue
+        
+        # Calculate errors
+        gt = plot_df[gt_col].values
+        pred_emg = plot_df[pred_emg_col].values
+        pred_force = plot_df[pred_force_col].values
+        
+        error_emg = np.abs(pred_emg - gt)
+        error_force = np.abs(pred_force - gt)
+        error_improvement = error_emg - error_force  # Positive = force model better
+        
+        # Get force data (interpolated if necessary)
+        force_data = test_df[force_col].values
+        if len(force_data) != len(plot_df):
+            from scipy.interpolate import interp1d
+            timestamps = test_df.index if hasattr(test_df, 'index') else range(len(force_data))
+            if len(force_data) > 1:
+                f_interp = interp1d(timestamps, force_data, kind='linear', 
+                                  bounds_error=False, fill_value='extrapolate')
+                force_data = f_interp(plot_df['timestamp'])
+            else:
+                continue
+        
+        # Create scatter plot: force vs error improvement
+        scatter = ax.scatter(force_data, error_improvement, alpha=0.6, s=20)
+        
+        # Calculate correlation
+        valid_mask = ~(np.isnan(force_data) | np.isnan(error_improvement))
+        if np.sum(valid_mask) > 3:
+            from scipy.stats import pearsonr
+            corr, p_val = pearsonr(force_data[valid_mask], error_improvement[valid_mask])
+            
+            # Add trend line if significant correlation
+            if p_val < 0.05:
+                z = np.polyfit(force_data[valid_mask], error_improvement[valid_mask], 1)
+                p = np.poly1d(z)
+                x_trend = np.linspace(np.min(force_data[valid_mask]), np.max(force_data[valid_mask]), 100)
+                ax.plot(x_trend, p(x_trend), "r--", alpha=0.8, linewidth=2)
+            
+            ax.set_title(f'{joint.title()}\nCorr: {corr:.3f} (p={p_val:.3f})')
+            
+            correlation_data.append({
+                'joint': joint,
+                'correlation': corr,
+                'p_value': p_val,
+                'n_points': np.sum(valid_mask)
+            })
+        else:
+            ax.set_title(f'{joint.title()}\nInsufficient data')
+        
+        ax.set_xlabel(f'{force_finger.replace("_", " ").title()} (N)')
+        ax.set_ylabel('Error Improvement (deg)')
+        ax.grid(True, alpha=0.3)
+        ax.axhline(y=0, color='black', linestyle='-', alpha=0.3)
+    
+    plt.suptitle('Force vs Prediction Error Improvement\n(Positive = EMG+Force model better)', fontsize=16)
+    plt.tight_layout()
+    plt.savefig(out_dir / 'force_correlation_analysis.png', dpi=150, bbox_inches='tight')
+    plt.close()
+    
+    # Save correlation results
+    if correlation_data:
+        corr_df = pd.DataFrame(correlation_data)
+        corr_df.to_csv(out_dir / 'force_correlation_results.csv', index=False)
+        print(f"📊 Saved force correlation analysis to {out_dir / 'force_correlation_analysis.png'}")
+        print(f"📊 Saved correlation results to {out_dir / 'force_correlation_results.csv'}")
+    else:
+        print("⚠️  No valid correlation data to save")
+
+
 def plot_quicklook(merged_df: pd.DataFrame, out_dir: Path):
     """Generate quick visualization plots."""
     joint_names = ['index', 'middle', 'ring', 'pinky', 'thumbFlex', 'thumbRot']
@@ -867,7 +1215,8 @@ def plot_error_vs_force(merged_df: pd.DataFrame, out_dir: Path):
     error_df = pd.DataFrame(error_data)
     
     plt.figure(figsize=(12, 8))
-    sns.boxplot(data=error_df, x='joint', y='error', hue='model')
+    model_colors = {'EMG Only': 'blue', 'EMG + Force': 'orange'}
+    sns.boxplot(data=error_df, x='joint', y='error', hue='model', palette=model_colors)
     plt.title('Prediction Error by Joint and Model')
     plt.ylabel('Absolute Error (degrees)')
     plt.xticks(rotation=45)
@@ -882,10 +1231,10 @@ def plot_active_fingers_only(merged_df: pd.DataFrame, out_dir: Path, movement: s
     
     # Define active fingers for each interaction type
     active_fingers_map = {
-        'pinch_interaction': ['index', 'thumbFlex'],  # index finger + thumb
-        'tripod_interaction': ['index', 'middle', 'thumbFlex'],  # index + middle + thumb  
+        'pinch_interaction': ['index', 'thumbFlex', 'thumbRot'],  # index finger + thumb
+        'tripod_interaction': ['index', 'middle', 'thumbFlex', 'thumbRot'],  # index + middle + thumb  
         'hook_interaction': ['index', 'middle', 'ring', 'pinky'],  # all fingers except thumb
-        'power_grip_interaction': ['index', 'middle', 'ring', 'pinky', 'thumbFlex']  # all fingers + thumb
+        'power_grip_interaction': ['index', 'middle', 'ring', 'pinky', 'thumbFlex', 'thumbRot']  # all fingers + thumb
     }
     
     if movement not in active_fingers_map:
@@ -988,7 +1337,8 @@ def plot_active_fingers_only(merged_df: pd.DataFrame, out_dir: Path, movement: s
     error_df = pd.DataFrame(error_data)
     
     plt.figure(figsize=(max(6, len(active_joints)*1.5), 6))
-    sns.boxplot(data=error_df, x='joint', y='error', hue='model')
+    model_colors = {'EMG Only': 'blue', 'EMG + Force': 'orange'}
+    sns.boxplot(data=error_df, x='joint', y='error', hue='model', palette=model_colors)
     plt.title(f'{movement.replace("_", " ").title()} - Active Fingers Error Comparison')
     plt.ylabel('Absolute Error (degrees)')
     plt.xlabel('Active Joints')
@@ -1002,53 +1352,197 @@ def plot_active_fingers_only(merged_df: pd.DataFrame, out_dir: Path, movement: s
 def plot_cross_validation_summary(per_trial_metrics: pd.DataFrame, out_dir: Path):
     """Generate cross-validation summary plots when using leave-one-out."""
     if len(per_trial_metrics) == 0:
-        print("⚠️  No metrics to plot for CV summary")
+        print("⚠️ No metrics to plot for CV summary")
         return
     
-    # Plot MAE across all test trials
+    # Define consistent colors for models
+    model_colors = {
+        'EMG Only': 'blue',
+        'EMG + Force': 'orange'  # or 'red' to match your individual plots
+    }
+    
+    # Define active joints for each movement type
+    active_joints_map = {
+        'pinch': ['index', 'thumbFlex', 'thumbRot'],  # index finger + thumb
+        'tripod': ['index', 'middle', 'thumbFlex', 'thumbRot'],  # index + middle + thumb  
+        'hook': ['index', 'middle', 'ring', 'pinky'],  # all fingers except thumb
+        'power_grip': ['index', 'middle', 'ring', 'pinky', 'thumbFlex', 'thumbRot']  # all fingers + thumb
+    }
+    
+    # Extract movement type from trial_id
+    per_trial_metrics['movement_type'] = per_trial_metrics['trial_id'].str.extract(r'([^_]+)_interaction')[0].fillna('unknown')
+    
+    # ============================================================================
+    # SUMMARY 1: ALL JOINTS (Original Behavior)
+    # ============================================================================
+    print("📊 Creating summary plot with ALL joints...")
+    
     plt.figure(figsize=(15, 10))
     
-    # Subplot 1: MAE by trial and model
+    # Subplot 1: MAE by trial and model (all joints)
     plt.subplot(2, 2, 1)
     mae_pivot = per_trial_metrics.pivot_table(index='trial_id', columns='model', values='mae', aggfunc='mean')
-    mae_pivot.plot(kind='bar', ax=plt.gca(), width=0.8)
-    plt.title('Mean Absolute Error by Test Trial')
+    ax1 = mae_pivot.plot(kind='bar', ax=plt.gca(), width=0.8, 
+                        color=[model_colors.get(col, 'gray') for col in mae_pivot.columns])
+    plt.title('Mean Absolute Error by Test Trial\n(All 6 Joints)')
     plt.ylabel('MAE (degrees)')
     plt.xticks(rotation=45)
     plt.legend()
     plt.grid(True, alpha=0.3)
     
-    # Subplot 2: RMSE by trial and model
+    # Subplot 2: RMSE by trial and model (all joints)
     plt.subplot(2, 2, 2)
     rmse_pivot = per_trial_metrics.pivot_table(index='trial_id', columns='model', values='rmse', aggfunc='mean')
-    rmse_pivot.plot(kind='bar', ax=plt.gca(), width=0.8)
-    plt.title('Root Mean Square Error by Test Trial')
+    ax2 = rmse_pivot.plot(kind='bar', ax=plt.gca(), width=0.8,
+                         color=[model_colors.get(col, 'gray') for col in rmse_pivot.columns])
+    plt.title('Root Mean Square Error by Test Trial\n(All 6 Joints)')
     plt.ylabel('RMSE (degrees)')
     plt.xticks(rotation=45)
     plt.legend()
     plt.grid(True, alpha=0.3)
     
-    # Subplot 3: R² by trial and model
+    # Subplot 3: MAE by Movement Type (all joints)
     plt.subplot(2, 2, 3)
-    r2_pivot = per_trial_metrics.pivot_table(index='trial_id', columns='model', values='r_squared', aggfunc='mean')
-    r2_pivot.plot(kind='bar', ax=plt.gca(), width=0.8)
-    plt.title('R² Score by Test Trial')
-    plt.ylabel('R² Score')
+    movement_mae_all = per_trial_metrics.groupby(['movement_type', 'model'])['mae'].mean().reset_index()
+    movement_pivot_all = movement_mae_all.pivot(index='movement_type', columns='model', values='mae')
+    
+    ax3 = movement_pivot_all.plot(kind='bar', ax=plt.gca(), width=0.8,
+                                 color=[model_colors.get(col, 'gray') for col in movement_pivot_all.columns])
+    plt.title('MAE by Movement Type\n(All 6 Joints)')
+    plt.ylabel('MAE (degrees)')
+    plt.xlabel('Movement Type')
     plt.xticks(rotation=45)
     plt.legend()
     plt.grid(True, alpha=0.3)
     
-    # Subplot 4: Overall comparison boxplot
+    # Subplot 4: Overall comparison boxplot (all joints)
     plt.subplot(2, 2, 4)
-    sns.boxplot(data=per_trial_metrics, x='model', y='mae')
-    plt.title('Overall MAE Distribution')
+    models = per_trial_metrics['model'].unique()
+    box_colors = [model_colors.get(model, 'gray') for model in models]
+    
+    bp = plt.boxplot([per_trial_metrics[per_trial_metrics['model'] == model]['mae'].values 
+                     for model in models], 
+                    labels=models, patch_artist=True)
+    
+    # Set colors for boxes
+    for patch, color in zip(bp['boxes'], box_colors):
+        patch.set_facecolor(color)
+        patch.set_alpha(0.7)
+    
+    plt.title('Overall MAE Distribution\n(All 6 Joints)')
     plt.ylabel('MAE (degrees)')
     plt.xticks(rotation=45)
     
+    plt.suptitle('Cross-Validation Summary - All Joints Analysis', fontsize=16)
     plt.tight_layout()
-    plt.savefig(out_dir / 'cross_validation_summary.png', dpi=150, bbox_inches='tight')
+    plt.savefig(out_dir / 'cross_validation_summary_all_joints.png', dpi=150, bbox_inches='tight')
     plt.close()
-    print(f"📊 Saved cross-validation summary to {out_dir / 'cross_validation_summary.png'}")
+    print(f"📊 Saved all-joints summary to {out_dir / 'cross_validation_summary_all_joints.png'}")
+    
+    # ============================================================================
+    # SUMMARY 2: ACTIVE JOINTS ONLY 
+    # ============================================================================
+    print("📊 Creating summary plot with ACTIVE joints only...")
+    
+    # Filter metrics to only include active joints for each movement
+    active_metrics = []
+    for _, row in per_trial_metrics.iterrows():
+        movement_type = row['movement_type']
+        joint = row['joint']
+        
+        # Check if this joint is active for this movement type
+        if movement_type in active_joints_map and joint in active_joints_map[movement_type]:
+            active_metrics.append(row)
+    
+    active_metrics_df = pd.DataFrame(active_metrics)
+    
+    if len(active_metrics_df) == 0:
+        print("⚠️ No active joint data found for active-joints analysis")
+        return
+    
+    plt.figure(figsize=(15, 10))
+    
+    # Subplot 1: MAE by trial and model (active joints only)
+    plt.subplot(2, 2, 1)
+    mae_pivot_active = active_metrics_df.pivot_table(index='trial_id', columns='model', values='mae', aggfunc='mean')
+    ax1 = mae_pivot_active.plot(kind='bar', ax=plt.gca(), width=0.8, 
+                               color=[model_colors.get(col, 'gray') for col in mae_pivot_active.columns])
+    plt.title('Mean Absolute Error by Test Trial\n(Active Joints Only)')
+    plt.ylabel('MAE (degrees)')
+    plt.xticks(rotation=45)
+    plt.legend()
+    plt.grid(True, alpha=0.3)
+    
+    # Subplot 2: RMSE by trial and model (active joints only)
+    plt.subplot(2, 2, 2)
+    rmse_pivot_active = active_metrics_df.pivot_table(index='trial_id', columns='model', values='rmse', aggfunc='mean')
+    ax2 = rmse_pivot_active.plot(kind='bar', ax=plt.gca(), width=0.8,
+                                color=[model_colors.get(col, 'gray') for col in rmse_pivot_active.columns])
+    plt.title('Root Mean Square Error by Test Trial\n(Active Joints Only)')
+    plt.ylabel('RMSE (degrees)')
+    plt.xticks(rotation=45)
+    plt.legend()
+    plt.grid(True, alpha=0.3)
+    
+    # Subplot 3: MAE by Movement Type (active joints only)
+    plt.subplot(2, 2, 3)
+    movement_mae_active = active_metrics_df.groupby(['movement_type', 'model'])['mae'].mean().reset_index()
+    movement_pivot_active = movement_mae_active.pivot(index='movement_type', columns='model', values='mae')
+    
+    ax3 = movement_pivot_active.plot(kind='bar', ax=plt.gca(), width=0.8,
+                                    color=[model_colors.get(col, 'gray') for col in movement_pivot_active.columns])
+    plt.title('MAE by Movement Type\n(Active Joints Only)')
+    plt.ylabel('MAE (degrees)')
+    plt.xlabel('Movement Type')
+    plt.xticks(rotation=45)
+    plt.legend()
+    plt.grid(True, alpha=0.3)
+    
+    # Subplot 4: Overall comparison boxplot (active joints only)
+    plt.subplot(2, 2, 4)
+    models_active = active_metrics_df['model'].unique()
+    box_colors_active = [model_colors.get(model, 'gray') for model in models_active]
+    
+    bp = plt.boxplot([active_metrics_df[active_metrics_df['model'] == model]['mae'].values 
+                     for model in models_active], 
+                    labels=models_active, patch_artist=True)
+    
+    # Set colors for boxes
+    for patch, color in zip(bp['boxes'], box_colors_active):
+        patch.set_facecolor(color)
+        patch.set_alpha(0.7)
+    
+    plt.title('Overall MAE Distribution\n(Active Joints Only)')
+    plt.ylabel('MAE (degrees)')
+    plt.xticks(rotation=45)
+    
+    plt.suptitle('Cross-Validation Summary - Active Joints Analysis', fontsize=16)
+    plt.tight_layout()
+    plt.savefig(out_dir / 'cross_validation_summary_active_joints.png', dpi=150, bbox_inches='tight')
+    plt.close()
+    print(f"📊 Saved active-joints summary to {out_dir / 'cross_validation_summary_active_joints.png'}")
+    
+    # ============================================================================
+    # SUMMARY TABLE: Print numerical comparison
+    # ============================================================================
+    print("\n" + "="*60)
+    print("NUMERICAL COMPARISON: All Joints vs Active Joints Only")
+    print("="*60)
+    
+    # All joints summary
+    all_joints_summary = per_trial_metrics.groupby('model')['mae'].agg(['mean', 'std']).round(3)
+    print("\nAll Joints (6 joints always):")
+    print(all_joints_summary)
+    
+    # Active joints summary  
+    active_joints_summary = active_metrics_df.groupby('model')['mae'].agg(['mean', 'std']).round(3)
+    print("\nActive Joints Only (movement-specific):")
+    print(active_joints_summary)
+    
+    # Movement-wise breakdown (active joints)
+    print("\nActive Joints by Movement Type:")
+    movement_breakdown = active_metrics_df.groupby(['movement_type', 'model'])['mae'].mean().round(3)
+    print(movement_breakdown)
 
 
 def write_manifest(out_path: Path, args, recordings: List[str], groups: Dict):
@@ -1081,7 +1575,7 @@ def run_single_fold_comparison(
     out_dir: Path
 ) -> Tuple[List[Dict], List[Dict]]:
     """
-    Run comparison for a single fold (train/test split).
+    Run comparison for a single fold (train/test split) WITH FORCE PLOTTING SUPPORT.
     
     Returns:
         fold_metrics: List of metric dictionaries for this fold
@@ -1177,11 +1671,18 @@ def run_single_fold_comparison(
         fold_metrics.extend(trial_metrics_emg + trial_metrics_force)
         fold_significance.extend(trial_significance)
         
-        # Generate plots for this trial
+        # Generate plots for this trial INCLUDING NEW FORCE PLOTS
         if cfg.make_plots:
+            # Original plots (unchanged)
             plot_quicklook(merged, preds_dir)
             plot_error_vs_force(merged, preds_dir)
             plot_active_fingers_only(merged, preds_dir, test_unit['movement'])
+            
+            # NEW: Force-enhanced plots
+            test_df_with_force = te_force_single[0]  # This contains force columns
+            plot_quicklook_with_force(merged, test_df_with_force, preds_dir, cfg.intact_hand)
+            plot_active_fingers_with_force(merged, test_df_with_force, preds_dir, test_unit['movement'], cfg.intact_hand)
+            plot_force_correlation_analysis(merged, test_df_with_force, preds_dir, cfg.intact_hand)
     
     return fold_metrics, fold_significance
 
