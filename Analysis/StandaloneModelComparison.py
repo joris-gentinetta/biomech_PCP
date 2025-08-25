@@ -67,9 +67,9 @@ from typing import List, Tuple
 @dataclass
 class HardConfig:
     # ---- data / run ----
-    data_root: str = "data/P5_869_interaction"
-    out_dir: str   = "results/P5_869_interaction_RemappedForces_emg_vs_force"
-    intact_hand: str = "Left"
+    data_root: str = "data/patient1"
+    out_dir: str   = "results/patient1_full_ana_emg_vs_force"
+    intact_hand: str = "Right"
     device: str = "auto"
     seed: int = 42
     make_plots: bool = True
@@ -113,8 +113,8 @@ class HardConfig:
     ])
     force_features: list = field(default_factory=list)  # filled by finalize()
     targets: list = field(default_factory=lambda: [
-        ['Left','index_Pos'], ['Left','middle_Pos'], ['Left','ring_Pos'],
-        ['Left','pinky_Pos'], ['Left','thumbFlex_Pos'], ['Left','thumbRot_Pos']
+        ['Right','index_Pos'], ['Right','middle_Pos'], ['Right','ring_Pos'],
+        ['Right','pinky_Pos'], ['Right','thumbFlex_Pos'], ['Right','thumbRot_Pos']
     ])
 
     def finalize(self):
@@ -1363,15 +1363,15 @@ def plot_cross_validation_summary(per_trial_metrics: pd.DataFrame, out_dir: Path
     
     # Define active joints for each movement type
     active_joints_map = {
-        'pinch': ['index', 'thumbFlex', 'thumbRot'],  # index finger + thumb
-        'tripod': ['index', 'middle', 'thumbFlex', 'thumbRot'],  # index + middle + thumb  
-        'hook': ['index', 'middle', 'ring', 'pinky'],  # all fingers except thumb
-        'power_grip': ['index', 'middle', 'ring', 'pinky', 'thumbFlex', 'thumbRot']  # all fingers + thumb
+        'pinch_interaction': ['index', 'thumbFlex', 'thumbRot'],
+        'tripod_interaction': ['index', 'middle', 'thumbFlex', 'thumbRot'],  
+        'hook_interaction': ['index', 'middle', 'ring', 'pinky'],
+        'power_grip_interaction': ['index', 'middle', 'ring', 'pinky', 'thumbFlex', 'thumbRot']
     }
     
     # Extract movement type from trial_id
-    per_trial_metrics['movement_type'] = per_trial_metrics['trial_id'].str.extract(r'([^_]+)_interaction')[0].fillna('unknown')
-    
+    # per_trial_metrics['movement_type'] = per_trial_metrics['trial_id'].str.extract(r'([^_]+)_interaction')[0].fillna('unknown')
+    per_trial_metrics['movement_type'] = per_trial_metrics['trial_id'].str.extract(r'([^#]+)#')[0].fillna('unknown')
     # ============================================================================
     # SUMMARY 1: ALL JOINTS (Original Behavior)
     # ============================================================================
