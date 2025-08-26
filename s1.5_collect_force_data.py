@@ -22,7 +22,7 @@ except ImportError:
         print("Warning: Could not import force_control_gui module")
         GUI_AVAILABLE = False
 
-# Import your prosthetic hand class
+# Import prosthetic hand class
 sys.path.append('C:/Users/Emanuel Wicki/Documents/MIT/biomech_PCP/helpers')
 from psyonicHand import psyonicArm
 from helpers.EMGClass import EMG
@@ -101,6 +101,7 @@ class ControlThread(threading.Thread):
         data_queue,
         stop_event,
         control_frequency=100.0,
+        stop_emg_recording=None,
     ):
         super().__init__(name="control-loop", daemon=False)
         self.arm = arm
@@ -109,6 +110,7 @@ class ControlThread(threading.Thread):
         self.force_trajectory = force_trajectory
         self.data_queue = data_queue
         self.stop_event = stop_event
+        self.stop_emg_recording = stop_emg_recording  
         self.control_frequency = control_frequency
         self.dt = 1.0 / control_frequency
 
@@ -139,6 +141,10 @@ class ControlThread(threading.Thread):
     def get_experiment_data(self):
         """Return collected experiment data for saving"""
         return self.experiment_data.copy()
+    
+    def get_emg_data(self):
+        """Return EMG data collected during experiment"""
+        return getattr(self, 'raw_emg_data', []), getattr(self, 'raw_emg_timestamps', [])
 
     def run(self):
         print(f"Control thread starting at {self.control_frequency:.1f} Hz")
@@ -185,6 +191,17 @@ class ControlThread(threading.Thread):
                         )
                     else:
                         print(f"Trajectory completed at {t:.2f}s")
+                        print("Stopping recordings immediately (no cleanup movement)...")
+                        
+                        # Stop recordings simultaneously
+                        if self.stop_emg_recording:
+                            self.raw_emg_data, self.raw_emg_timestamps = stop_recordings_simultaneously(
+                                self.arm, self.stop_emg_recording
+                            )
+                        else:
+                            self.arm.recording = False
+                            self.raw_emg_data, self.raw_emg_timestamps = [], []
+                        
                         self.stop_event.set()
                         self._push_done("trajectory_complete")
                         break
@@ -237,18 +254,39 @@ class ControlThread(threading.Thread):
 
                 # Safety timeout
                 if t > 300.0:
-                    print("Safety timeout reached")
+                    print("Safety timeout reached - stopping recordings...")
+                    
+                    # Stop recordings simultaneously
+                    if self.stop_emg_recording:
+                        self.raw_emg_data, self.raw_emg_timestamps = stop_recordings_simultaneously(
+                            self.arm, self.stop_emg_recording
+                        )
+                    else:
+                        self.arm.recording = False
+                        self.raw_emg_data, self.raw_emg_timestamps = [], []
+                    
                     self.stop_event.set()
                     self._push_done("timeout")
                     break
 
         except Exception as e:
             print(f"[ControlThread] Exception: {e}")
+            
+            # Stop recordings on exception
+            if hasattr(self, 'stop_emg_recording') and self.stop_emg_recording:
+                try:
+                    self.raw_emg_data, self.raw_emg_timestamps = stop_recordings_simultaneously(
+                        self.arm, self.stop_emg_recording
+                    )
+                except:
+                    self.arm.recording = False
+                    self.raw_emg_data, self.raw_emg_timestamps = [], []
+            
             self._push_done("exception")
             self.stop_event.set()
 
         finally:
-            self.arm.recording = False
+            # self.arm.recording = False
             if self.cycle_times:
                 avg = float(np.mean(self.cycle_times))
                 hz = (1.0 / avg) if avg > 0 else 0.0
@@ -295,6 +333,8 @@ def run_force_control_with_threaded_gui(arm, grip_name, duration, max_force, pat
     if app is None:
         app = QApplication(sys.argv)
     
+    stop_emg_recording, start_emg_sync = start_emg_recording(enable_emg)
+
     # Create control thread
     control_thread = ControlThread(
         arm=arm,
@@ -303,7 +343,8 @@ def run_force_control_with_threaded_gui(arm, grip_name, duration, max_force, pat
         force_trajectory=force_trajectory,
         data_queue=control_to_gui_queue,
         stop_event=stop_control_event,
-        control_frequency=control_frequency
+        control_frequency=control_frequency,
+        stop_emg_recording=stop_emg_recording
     )
     
     # Create threaded GUI
@@ -317,7 +358,7 @@ def run_force_control_with_threaded_gui(arm, grip_name, duration, max_force, pat
     input("\nPlace object in hand and press Enter to start THREADED experiment...")
     
     # Start EMG recording (same as before)
-    stop_emg_recording, start_emg_sync = start_emg_recording(enable_emg)
+    # stop_emg_recording, start_emg_sync = start_emg_recording(enable_emg)
     time.sleep(0.2)
 
     print(f"Start control thread and GUI...")
@@ -352,7 +393,7 @@ def run_force_control_with_threaded_gui(arm, grip_name, duration, max_force, pat
             print("Warning: Control thread did not stop cleanly")
         
         # Stop EMG (same as before)
-        raw_emg_data, raw_emg_timestamps = stop_emg_recording()
+        raw_emg_data, raw_emg_timestamps = control_thread.get_emg_data()
         
         # Return to neutral (same as before)
         neutral_pos = np.array(grip_config["neutral_position"], dtype=np.float64)
@@ -1199,6 +1240,24 @@ def run_force_control_experiment(arm, grip_name, duration, max_force, pattern,
     analyze_experiment_results(experiment_data, grip_config)
     
     return True
+
+def stop_recordings_simultaneously(arm, stop_emg_recording):
+    """Stop both EMG and hand recordings at exactly the same time"""
+    print("=== STOPPING RECORDINGS SIMULTANEOUSLY ===")
+    
+    # Record the exact stop time for logging
+    stop_time = time.time()
+    
+    # Stop both recordings as close to simultaneously as possible
+    arm.recording = False  # Stop hand recording first (faster)
+    raw_emg_data, raw_emg_timestamps = stop_emg_recording()  # Stop EMG recording
+    
+    print(f"Both recordings stopped at: {stop_time}")
+    print(f"Hand recording stopped: OK")
+    print(f"EMG recording stopped: OK ({len(raw_emg_data)} samples)")
+    
+    return raw_emg_data, raw_emg_timestamps
+
 
 def save_experiment_data(person_id, out_root, grip_name, experiment_data, 
                         raw_emg_data, raw_emg_timestamps, arm, grip_config, 
