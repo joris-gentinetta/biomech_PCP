@@ -570,7 +570,7 @@ def calibrate_emg(base_dir, rest_time=10, mvc_time=10):
     sf_mvc = (len(mvc_timestamps) - 1) / (mvc_timestamps[-1] - mvc_timestamps[0]) if len(mvc_timestamps) > 1 else 1000
     print(f"Sampling frequency (MVC): {sf_mvc:.1f} Hz")
     
-    # Use simple percentile noise calculation (like zzzzzemgfilter.py)
+    # Use simple percentile noise calculation
     print(f"\n Using SIMPLE percentile noise calculation (99.8th percentile)")
     noise_levels, artifact_cut, mvc_cut = measure_noise_levels_simple(
         rest_data.T, mvc_data.T, sf_rest, sf_mvc, noise_percentile=99.8
@@ -612,7 +612,7 @@ def calibrate_emg(base_dir, rest_time=10, mvc_time=10):
         # Calculate SNR
         snr = 20 * np.log10(maxVals[ch] / noise_levels[ch]) if noise_levels[ch] > 0 else 999
         
-        # Quality assessment
+        # Quality assessment - Not sure this even helps 
         if actual_zeros >= 97:
             quality = "EXCELLENT"
         elif actual_zeros >= 95:
@@ -1276,7 +1276,7 @@ def main():
     print(f"Start pose: {smooth_traj[0]}")
     print(f"End pose: {smooth_traj[-1]}")
 
-    # CRITICAL FIX: Warm-up iterations WITHOUT recording
+    # Warm-up iterations WITHOUT recording
     print(f"\n=== Running {args.sync_iterations} warm-up iterations (NOT recording) ===")
     print("User should synchronize with the hand movement during this phase...")
     
@@ -1286,7 +1286,7 @@ def main():
 
     print("\n=== Warm-up complete. Starting synchronized recording NOW ===")
     
-    # CRITICAL FIX: Set sync event AFTER warm-up, RIGHT BEFORE recording iterations
+    # Set sync event AFTER warm-up, RIGHT BEFORE recording iterations
     recording_start_time = time.time()
     if sync_event is not None:
         sync_event.set()  # Signal EMG/video threads to start recording NOW
