@@ -47,6 +47,7 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 from scipy.interpolate import interp1d
 from scipy.stats import pearsonr
+from scipy import signal    
 
 # Suppress warnings for cleaner output
 warnings.filterwarnings('ignore')
@@ -71,7 +72,7 @@ from typing import List, Tuple
 class HardConfig:
     # ---- data / run ----
     data_root: str = "data/patient1"
-    out_dir: str   = "results/patient1_full_ana_MSELOSS_emg_vs_force"
+    out_dir: str   = "results/patient1_FULL"
     intact_hand: str = "Right"
     device: str = "auto"
     seed: int = 42
@@ -183,7 +184,162 @@ def __patched_tsrw_init(self, *args, **kwargs):
 
 TimeSeriesRegressorWrapper.__init__ = __patched_tsrw_init
 
+def preprocess_training_data_with_visualization(df, intact_hand, force_features, targets, 
+                                              trial_name="", visualize=False, save_path=None):
+    """
+    Apply filtering with optional visualization of before/after comparison.
+    """
+    df_before = df.copy() if visualize else None
+    
+    # Identify force columns in the dataframe
+    force_cols_in_df = [col for col in force_features if col in df.columns]
+    
+    if force_cols_in_df:
+        # More aggressive force filtering (2 Hz cutoff)
+        force_data = df[force_cols_in_df].values
+        if force_data.size > 0:
+            force_filtered = apply_angle_smoothing(
+                force_data, 
+                cutoff_freq=1.0,  # More aggressive than position
+                method='bessel'  # Sharper cutoff for noisy force
+            )
+            df[force_cols_in_df] = force_filtered
+            print(f"Applied force filtering to {len(force_cols_in_df)} force channels")
+    
+    # Light position filtering (3.5 Hz cutoff)
+    target_cols_in_df = [col for col in targets if col in df.columns]
+    if target_cols_in_df:
+        position_data = df[target_cols_in_df].values
+        if position_data.size > 0:
+            position_filtered = apply_angle_smoothing(
+                position_data,
+                cutoff_freq=1.0,
+                method='bessel'  # Preserve natural movement characteristics
+            )
+            df[target_cols_in_df] = position_filtered
+            print(f"Applied position filtering to {len(target_cols_in_df)} position channels")
+    
+    # Visualize comparison if requested
+    if visualize and df_before is not None:
+        title_suffix = f" ({trial_name})" if trial_name else ""
+        plt.figure()
+        plt.suptitle(f'Filtering Comparison{title_suffix}', fontsize=16)
+        
+        save_file = None
+        if save_path:
+            save_file = save_path.replace('.png', f'_filtering_comparison_{trial_name.replace("#", "_")}.png')
+        
+        visualize_filtering_comparison(df_before, df, force_features, targets, intact_hand, save_file)
+    
+    return df
 
+def get_data_for_cross_validation(config, train_dirs, test_dirs, intact_hand):
+    """
+    Wrapper that loads full test trials for cross-validation without modifying predict_utils.
+    
+    Returns:
+        trainsets, valsets, combined_sets, testsets
+        where testsets contains FULL test trials (not just last 20%)
+    """
+    from helpers.predict_utils import load_data
+    
+    # Get training data normally (with 80/20 split within each training trial)
+    print(f"Loading training data from {len(train_dirs)} directories...")
+    tr, va, combined, _ = get_data(config, train_dirs, intact_hand, visualize=False, test_dirs=None)
+    
+    print(f"Training sets: {len(tr)} sets, {sum(len(t) for t in tr)} total samples")
+    print(f"Validation sets: {len(va)} sets, {sum(len(t) for t in va)} total samples")
+    
+    # Load test data WITHOUT splitting (load entire trials)
+    print(f"Loading FULL test trials from {len(test_dirs)} directories...")
+    te = []
+    for i, test_dir in enumerate(test_dirs):
+        full_test_data = load_data(test_dir, intact_hand, config.features, config.targets, perturber=None)
+        duration = full_test_data.index[-1] - full_test_data.index[0] if len(full_test_data) > 0 else 0
+        print(f"  Test {i+1}: {len(full_test_data)} samples ({duration:.1f}s duration)")
+        te.append(full_test_data)
+    
+    print(f"Test sets: {len(te)} sets, {sum(len(t) for t in te)} total samples")
+    
+    return tr, va, combined, te
+
+def get_data_for_cross_validation_with_viz(config, train_dirs, test_dirs, intact_hand, 
+                                          apply_filtering=True, visualize_filtering=False, 
+                                          viz_save_dir=None):
+    """
+    Cross-validation data loading with optional filtering visualization.
+    """
+    from helpers.predict_utils import load_data
+    
+    # Get training data normally (with 80/20 split within each training trial)
+    print(f"Loading training data from {len(train_dirs)} directories...")
+    tr, va, combined, _ = get_data(config, train_dirs, intact_hand, visualize=False, test_dirs=None)
+    
+    # Apply filtering to training and validation data if requested
+    if apply_filtering:
+        print("Applying preprocessing filters to training/validation data...")
+        
+        # Get force features from config (may be empty list for EMG-only models)
+        force_features = getattr(config, 'force_features', [])
+        if not isinstance(force_features, list):
+            force_features = []
+        
+        # Filter training sets (visualize first one as example)
+        for i in range(len(tr)):
+            trial_name = f"train_{i}" 
+            visualize_this = visualize_filtering and i == 0  # Only visualize first training set
+            save_path = viz_save_dir / f"train_{i}_filtering.png" if (viz_save_dir and visualize_this) else None
+            
+            tr[i] = preprocess_training_data_with_visualization(
+                tr[i], intact_hand, force_features, config.targets, 
+                trial_name, visualize_this, str(save_path) if save_path else None
+            )
+        
+        # Filter validation sets
+        for i in range(len(va)):
+            va[i] = preprocess_training_data_with_visualization(
+                va[i], intact_hand, force_features, config.targets, 
+                f"val_{i}", False, None
+            )
+            
+        # Filter combined sets
+        for i in range(len(combined)):
+            combined[i] = preprocess_training_data_with_visualization(
+                combined[i], intact_hand, force_features, config.targets,
+                f"combined_{i}", False, None
+            )
+    
+    print(f"Training sets: {len(tr)} sets, {sum(len(t) for t in tr)} total samples")
+    print(f"Validation sets: {len(va)} sets, {sum(len(t) for t in va)} total samples")
+    
+    # Load test data WITHOUT splitting (load entire trials)
+    print(f"Loading FULL test trials from {len(test_dirs)} directories...")
+    te = []
+    for i, test_dir in enumerate(test_dirs):
+        full_test_data = load_data(test_dir, intact_hand, config.features, config.targets, perturber=None)
+        
+        # Apply filtering to test data if requested
+        if apply_filtering:
+            force_features = getattr(config, 'force_features', [])
+            if not isinstance(force_features, list):
+                force_features = []
+                
+            trial_name = f"test_{i}"
+            visualize_this = visualize_filtering and i == 0  # Only visualize first test trial
+            save_path = viz_save_dir / f"test_{i}_filtering.png" if (viz_save_dir and visualize_this) else None
+            
+            full_test_data = preprocess_training_data_with_visualization(
+                full_test_data, intact_hand, force_features, config.targets,
+                trial_name, visualize_this, str(save_path) if save_path else None
+            )
+        
+        duration = full_test_data.index[-1] - full_test_data.index[0] if len(full_test_data) > 0 else 0
+        print(f"  Test {i+1}: {len(full_test_data)} samples ({duration:.1f}s duration)")
+        te.append(full_test_data)
+    
+    print(f"Test sets: {len(te)} sets, {sum(len(t) for t in te)} total samples")
+    
+    return tr, va, combined, te
 
 
 def parse_args():
@@ -337,6 +493,75 @@ def verify_trial_data(trial_dir: str) -> bool:
     
     return True
 
+def visualize_filtering_comparison(df_before, df_after, force_features, targets, intact_hand, save_path=None):
+    """
+    Compare data before and after filtering to verify filter effectiveness.
+    
+    Args:
+        df_before: DataFrame before filtering
+        df_after: DataFrame after filtering  
+        force_features: List of force feature column names
+        targets: List of target column names
+        intact_hand: 'Left' or 'Right'
+        save_path: Optional path to save the plot
+    """
+    # Identify available force and position columns
+    force_cols = [col for col in force_features if col in df_before.columns]
+    target_cols = [col for col in targets if col in df_before.columns]
+    
+    # Create timestamps if not in index
+    if hasattr(df_before.index, 'values') and np.issubdtype(df_before.index.dtype, np.number):
+        timestamps = df_before.index.values
+    else:
+        timestamps = np.arange(len(df_before)) / 60.0  # Assume 60 Hz
+    
+    n_plots = len(force_cols) + len(target_cols)
+    if n_plots == 0:
+        print("No force or position data to visualize")
+        return
+    
+    fig, axes = plt.subplots(n_plots, 1, figsize=(15, 3*n_plots))
+    if n_plots == 1:
+        axes = [axes]
+    
+    plot_idx = 0
+    
+    # Plot force data comparisons
+    for col in force_cols:
+        ax = axes[plot_idx]
+        
+        ax.plot(timestamps, df_before[col], 'b-', alpha=0.7, linewidth=1, label='Before filtering')
+        ax.plot(timestamps, df_after[col], 'r-', linewidth=2, label='After filtering (2Hz Butterworth)')
+        
+        ax.set_title(f'Force Filtering: {col}')
+        ax.set_ylabel('Force (N)')
+        ax.legend()
+        ax.grid(True, alpha=0.3)
+        plot_idx += 1
+    
+    # Plot position data comparisons
+    for col in target_cols:
+        ax = axes[plot_idx]
+        
+        ax.plot(timestamps, df_before[col], 'b-', alpha=0.7, linewidth=1, label='Before filtering')
+        ax.plot(timestamps, df_after[col], 'g-', linewidth=2, label='After filtering (3.5Hz Bessel)')
+        
+        ax.set_title(f'Position Filtering: {col}')
+        ax.set_ylabel('Position (scaled)')
+        ax.legend()
+        ax.grid(True, alpha=0.3)
+        plot_idx += 1
+    
+    # Set x-label on bottom plot
+    axes[-1].set_xlabel('Time (s)')
+    
+    plt.tight_layout()
+    
+    if save_path:
+        plt.savefig(save_path, dpi=150, bbox_inches='tight')
+        print(f"Saved filtering comparison to {save_path}")
+    
+    plt.show()
 
 def drop_constant_columns(df: pd.DataFrame, cols: List) -> List:
     """Drop constant/zero-variance columns from feature list."""
@@ -567,6 +792,225 @@ def load_model_for_prediction(model_path: str, config: Config, device: torch.dev
     model.eval()
     return model
 
+def apply_angle_smoothing(angles_deg: np.ndarray, 
+                         timestamps: np.ndarray = None,
+                         cutoff_freq: float = 3.0, 
+                         fs: float = 60.0,
+                         method: str = 'bessel') -> np.ndarray:
+    """
+    Apply lowpass filtering to smooth angle data (predictions or ground truth).
+    
+    Args:
+        angles_deg: Joint angles in degrees, shape (n_samples, n_joints)
+        timestamps: Optional timestamps for irregular sampling
+        cutoff_freq: Cutoff frequency in Hz (default: 3.0 Hz)
+        fs: Sampling frequency in Hz (default: 60.0 Hz)  
+        method: Filter type ('bessel', 'butterworth', 'savgol')
+    
+    Returns:
+        Smoothed angles with same shape as input
+    """
+    if angles_deg.ndim == 1:
+        angles_deg = angles_deg.reshape(-1, 1)
+    
+    n_samples, n_joints = angles_deg.shape
+    smoothed_angles = np.copy(angles_deg)
+    
+    if n_samples < 10:  # Too few samples for filtering
+        print(f"Too few samples ({n_samples}) for filtering - returning unfiltered")
+        return smoothed_angles
+    
+    if method == 'bessel':
+        # Bessel filter provides smooth response with minimal overshoot
+        try:
+            sos = signal.bessel(N=4, Wn=cutoff_freq, btype='lowpass', 
+                               output='sos', fs=fs, analog=False)
+            
+            for joint_idx in range(n_joints):
+                # Apply zero-phase filtering to avoid delay
+                smoothed_angles[:, joint_idx] = signal.sosfiltfilt(
+                    sos, smoothed_angles[:, joint_idx]
+                )
+        except Exception as e:
+            print(f"Bessel filtering failed: {e}, returning unfiltered")
+            return angles_deg
+    
+    elif method == 'butterworth':
+        try:
+            sos = signal.butter(N=4, Wn=cutoff_freq, btype='lowpass', 
+                              output='sos', fs=fs, analog=False)
+            for joint_idx in range(n_joints):
+                smoothed_angles[:, joint_idx] = signal.sosfiltfilt(
+                    sos, smoothed_angles[:, joint_idx]
+                )
+        except Exception as e:
+            print(f"Butterworth filtering failed: {e}, returning unfiltered")
+            return angles_deg
+    
+    elif method == 'savgol':
+        # Savitzky-Golay filter preserves features while smoothing
+        window_length = max(5, int(fs / cutoff_freq) | 1)  # Ensure odd number
+        window_length = min(window_length, n_samples - 1)  # Don't exceed data length
+        if window_length < 5:
+            print("Data too short for Savgol filter, using no filtering")
+            return angles_deg
+            
+        try:
+            for joint_idx in range(n_joints):
+                smoothed_angles[:, joint_idx] = signal.savgol_filter(
+                    smoothed_angles[:, joint_idx], window_length, 3
+                )
+        except Exception as e:
+            print(f"Savgol filtering failed: {e}, returning unfiltered")
+            return angles_deg
+    
+    print(f"Applied {method} smoothing filter ({cutoff_freq:.1f} Hz cutoff)")
+    return smoothed_angles
+
+
+def predict_on_trial_with_smoothing(
+    model,
+    test_df, 
+    features: list,
+    targets: list,
+    intact_hand: str,
+    device,
+    # Smoothing options
+    smooth_predictions: bool = True,
+    smooth_ground_truth: bool = True,
+    smoothing_method: str = 'bessel',
+    cutoff_freq: float = 3.0,
+    fs: float = 60.0
+):
+    """
+    Enhanced prediction function with smoothing for both predictions and ground truth.
+    """
+    # Get raw predictions (same as before)
+    pred_scaled = model.predict(test_df, features, targets)
+    
+    # Handle tensor shapes
+    if isinstance(pred_scaled, torch.Tensor):
+        pred_scaled = pred_scaled.detach().cpu().numpy()
+    if pred_scaled.ndim == 3:
+        pred_scaled = pred_scaled[0] 
+    elif pred_scaled.ndim == 1 and len(pred_scaled) == len(targets):
+        pred_scaled = pred_scaled.reshape(1, -1)
+    
+    # Convert to degrees first
+    pred_df = pd.DataFrame(pred_scaled, columns=targets)
+    pred_deg = rescale_data(pred_df, intact_hand)
+    pred_deg_values = pred_deg.values  # Shape: (n_samples, n_joints)
+    
+    # Get ground truth in degrees
+    gt_scaled = test_df[targets].values
+    gt_df = pd.DataFrame(gt_scaled, columns=targets)
+    gt_deg = rescale_data(gt_df, intact_hand)
+    gt_deg_values = gt_deg.values
+    
+    # Get timestamps if available
+    if hasattr(test_df.index, 'values'):
+        timestamps = test_df.index.values
+    else:
+        timestamps = None
+    
+    # APPLY SMOOTHING
+    if smooth_predictions:
+        pred_deg_values = apply_angle_smoothing(
+            pred_deg_values, timestamps, cutoff_freq, fs, method=smoothing_method
+        )
+    
+    if smooth_ground_truth:
+        gt_deg_values = apply_angle_smoothing(
+            gt_deg_values, timestamps, cutoff_freq, fs, method=smoothing_method
+        )
+    
+    # Build result DataFrame
+    result_df = pd.DataFrame()
+    result_df['timestamp'] = test_df.index
+    
+    joint_names = ['index', 'middle', 'ring', 'pinky', 'thumbFlex', 'thumbRot']
+    for i, joint in enumerate(joint_names):
+        result_df[f'{joint}_gt_deg'] = gt_deg_values[:, i]
+        result_df[f'{joint}_pred_deg'] = pred_deg_values[:, i]
+    
+    return result_df
+
+
+def apply_rate_limiting(angles_deg: np.ndarray,
+                       timestamps: np.ndarray = None,
+                       max_rate_deg_per_sec: float = 120.0,
+                       fs: float = 60.0) -> np.ndarray:
+    """
+    Apply rate limiting to prevent unrealistic joint velocity changes.
+    
+    Args:
+        angles_deg: Joint angles (n_samples, n_joints)
+        timestamps: Sample timestamps (if irregular sampling)
+        max_rate_deg_per_sec: Maximum allowed change rate in degrees/second
+        fs: Sampling frequency in Hz
+        
+    Returns:
+        Rate-limited angles
+    """
+    if angles_deg.ndim == 1:
+        angles_deg = angles_deg.reshape(-1, 1)
+    
+    n_samples, n_joints = angles_deg.shape
+    limited_angles = np.copy(angles_deg)
+    
+    if n_samples < 2:  # Need at least 2 samples
+        return limited_angles
+    
+    if timestamps is not None:
+        # Use actual time differences
+        dt_array = np.diff(timestamps)
+        dt_array = np.append(dt_array[0], dt_array)  # Pad first value
+    else:
+        # Constant sample rate
+        dt_array = np.full(n_samples, 1.0 / fs)
+    
+    for joint_idx in range(n_joints):
+        for i in range(1, n_samples):
+            dt = dt_array[i]
+            if dt <= 0:  # Skip invalid time steps
+                continue
+                
+            max_change = max_rate_deg_per_sec * dt
+            
+            change = limited_angles[i, joint_idx] - limited_angles[i-1, joint_idx]
+            if abs(change) > max_change:
+                # Limit the change
+                sign_change = 1 if change > 0 else -1
+                limited_angles[i, joint_idx] = (limited_angles[i-1, joint_idx] + 
+                                               sign_change * max_change)
+    
+    print(f"Applied rate limiting ({max_rate_deg_per_sec:.1f} deg/s max)")
+    return limited_angles
+
+def preprocess_training_data(df, intact_hand, force_features, targets):
+    """
+    Apply appropriate filtering to training data before model sees it.
+    """
+    # More aggressive force filtering (1-2 Hz cutoff)
+    if force_features:
+        force_data = df[force_features].values
+        force_filtered = apply_angle_smoothing(
+            force_data, 
+            cutoff_freq=2.0,  # More aggressive than position
+            method='butterworth'  # Sharper cutoff for noisy force
+        )
+        df[force_features] = force_filtered
+    
+    # Light position filtering (3-4 Hz cutoff) 
+    position_data = df[targets].values
+    position_filtered = apply_angle_smoothing(
+        position_data,
+        cutoff_freq=3.5,
+        method='bessel'  # Preserve natural movement characteristics
+    )
+    df[targets] = position_filtered
+    
+    return df
 
 def predict_on_trial(
     model: TimeSeriesRegressorWrapper,
@@ -578,6 +1022,7 @@ def predict_on_trial(
 ) -> pd.DataFrame:
     """
     Run inference on a test trial and return predictions in degrees.
+    NOW WITH 1Hz BESSEL FILTERING APPLIED TO PREDICTIONS.
     
     Returns DataFrame with columns: timestamp, *_gt_deg, *_pred_deg
     """
@@ -602,15 +1047,23 @@ def predict_on_trial(
     gt_df = pd.DataFrame(gt_scaled, columns=targets) 
     gt_deg = rescale_data(gt_df, intact_hand)
     
+    # APPLY 1Hz BESSEL FILTERING TO PREDICTIONS
+    print("Applying 1Hz Bessel filtering to predictions...")
+    pred_deg_filtered = apply_angle_smoothing(
+        pred_deg.values,
+        cutoff_freq=1.0,
+        method='bessel'
+    )
+    
     # Build result DataFrame
     result_df = pd.DataFrame()
     result_df['timestamp'] = test_df.index  # Assuming timestamp is the index
     
-    # Add ground truth and predictions in degrees
+    # Add ground truth and FILTERED predictions in degrees
     joint_names = ['index', 'middle', 'ring', 'pinky', 'thumbFlex', 'thumbRot']
     for i, joint in enumerate(joint_names):
         result_df[f'{joint}_gt_deg'] = gt_deg.iloc[:, i]
-        result_df[f'{joint}_pred_deg'] = pred_deg.iloc[:, i]
+        result_df[f'{joint}_pred_deg'] = pred_deg_filtered[:, i]  # Use filtered predictions
     
     return result_df
 
@@ -1626,7 +2079,9 @@ def run_single_fold_comparison(
     # Train EMG+Force model
     print(f"\n🚀 Training EMG+Force model for fold {fold_idx}...")
     cfg_force = build_config(cfg, emg_features + force_features, targets, f"fold_{fold_idx}_emg_force", num_train_dirs, num_test_dirs)
-    tr_force, va_force, _, te_force_all = get_data(cfg_force, train_dirs, cfg.intact_hand, visualize=False, test_dirs=test_dirs)
+    # tr_force, va_force, _, te_force_all = get_data(cfg_force, train_dirs, cfg.intact_hand, visualize=False, test_dirs=test_dirs)
+    tr_force, va_force, _, te_force_all = get_data_for_cross_validation_with_viz(cfg_force, train_dirs, test_dirs, cfg.intact_hand)
+    
     force_model = train_model(
         tr_force, va_force, te_force_all, device,
         cfg_force.wandb_mode, cfg_force.wandb_project, cfg_force.name,
@@ -1636,7 +2091,8 @@ def run_single_fold_comparison(
     # Train EMG-only model
     print(f"\n🚀 Training EMG-only model for fold {fold_idx}...")
     cfg_emg = build_config(cfg, emg_features, targets, f"fold_{fold_idx}_emg_only", num_train_dirs, num_test_dirs)
-    tr_emg, va_emg, _, te_emg_all = get_data(cfg_emg, train_dirs, cfg.intact_hand, visualize=False, test_dirs=test_dirs)
+    # tr_emg, va_emg, _, te_emg_all = get_data(cfg_emg, train_dirs, cfg.intact_hand, visualize=False, test_dirs=test_dirs)
+    tr_emg, va_emg, _, te_emg_all = get_data_for_cross_validation_with_viz(cfg_emg, train_dirs, test_dirs, cfg.intact_hand)
     emg_model = train_model(
         tr_emg, va_emg, te_emg_all, device,
         cfg_emg.wandb_mode, cfg_emg.wandb_project, cfg_emg.name,
