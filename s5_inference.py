@@ -157,7 +157,7 @@ class psyonicArm():
 
 		# initialize hand state
 		# define control mode format headers
-		self.replyVariant = 2 # one of [0, 1, 2], which corresponds to index in the lists below
+		self.replyVariant = 0 # one of [0, 1, 2], which corresponds to index in the lists below
 		self.controlMode = 'position'
 		self.controlModeHeaders = {'position': [0x10, 0x11, 0x12], 'velocity': [0x20, 0x21, 0x22], 'torque': [0x30, 0x31, 0x32], 'voltage': [0x40, 0x41, 0x42], 'readOnly': [0xA0, 0xA1, 0xA2]}
 		self.controlModeResponse = {1: 'position', 2: 'velocity', 3: 'torque', 4: 'voltage', 10: 'readOnly'} # achieved by rightshifting the format header by 4
@@ -265,7 +265,7 @@ class psyonicArm():
 		
 		# Thresholds for mode switching
 		self.ENTER_THRESHOLD = 0.8   # N
-		self.EXIT_THRESHOLD = 0.3    # N  
+		self.EXIT_THRESHOLD = 0.6    # N  
 		self.ENTER_DEBOUNCE = 0.10   # seconds
 		self.EXIT_DEBOUNCE = 0.15    # seconds
 
@@ -503,6 +503,8 @@ class psyonicArm():
 		# make sure the response is the right length
 		if self.replyVariant in [0, 1] and not len(response) == 72:  assert len(response) == 72, f'Response is not the correct length for variant {self.replyVariant} - expected 72, got {len(response)}'
 		elif self.replyVariant == 2 and not len(response) == 29:  assert len(response) == 39, f'Response is not the correct length for variant 2 - expected 39, got {len(response)}'
+
+		print(f'Current replyVariant: {self.replyVariant}: response length:  {len(response)}')
 
 		# get the format header
 		if not (response[0] >> 4) in self.controlModeResponse.keys(): return
@@ -752,7 +754,14 @@ class psyonicArm():
 
 		start = time.time()
 		forceSensorReadings = []
+		
+		# Store original counter and force processing during zeroing
+		original_counter = self.force_processing_counter
+		
 		while (time.time() - start) < 2:
+			# Force processing every cycle during zeroing
+			self.force_processing_counter = 0  # This ensures forces are always processed
+			
 			# write the same message over and over again
 			bytesWritten = self.ser.write(msg)
 			assert bytesWritten == len(msg), f'zeroJoints(): Not all bytes sent - expected {len(msg)}, sent {bytesWritten}'
@@ -765,6 +774,9 @@ class psyonicArm():
 			if time.time() - start > 1:
 				theseReadings = [self.sensors[site] for site in self.sensorForce]
 				forceSensorReadings.append(theseReadings)
+		
+		# Restore original counter
+		self.force_processing_counter = original_counter
 
 		# now average the readings
 		avgReadings = np.mean(forceSensorReadings, axis=0)
@@ -776,20 +788,42 @@ class psyonicArm():
 			end_idx = start_idx + 6
 			per_finger_baselines[finger_idx] = np.sum(avgReadings[start_idx:end_idx])
 		
+		# old:
 		# Set per-finger offsets in the adaptive filter
-		if hasattr(self, 'adaptive_force_filter'):
-			self.adaptive_force_filter.set_static_offsets(per_finger_baselines)
+		# if hasattr(self, 'adaptive_force_filter'):
+		#     self.adaptive_force_filter.set_static_offsets(per_finger_baselines)
+		#     print(f"Zero joints completed. Set {len(self.sensorForceOffsets)} sensor offsets.")
+		#     print(f"Per-finger baselines: {per_finger_baselines}")
+		# else:
+		#     print("Warning: adaptive_force_filter not initialized")
+		
+		# new:
+		# Set per-finger offsets in the simplified force processor
+		if hasattr(self, 'simplified_force_processor'):
+			self.simplified_force_processor.current_drift = per_finger_baselines.copy()
 			print(f"Zero joints completed. Set {len(self.sensorForceOffsets)} sensor offsets.")
 			print(f"Per-finger baselines: {per_finger_baselines}")
+			print(f"SimplifiedForceProcessor baseline set: {self.simplified_force_processor.current_drift}")
 		else:
-			print("Warning: adaptive_force_filter not initialized")
+			print("Warning: simplified_force_processor not initialized")
 
+		# Force one more reading to test the zeroing
+		self.force_processing_counter = 0  # Force processing
 		bytesWritten = self.ser.write(msg)
 		assert bytesWritten == len(msg), f'zeroJoints(): Not all bytes sent - expected {len(msg)}, sent {bytesWritten}'
 
 		response = self.ser.read(self.responseBufferSize(self.replyVariant))
 		# if len(response) > 0: 
 		self.unpackResponse(response)
+		
+		# Test the zeroing effectiveness
+		test_force_data = self.simplified_force_processor.process_runtime_force(
+			self.sensors,
+			self.touchNames,
+			in_interaction_mode=False,  # Force free space mode
+			mode_just_changed=True      # Force immediate zeroing
+		)
+		print(f"After zeroing - Total force: {test_force_data['total_force']:.3f}N")
 
 		self.setControlMode(curMode)
 		self.setReplyVariant(curReply)
@@ -1246,6 +1280,9 @@ class psyonicArm():
 		Simplified neural network control loop using the new force processor
 		"""
 		import time
+
+		if self.replyVariant == 2:
+			self.setReplyVariant(0)  # Force position mode for this controller
 		
 		# Initialize timing
 		target_period = 1.0 / self.Hz  # 1/60 = 0.0167 seconds
