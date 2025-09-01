@@ -3,9 +3,11 @@ import pandas as pd
 import matplotlib.pyplot as plt
 
 # Load predictions and ground truth
-df = pd.read_parquet('data/Emanuel9.12-2/recordings/thumbFlEx/experiments/1/pred_angles-Emanuel.parquet')
-dfo = pd.read_parquet('data/Emanuel9.12-2/recordings/thumbFlEx/experiments/1/aligned_angles.parquet')
+# df = pd.read_parquet('data/P5_869_interaction/recordings/indexFlEx/experiments/1/pred_angles-Sh.parquet')
+# dfo = pd.read_parquet('data/P5_869_interaction/recordings/indexFlEx/experiments/1/aligned_angles.parquet')
 
+df = pd.read_parquet('data/EmanuelFull/recordings/handClOp/experiments/1/pred_angles-Emanuel.parquet')
+dfo = pd.read_parquet('data/EmanuelFull/recordings/handClOp/experiments/1/aligned_angles.parquet')
 col = "('Right', 'thumbFlex_Pos')"
 
 # Calculate split index (for 4/5 train, 1/5 test)
