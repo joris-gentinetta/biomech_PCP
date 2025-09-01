@@ -49,10 +49,10 @@ def get_all_experiment_dirs(person_dir, recordings):
             required_files = ['aligned_angles.parquet', 'aligned_filtered_emg.npy', 'aligned_timestamps.npy']
             if all(os.path.exists(join(exp_dir, f)) for f in required_files):
                 all_data_dirs.append(exp_dir)
-                print(f"✓ Added experiment: {recording}/experiments/{exp_folder}")
+                print(f"Added experiment: {recording}/experiments/{exp_folder}")
             else:
                 missing_files = [f for f in required_files if not os.path.exists(join(exp_dir, f))]
-                print(f"✗ Skipping {recording}/experiments/{exp_folder} - missing files: {missing_files}")
+                print(f"Skipping {recording}/experiments/{exp_folder} - missing files: {missing_files}")
     
     return all_data_dirs
 
@@ -266,18 +266,17 @@ if __name__ == '__main__':
         )
         
         # Extract force features from config
-        # Your ForceControlProcessing.py creates these columns: (Hand_side, 'finger_Force')
         hand_side_cap = args.intact_hand.capitalize()
         force_features = [(hand_side_cap, f"{finger}_Force") for finger in ["index", "middle", "ring", "pinky", "thumb"]]
         
         print(f"Looking for force features: {force_features}")
         
-        # Check if force data exists in your datasets
+        # Check if force data exists in datasets
         force_data_available = all(feat in trainsets[0].columns for feat in force_features) if trainsets else False
         print(f"Force data available in datasets: {force_data_available}")
         
         if args.hyperparameter_search:
-            # Use standard training for hyperparameter search
+            # standard training for hyperparameter search
             sweep_id = wandb.sweep(config.to_dict(), project=config.wandb_project)
             wandb.agent(sweep_id, lambda: train_model(trainsets, valsets, testsets, device, config.wandb_mode, config.wandb_project, config.name))
         
@@ -318,7 +317,7 @@ if __name__ == '__main__':
                         min_delta=config.early_stopping_delta
                     )
                     
-                    # IMPORTANT: Choose your training mode here
+                    # IMPORTANT: Choose training mode here
                     USE_ENHANCED_LOSS = True  # Set to True to enable enhanced loss with force feedback
                     
                     print(f'Training interaction model (enhanced_loss={USE_ENHANCED_LOSS})...')
@@ -367,7 +366,7 @@ if __name__ == '__main__':
                             wandb.run.summary['used_epochs'] = epoch
 
                             lr = model.scheduler.get_last_lr()[0]
-                            if epoch > 15:
+                            if epoch > 5:
                                 model.scheduler.step(val_loss)
                             pbar.set_postfix({'lr': lr, 'train_loss': train_loss, 'val_loss': val_loss, 'test_loss': test_loss})
 
@@ -400,12 +399,58 @@ if __name__ == '__main__':
                                             config.name, config, args.person_dir)
             
             # Generate predictions (same as before)
+            print(f"[interaction] valsets={len(valsets)}, testsets={len(testsets)}")
+
             for set_id, test_set in enumerate(valsets + testsets):
-                val_pred = interaction_model.predict(test_set, config.features, config.targets).squeeze(0).to('cpu').detach().numpy()
-                test_set[config.targets] = val_pred
-                test_set = rescale_data(test_set, args.intact_hand)
-                test_set.to_parquet(join((data_dirs + test_dirs)[set_id], f'pred_angles-{config.name}.parquet'))
-            
+                try:
+                    print(f"[interaction] Predicting set {set_id} (rows={len(test_set)})")
+                    if len(test_set) == 0:
+                        print(f"[interaction] Skipping empty set {set_id}")
+                        continue
+
+                    val_pred = interaction_model.predict(test_set, config.features, config.targets)\
+                                            .squeeze(0).to('cpu').detach().numpy()
+                    
+                    # Debug shapes
+                    print(f"[interaction] Set {set_id} shapes:")
+                    print(f"  config.targets: {len(config.targets)} columns: {config.targets}")
+                    print(f"  val_pred shape: {val_pred.shape}")
+                    print(f"  test_set shape: {test_set.shape}")
+
+                    # shape check to avoid assignment crash
+                    if val_pred.shape[0] != len(test_set):
+                        print(f"[interaction] Shape mismatch on set {set_id}: pred {val_pred.shape[0]} vs data {len(test_set)} — clipping to min length")
+                        m = min(val_pred.shape[0], len(test_set))
+                        val_pred = val_pred[:m]
+                        test_set = test_set.iloc[:m].copy()
+
+                    # Check column dimension mismatch
+                    if len(val_pred.shape) > 1 and val_pred.shape[1] != len(config.targets):
+                        print(f"[interaction] COLUMN mismatch on set {set_id}: pred {val_pred.shape[1]} cols vs {len(config.targets)} targets")
+                        # Take only the first N columns that match targets
+                        min_cols = min(val_pred.shape[1], len(config.targets))
+                        val_pred = val_pred[:, :min_cols]
+                        config_targets_subset = config.targets[:min_cols]
+                        print(f"[interaction] Using first {min_cols} columns: {config_targets_subset}")
+                        test_set[config_targets_subset] = val_pred
+                    else:
+                        # test_set[config.targets] = val_pred
+                        # Convert nested lists to tuples for pandas MultiIndex columns
+                        targets_as_tuples = [tuple(target) if isinstance(target, list) else target for target in config.targets]
+                        print(f"[interaction] Converting targets to tuples: {targets_as_tuples}")
+                        test_set[targets_as_tuples] = val_pred
+
+                    test_set = rescale_data(test_set, args.intact_hand)
+
+                    out_dir = (data_dirs + test_dirs)[set_id]
+                    os.makedirs(out_dir, exist_ok=True)
+                    out_path = join(out_dir, f'pred_angles-{config.name}.parquet')
+                    test_set.to_parquet(out_path)
+                    print(f"[interaction] wrote {out_path}")
+                except Exception as e:
+                    print(f"[interaction] failed on set {set_id}: {e}")
+                    import traceback
+                    traceback.print_exc()
             # Save model
             if args.save_model:
                 interaction_model.to(torch.device('cpu'))
