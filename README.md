@@ -2,32 +2,17 @@
 
 ## Installation
 
-Follow the steps below to set up your environment:
-
-1. Create a new conda environment with Python 3.8:
-
+1. **Install Pixi**
 ```bash
-conda create -n PCP python=3.8
+curl -fsSL https://pixi.sh/install.sh | sh
 ```
-
-2. Activate the newly created environment:
-
+2. **Instal the environment**
 ```bash
-conda activate PCP
+pixi install
 ```
-
-3. Install PyTorch based on your system: [PyTorch website](https://pytorch.org/get-started/locally/)
-
-4. Install the remaining dependencies from the `requirements.txt` file:
-
+3. **Find the Interpreter Path to set in the IDE**
 ```bash
-pip install -r requirements.txt
-```
-
-5. Install the local 'dynamics' package:
-
-```bash
-pip install -e dynamics
+pixi run which python
 ```
 
 ## Scripts

@@ -4,11 +4,22 @@ __pycache__/
 /model_files/
 /.idea/
 /dynamics/dynamics.egg-info/
+/.vscode/
 wandb/
 .DS_Store
 OMEN/
 omen*
 hand_config.yaml
-paper_utils/*
 
 .ipynb_checkpoints/
+/ninaproDB8/data/
+launch.json
+dependency_links.txt
+PKG-INFO
+SOURCES.txt
+top_level.txt
+
+paper_utils/paper_data/*
+# pixi environments
+.pixi/*
+!.pixi/config.toml
