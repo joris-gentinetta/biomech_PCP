@@ -9,5 +9,6 @@ wandb/
 OMEN/
 omen*
 hand_config.yaml
+paper_utils/*
 
 .ipynb_checkpoints/
