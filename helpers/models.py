@@ -1,20 +1,25 @@
 import math
 import os
-
-os.environ["PYTORCH_ENABLE_MPS_FALLBACK"] = "1"
-# torch.autograd.set_detect_anomaly(True)
-from abc import ABC, abstractmethod
-
+os.environ['PYTORCH_ENABLE_MPS_FALLBACK'] = '1'
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import torch.optim as optim
-from bilinear import Joints, Muscles
-from bilinear import M as bilinear_M
+import torch
+from torch import Tensor
+from typing import Optional, Tuple, List
+import numpy as np
+
+
+# torch.autograd.set_detect_anomaly(True)
+from abc import ABC, abstractmethod
 from tqdm import tqdm
+from bilinear import Muscles, Joints, M as bilinear_M
+
+from omen.realtime import RealtimeOMEN
+# from omen.postprocessing import inverse_transform_predictions
 
 SR = 60
-
 
 class TimeSeriesRegressor(nn.Module, ABC):
     def __init__(self, input_size, output_size, device):
@@ -125,6 +130,7 @@ class RNN(TimeSeriesRegressor):
                 out = self.tanh(out)
 
         return out, states
+
 
 
 class CNN(TimeSeriesRegressor):
@@ -246,6 +252,47 @@ class DenseNet(TimeSeriesRegressor):
 
         return out, states
 
+class ParallelDenseNet(TimeSeriesRegressor):
+    def __init__(self, input_size, output_size, device, **kwargs):
+        super().__init__(input_size, output_size, device)
+        self.hidden_size = kwargs.get('hidden_size')
+        self.n_layers = kwargs.get('n_layers')
+        self.num_states = kwargs.get('num_states')
+
+        # we should have that the input size is the number of parallel networks, with the states input stacked with each input
+
+        # Weight tensors for multiple layers (n_layers, n_states, out_dim)
+        self.weights = nn.ParameterList([
+            nn.Parameter(torch.randn(self.input_size, self.hidden_size if i > 0 else self.num_states,
+                                     self.output_size if i == self.n_layers - 1 else self.hidden_size))
+            for i in range(self.n_layers)
+        ])
+        self.biases = nn.ParameterList([
+            nn.Parameter(torch.randn(self.input_size, self.output_size if i == self.n_layers - 1 else self.hidden_size))
+            for i in range(self.n_layers)
+        ])
+
+        self.activation = nn.ReLU()
+
+    def forward(self, x, states):
+        """
+        x: (time_points, batch, input_size)
+        states: (batch, num_states) [these are updated in each iteration, I guess]
+        Returns: (time_points, batch, output_size)
+        """
+
+        # First, stack x and states for the parallel networks - they should zip together
+        out = torch.zeros((x.shape[0], x.shape[1], self.output_size), dtype=torch.float, device=self.device)
+
+        for i in range(x.shape[0]):
+            for j in range(self.n_layers):
+                x = torch.einsum("bms,msh->bmh", x, self.weights[i]) + self.biases[i]
+                x = self.activation(x)
+
+            # then flatten for the output - should be (batch, musc * outputs)
+        x = x.reshape(x.shape[0], x.shape[1], -1)
+
+        return out, states
 
 class IdealModel(TimeSeriesRegressor):
     def __init__(self, input_size, output_size, device, **kwargs):
@@ -400,6 +447,8 @@ class NNMuscleModel(TimeSeriesRegressor):
             modelclass = CNN
         elif config["model_type"] in ["RNN", "LSTM", "GRU"]:
             modelclass = RNN
+        elif config['model_type'] == 'ParallelDenseNet':
+            modelclass = ParallelDenseNet
         else:
             raise ValueError(
                 f"Unknown model type for NNMuscleModel {config['model_type']}"
@@ -449,8 +498,6 @@ class PhysJointModel(TimeSeriesRegressor):
             )
             joint_states[2] = out[:, i, :]
         return out, joint_states
-
-
 #
 # class NNJointModel(TimeSeriesRegressor): # this is the implicit M model
 #     def __init__(self, input_size, output_size, device, **kwargs):
@@ -603,6 +650,10 @@ class ModularModel(TimeSeriesRegressor):
             modelclass = MatMul
         elif config["model_type"] == "PhysMuscleModel":
             modelclass = PhysMuscleModel
+        elif config['model_type'] == 'NNMuscleModel':
+            modelclass = NNMuscleModel
+        elif config['model_type'] == 'NNJointModel':
+            modelclass = NNJointModel
         elif config["model_type"] == "PhysJointModel":
             modelclass = PhysJointModel
         else:
@@ -749,6 +800,82 @@ class CompensationModel(TimeSeriesRegressor):
 
         return out, states
 
+# ---------------------------------------------------------------------------- #
+#                                     OMEN                                     #
+# ---------------------------------------------------------------------------- #
+
+
+"""
+Instructions:
+./omen_cli.py can be used to train OMEN on data from a session. 
+Ater training, OMEN gets saved to a folder (e.g. 'P_149_Left') with
+the model, scalers, trained keys, and config.
+
+Changes to TimeSeriesRegressorWrapper:
+- in __init__, handle model_type == 'OMEN'
+- in load, handle OMEN's loading logic.
+"""
+
+class OMENModel(TimeSeriesRegressor):
+    def __init__(self,  input_size:int, output_size:int, device:torch.device, **kwargs):
+        super().__init__(input_size, output_size, device)
+        self.input_size = input_size
+        self.output_size = output_size
+        self.device = device
+
+    def train(self):
+        self.model.train()
+
+    def eval(self):
+        self.model.eval()
+
+    def to(self, device:torch.device):
+        self.device = device
+        self.model.to(device)
+
+    def load(self, model_path:str):
+        self.model = RealtimeOMEN.load(model_path)
+        self.key = self.model._config.sessions[0]
+        # self.x_scaler = self.model.scalers[f'X_{self.key}']
+        # self.y_scaler = self.model.scalers[f'Y']
+        # self.D = len(self.model.cans)
+
+    def get_starting_states(self, batch_size:int, y:Optional[Tensor]=None) -> None:
+        """
+            Reset CANs and initialize buffer
+        """
+        self.model.reset(self.input_size)
+        return None
+
+
+
+    def forward(self, x:Tensor, states:Optional[Tensor]=None) -> Tuple[Tensor, Optional[Tensor]]:
+        """
+            Forward pass for OMEN.
+            It uses Portent.encoder to encode the input,
+            then loops over each CANs and unfolds its dynamics.
+            It applies scaling as needed and returns the output.
+
+            x is a tensor of inputs of shape (batch_size, seq_len, n_inputs).
+            At inference time, batch_size == seq_len == 1.
+            Since we don't use OMENModel for training, this function only works at inference time.
+        """
+        B, S, N = x.shape
+        assert B == 1, f"Batch size must be 1: {B}"
+        assert S == 1, f"Sequence length must be 1: {S}"
+        assert N == self.input_size, f"Input size must match: {N} != {self.input_size}"
+        assert self.model.is_reset, "Model must be reset before forward pass"
+
+        # call OMEN
+        out = self.model(x.squeeze()).unsqueeze(0)  # (1, n_outputs)
+        return out, states
+
+
+
+
+# ---------------------------------------------------------------------------- #
+#                             TIME SERIES REGRESSOR                            #
+# ---------------------------------------------------------------------------- #
 
 class TimeSeriesRegressorWrapper:
     def __init__(
@@ -776,20 +903,18 @@ class TimeSeriesRegressorWrapper:
             self.model = IdealModel(input_size, output_size, device, **kwargs)
         elif model_type == "CompensationModel":
             self.model = CompensationModel(input_size, output_size, device, **kwargs)
+        elif model_type == 'OMEN':
+            # ? CHANGE
+            self.model = OMENModel(input_size, output_size, device, **kwargs)
         else:
             raise ValueError(f"Unknown model type {model_type}")
+        self.model_type = model_type
 
-        self.criterion = nn.MSELoss(reduction="mean")
-        self.optimizer = optim.Adam(self.model.parameters(), lr=learning_rate)
-        # self.optimizer = optim.AdamW(self.model.parameters(), lr=learning_rate, amsgrad=True)
-        self.scheduler = optim.lr_scheduler.ReduceLROnPlateau(
-            self.optimizer,
-            mode="min",
-            factor=0.5,
-            patience=3,
-            threshold_mode="rel",
-            threshold=0.01,
-        )
+        if model_type != 'OMEN':
+            self.criterion = nn.MSELoss(reduction='mean')
+            self.optimizer = optim.Adam(self.model.parameters(), lr=learning_rate)
+            # self.optimizer = optim.AdamW(self.model.parameters(), lr=learning_rate, amsgrad=True)
+            self.scheduler = optim.lr_scheduler.ReduceLROnPlateau(self.optimizer, mode='min', factor=0.5, patience=3, threshold_mode='rel', threshold=0.01)
 
         self.n_epochs = n_epochs
         self.warmup_steps = warmup_steps  # todo
@@ -800,9 +925,11 @@ class TimeSeriesRegressorWrapper:
         torch.save(self.model.state_dict(), path)
 
     def load(self, path):
-        self.model.load_state_dict(
-            torch.load(path, map_location=torch.device("cpu"))
-        )  # note that we load to cpu
+        # ! CHANGES: handle OMEN's loading logic.
+        if self.model_type == 'OMEN':  # ? CHANGE
+            self.model.load(path)
+        else:
+            self.model.load_state_dict(torch.load(path, map_location=torch.device('cpu')))  # note that we load to cpu
         return self
 
     def train(self):
@@ -876,7 +1003,6 @@ class TimeSeriesRegressorWrapper:
 
     def modules(self, *args, **kwargs):
         return self.model.modules(*args, **kwargs)
-
 
 # if __name__ == '__main__':
 #     model = ModularModel(device=torch.device('cpu'), input_size=8, output_size=4, muscleType='bilinear', nn_ratio=0.2)

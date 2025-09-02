@@ -106,21 +106,31 @@ def get_data(
             center_angles=getattr(config, "center_angles", True),
         )
 
-        if visualize:
-            axs = data[config.features].plot(subplots=True, ylim=(-0.1, 1.1))
-            for ax in axs:
-                ax.legend(loc="upper right")
-            plt.suptitle(f"Features {config.recordings[recording_id]}")
-            plt.show()
+        # temp
+        data = data.loc[60:].copy()
 
-            axs = data[config.targets].plot(subplots=True, ylim=(-1.1, 1.1))
-            for ax in axs:
-                ax.legend(loc="upper right")
-            plt.suptitle(f"Targets {config.recordings[recording_id]}")
+        if visualize:
+            leftSubplots = len(config.features)
+            rightSubplots = len(config.targets)
+            fig, axs = plt.subplots(max(leftSubplots, rightSubplots), 2, figsize=(15, 16))
+            fig.suptitle(f'{config.recordings[recording_id]}')
+            for i, feature in enumerate(config.features):
+                axs[i, 0].plot(data[feature])
+                # axs[i, 0].set_title(feature)
+                axs[i, 0].set_ylim(-0.1, 1.1)
+                axs[i, 0].set_ylabel(feature[1])
+
+            for i, target in enumerate(config.targets):
+                axs[i, 1].plot(data[target])
+                # axs[i, 1].set_title(target)
+                axs[i, 1].set_ylim(-1.1, 1.1)
+                axs[i, 1].yaxis.set_label_position('right')
+                axs[i, 1].set_ylabel(target[1])
+            plt.tight_layout()
             plt.show()
 
         # if test_dirs is None:
-        test_set = data.loc[len(data) // 5 * 4 :].copy()
+        test_set = data.loc[len(data) // 5 * 4:].copy()
         train_set = data.loc[: len(data) // 5 * 4].copy()
         trainsets.append(train_set)
         valsets.append(test_set)
@@ -271,12 +281,13 @@ def train_model(
                 )
                 if val_loss < best_val_loss:
                     best_val_loss = val_loss
-                    wandb.run.summary["best_epoch"] = epoch
-                    wandb.run.summary["best_val_loss"] = best_val_loss
-                if test_loss < wandb.run.summary.get("best_test_loss", float("inf")):
-                    wandb.run.summary["best_test_loss"] = test_loss
-                    wandb.run.summary["best_test_epoch"] = epoch
-                wandb.run.summary["used_epochs"] = epoch
+                    wandb.run.summary['best_epoch'] = epoch
+                    wandb.run.summary['best_val_loss'] = best_val_loss
+                if test_loss < wandb.run.summary.get('best_test_loss', float('inf')):
+                    wandb.run.summary['best_test_loss'] = test_loss
+                    wandb.run.summary['best_test_epoch'] = epoch
+                    model.save('/tmp/bestWeights.pt')
+                wandb.run.summary['used_epochs'] = epoch
 
                 lr = model.scheduler.get_last_lr()[0]
                 if epoch > 15:  # todo
@@ -309,6 +320,7 @@ def train_model(
 
                 if early_stopper.early_stop(val_loss):
                     break
+        # model.save(join('data', person_dir, 'models', f'{wandb_name}_bs{config.batch_size}_sl{config.seq_len}.pt'))
         model.save(
             join(
                 "data",
@@ -317,6 +329,8 @@ def train_model(
                 f"{wandb_name}_bs{config.batch_size}_sl{config.seq_len}.pt",
             )
         )
+        model.load('/tmp/bestWeights.pt')
+
         return model
 
 

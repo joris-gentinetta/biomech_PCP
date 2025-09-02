@@ -1163,18 +1163,15 @@ class psyonicArm:
                     # [index, middle, ring, pinky, thumbFlex, thumbRot]
                     handCom = [index, middle, ring, pinky, thumbFlex, thumbRot]
 
-                # self.printSensors()
-                if not interpCount % self.loopRate:
-                    # self.printSensors()
-                    if self.controlMode == "position":
-                        print(
-                            f"{(time.time() - self.startTimestamp):07.3f}",
-                            [f"{com:07.3f}" for com in handCom],
-                        )  # position
-                    # if self.controlMode == 'velocity': print(f'{(time.time() - self.startTimestamp):07.3f}', [f'{com:07.3f}' for com in handCom]) # velocity
-                    # if self.controlMode == 'torque': print(f'{(time.time() - self.startTimestamp):07.3f}', [f'{com:07.3f}' for com in torDes]) # torque
-                    # if self.controlMode == 'voltage': print(f'{(time.time() - self.startTimestamp):07.3f}', [f'{com:07.3f}' for com in curErr]) # voltage
-                    pass
+				# self.printSensors()
+				if not interpCount % self.loopRate:
+					#### TAG PRINT
+					# self.printSensors()
+					if self.controlMode == 'position': print(f'{(time.time() - self.startTimestamp):07.3f}', [f'{com:07.3f}' for com in handCom]) # position
+					# if self.controlMode == 'velocity': print(f'{(time.time() - self.startTimestamp):07.3f}', [f'{com:07.3f}' for com in handCom]) # velocity
+					# if self.controlMode == 'torque': print(f'{(time.time() - self.startTimestamp):07.3f}', [f'{com:07.3f}' for com in torDes]) # torque
+					# if self.controlMode == 'voltage': print(f'{(time.time() - self.startTimestamp):07.3f}', [f'{com:07.3f}' for com in curErr]) # voltage
+					pass
 
                 # self.handCom = self.getCurPos() # dont move arm
                 handCom = list(handCom)
@@ -1219,12 +1216,10 @@ class psyonicArm:
             time.sleep(max(1 / (self.loopRate * self.Hz) - (newT - T), 0))
             T = time.time()
 
-            self.lastposCom = self.NetCom
-            # posCom = controller.forwardDynamics() # todo biophysical model
-            posCom = controller.runModel()
-            self.NetCom = np.asarray(
-                self.lowpassCommands.filter(np.asarray([posCom]).T).T[0]
-            )
+			self.lastposCom = self.NetCom
+			# posCom = controller.forwardDynamics() # todo biophysical model
+			posCom = controller.runModel()
+			self.NetCom = np.asarray(self.lowpassCommands.filter(np.asarray([posCom]).T).T[0])
 
             if self.exitEvent.is_set():
                 break

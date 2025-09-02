@@ -336,6 +336,9 @@ if __name__ == "__main__":
     smooth_angles_df = smooth_angles_df.loc[start:]
     smooth_angles_df.to_parquet(join(experiment_dir, "cropped_smooth_angles.parquet"))
     emg = np.load(join(args.data_dir, "emg.npy"))
+
+    ##### JUST FOR SHAUN - MULTIPLY CHANNEL 12 by 2
+    # emg[:, 12] = emg[:, 12] * 2
     np.save(join(experiment_dir, "cropped_emg.npy"), emg[start:end])
 
     if args.visualize:
