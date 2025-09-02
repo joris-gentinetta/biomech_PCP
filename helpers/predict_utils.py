@@ -169,6 +169,10 @@ def train_model(trainsets, valsets, testsets, device, wandb_mode, wandb_project,
                     model.save('/tmp/bestWeights.pt')
                 wandb.run.summary['used_epochs'] = epoch
 
+                if math.isnan(train_loss):
+                    print('NaN loss encountered, stopping training.')
+                    break
+
                 lr = model.scheduler.get_last_lr()[0]
                 if epoch > 15: # todo
                     model.scheduler.step(val_loss)  # Update the learning rate after each epoch #todo train or val loss

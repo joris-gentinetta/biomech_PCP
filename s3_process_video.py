@@ -61,7 +61,8 @@ def run_mediapipe(cap, frames, video_timestamps, sides, scales, hand_roi_size, p
         if system_name == 'Darwin':
             rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
         else:
-            rgb_frame = frame
+            # rgb_frame = frame
+            rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
 
         mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=rgb_frame)
         body_results = body_model.detect_for_video(mp_image, video_timestamps[frame_id]).pose_landmarks # todo check

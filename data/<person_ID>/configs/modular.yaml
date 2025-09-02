@@ -10,6 +10,7 @@ parameters:
     value:
     - thumbFlEx
     - thumbAbAd
+    - thumbOpp
     - indexFlEx
     - mrpFlEx
     - fingersFlEx
@@ -17,27 +18,27 @@ parameters:
     - handOpCl
     - pinchOpCl
     - pointOpCl
-#    - keyOpCl
-#    - wristFlHandCl
-#    - indexFlDigitsEx
-
-
-  test_recordings:
-    value:
     - keyOpCl
     - wristFlHandCl
     - indexFlDigitsEx
 
+  test_recordings:
+    value:
+    - thumbFlEx
+    - indexFlEx
+    - mrpFlEx
+    - wristFlEx
+
   features:
     value:
-    - [emg, '0'] # 0
-    - [emg, '1'] # 1
-    - [emg, '2'] # 2
-    - [emg, '4'] # 3
-    - [emg, '10'] # 4
-    - [emg, '11'] # 5
-    - [emg, '12'] # 6
-    - [emg, '13'] # 7
+    - [emg, '0']  # 0
+    - [emg, '1']  # 1
+    - [emg, '2']  # 2
+    - [emg, '11'] # 3
+    - [emg, '12'] # 4
+    - [emg, '13'] # 5
+    - [emg, '14'] # 6
+    - [emg, '15'] # 7
 
 
   early_stopping_patience:
@@ -57,14 +58,13 @@ parameters:
 
   targets:
     value:
-    - [Left, indexAng]
-    - [Left, midAng]
-    - [Left, ringAng]
-    - [Left, pinkyAng]
-    - [Left, thumbInPlaneAng]
-    - [Left, thumbOutPlaneAng]
-#    - [Left, wristRot]
-    - [Left, wristFlex]
+    - [Right, indexAng]
+    - [Right, midAng]
+    - [Right, ringAng]
+    - [Right, pinkyAng]
+    - [Right, thumbInPlaneAng]
+    - [Right, thumbOutPlaneAng]
+    - [Right, wristFlex]
 
   warmup_steps:
     value: 0
@@ -82,53 +82,22 @@ parameters:
     value: ModularModel
 
   activation_model:
-#    parameters:
-#      hidden_size:
-#        value: 64
-#      model_type:
-#        value: DenseNet
-#      n_layers:
-#        value: 3
-#      n_freeze_epochs:
-#        value: 0
-
-    value: {model_type: DenseNet,
+    value: {
+            model_type: DenseNet,
             hidden_size: 64,
             n_layers: 3,
             n_freeze_epochs: 0,
-            }
+    }
 
   muscle_model:
-#    parameters:
-#      model_type:
-#        value: PhysMuscleModel
-#        n_freeze_epochs:
-#        values: [0, 1]
     value: {
-             model_type: PhysMuscleModel,
-#      model_type: GRU,
-#            hidden_size: 100,
-#            n_layers: 4,
-      n_freeze_epochs: 0,
+            model_type: PhysMuscleModel,
+            n_freeze_epochs: 0,
       }
 
   joint_model:
-#    parameters:
-#      model_type:
-#        value: PhysJointModel
-#        n_freeze_epochs:
-#        values: [0, 1]
     value: {
-#      model_type: GRU,
-#            hidden_size: 100,
-#            n_layers: 4,
-             model_type: PhysJointModel,
-      n_freeze_epochs: 0,
-             speed_mode: False,
+            model_type: PhysJointModel,
+            n_freeze_epochs: 0,
+            speed_mode: False,
       }
-
-#  perturb:
-#    values: [True, False]
-#
-#  keep_states:
-#    values: [True, False]
