@@ -20,3 +20,6 @@ SOURCES.txt
 top_level.txt
 
 paper_utils/paper_data/*
+# pixi environments
+.pixi/*
+!.pixi/config.toml

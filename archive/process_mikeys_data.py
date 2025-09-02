@@ -137,39 +137,3 @@ import os
 import numpy as np
 import pandas as pd
 from pathlib import Path
-
-
-# def load_and_concatenate_cycling(data_dir):
-#     cycling_dir = Path(data_dir) / 'cycling' / 'experiments' / '1'
-#     output_dir = Path(data_dir) / 'online_cycling' / 'experiments' / '1'
-#     output_dir.mkdir(parents=True, exist_ok=True)
-#
-#     # Initialize lists to store data
-#     emg_data_list = []
-#     angles_data_list = []
-#
-#     # Load all files in the cycling directory
-#     for root, dirs, files in os.walk(cycling_dir):
-#         for file in files:
-#             if file == 'cropped_emg.npy':
-#                 emg_data = np.load(Path(root) / file)
-#                 emg_data_list.append(emg_data)
-#             elif file == 'cropped_smooth_angles.parquet':
-#                 angles_data = pd.read_parquet(Path(root) / file)
-#                 angles_data_list.append(angles_data)
-#
-#     # Concatenate the data
-#     if emg_data_list:
-#         emg_combined = np.concatenate(emg_data_list * 2, axis=0)[:21600]
-#         np.save(output_dir / 'cropped_emg.npy', emg_combined)
-#
-#     if angles_data_list:
-#         angles_combined = pd.concat(angles_data_list * 2, ignore_index=True).iloc[:21600]
-#         angles_combined.to_parquet(output_dir / 'cropped_smooth_angles.parquet')
-#
-#     print(f"Saved concatenated data to {output_dir}")
-#
-#
-# if __name__ == "__main__":
-#     data_dir = "/home/haptix/haptix/biomech_PCP/data/mikey/recordings"
-#     load_and_concatenate_cycling(data_dir)
