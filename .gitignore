@@ -6,4 +6,9 @@ __pycache__/
 /dynamics/dynamics.egg-info/
 wandb/
 .DS_Store
+OMEN/
+omen*
+hand_config.yaml
+paper_utils/*
+
 .ipynb_checkpoints/

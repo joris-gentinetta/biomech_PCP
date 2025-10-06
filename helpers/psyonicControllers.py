@@ -164,7 +164,6 @@ class psyonicControllers():
 		# jointPos[5] = -66
 
 		# if not self.loops % self.loopReset: print(f'{time.time():.5f}', [f'{ang:06.3f}' for ang in jointPos], [f'{ang:06.3f}' for ang in jointAngles[0]]); self.loops = 0
-		# if not self.loops % self.loopReset: print(f'{time.time():.5f}', [f'{ang:07.3f}' for ang in jointPos], [f'{ang:07.3f}' for ang in jointAngles[0]], [f'{emg:07.3f}' for emg in usedEMG]); self.loops = 0
 
 		return jointPos
 

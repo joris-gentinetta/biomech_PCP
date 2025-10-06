@@ -533,6 +533,7 @@ if __name__ == '__main__':
             )}
         )
         model.to('cpu')
+
         model.eval()
         epoch = 0
         best_val_loss = math.inf

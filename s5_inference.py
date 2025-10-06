@@ -1125,6 +1125,7 @@ class psyonicArm():
 
 				# self.printSensors()
 				if not interpCount % self.loopRate:
+					#### TAG PRINT
 					# self.printSensors()
 					if self.controlMode == 'position': print(f'{(time.time() - self.startTimestamp):07.3f}', [f'{com:07.3f}' for com in handCom]) # position
 					# if self.controlMode == 'velocity': print(f'{(time.time() - self.startTimestamp):07.3f}', [f'{com:07.3f}' for com in handCom]) # velocity

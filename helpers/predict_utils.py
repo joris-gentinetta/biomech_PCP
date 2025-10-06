@@ -193,6 +193,9 @@ def get_data(config, data_dirs, intact_hand, visualize=False, test_dirs=None, pe
         data = load_data(data_dir, intact_hand, config.features, config.targets, perturber)
         # print(f"Data length for recording {recording_id} ({data_dir}): {len(data)}")
 
+        # temp
+        data = data.loc[60:].copy()
+
         if visualize:
             # print("get_data debug ")
             # print("Available DataFrame columns:")
@@ -291,6 +294,7 @@ def train_model(trainsets, valsets, testsets, device, wandb_mode, wandb_project,
                 if test_loss < wandb.run.summary.get('best_test_loss', float('inf')):
                     wandb.run.summary['best_test_loss'] = test_loss
                     wandb.run.summary['best_test_epoch'] = epoch
+                    model.save('/tmp/bestWeights.pt')
                 wandb.run.summary['used_epochs'] = epoch
 
                 print(f"Epoch {epoch} validation loss: {val_loss}, test loss: {test_loss}")
@@ -311,7 +315,8 @@ def train_model(trainsets, valsets, testsets, device, wandb_mode, wandb_project,
 
                 if early_stopper.early_stop(val_loss):
                     break
-        model.save(join('data', person_dir, 'models', f'{wandb_name}_bs{config.batch_size}_sl{config.seq_len}.pt'))
+        # model.save(join('data', person_dir, 'models', f'{wandb_name}_bs{config.batch_size}_sl{config.seq_len}.pt'))
+        model.load('/tmp/bestWeights.pt')
         return model
 
 

@@ -59,7 +59,7 @@ from pathlib import Path
 folders = [
     "indexFlDigitsEx",
     "wristFlHandCl",
-    "keyOpCl",
+    "keyOpCl_old",
     "pointOpCl",
     "pinchOpCl",
     "handOpCl",
