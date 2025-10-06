@@ -33,9 +33,9 @@ class EMG():
             self.synergyPath = '/home/haptix/haptix/haptix_controller/handsim/include/synergyMat.csv'
             # self.synergyPath = '/home/haptix/haptix/haptix_controller/handsim/include/JM_0929_synergyMat.csv'
         else:
-            self.boundsPath = '/Users/jg/projects/biomech/UEA-AMI-Controller/handsim/include/scaleFactors.txt'
-            self.deltasPath = '/Users/jg/projects/biomech/UEA-AMI-Controller/handsim/include/deltas.txt'
-            self.synergyPath = '/Users/jg/projects/biomech/UEA-AMI-Controller/handsim/include/synergyMat.csv'
+            self.boundsPath = 'C:/Users/Emanuel Wicki/Documents/MIT/UEA-AMI-Controller/handsim/include/scaleFactors.txt'
+            self.deltasPath = 'C:/Users/Emanuel Wicki/Documents/MIT/UEA-AMI-Controller/handsim/include/deltas.txt'
+            self.synergyPath = 'C:/Users/Emanuel Wicki/Documents/MIT/UEA-AMI-Controller/handsim/include/synergyMat.csv'
 
         self.socketAddr = socketAddr
         self.ctx = zmq.Context()
@@ -50,10 +50,18 @@ class EMG():
         self.switch1 = None
         self.switch2 = None
         self.end = None
-        self.samplingFreq = None # this SHOULD be 1 kHz - but don't assume that
+        self.samplingFreq = 976.56 # this SHOULD be 1 kHz - but don't assume that
 
         if self.offlineData is None:
-            self.getBounds()  # first 16: maximum values, second 16: minimum values
+            # Only get bounds from file if not provided via parameters
+            if noiseLevel is None or maxVals is None:
+                self.getBounds()  # first 16: maximum values, second 16: minimum values
+            else:
+                # Use the provided calibration values from YAML
+                self.maxVals = np.asarray(maxVals)
+                self.noiseLevel = np.asarray(noiseLevel)
+                print(f'Using provided noise levels: {self.noiseLevel}')
+                print(f'Using provided max vals: {self.maxVals}')
         else:
             self.maxVals = np.expand_dims(maxVals, axis=1)
             self.noiseLevel = noiseLevel
@@ -68,6 +76,9 @@ class EMG():
         if self.offlineData is None:
             # initialize the EMG with the first signal (need the sampling frequency)
             self.readEMG()
+            # measured_rate = self.measure_actual_stream_rate(duration=2)
+            # self.samplingFreq = measured_rate  
+            print(f"Got sampling frequency from first packet: {self.samplingFreq} Hz")
         else:
             self.samplingFreq = samplingFreq
         self.initFilters()
@@ -75,11 +86,41 @@ class EMG():
         # parameters for calculating iEMG
         self.int_window = .05 # sec - 50 ms integration window
         self.intFreq = 60 # group packets to this frequency in Hz
-        self.numPackets = math.ceil(self.samplingFreq/self.intFreq)
+        # self.numPackets = math.ceil(self.samplingFreq/self.intFreq)
+        self.numPackets = 16
 
         self.window_len = math.ceil(self.int_window*self.samplingFreq)
         self.rawHistory = np.zeros((self.numElectrodes, self.numPackets)) # switch to processing packets (apply filters only once on a number of packets)
 
+    def measure_actual_stream_rate(self, duration=5):
+        """Measure the actual rate of EMG packets coming from ZMQ"""
+        import time
+        
+        print(f"Measuring actual EMG stream rate for {duration} seconds...")
+        
+        packet_count = 0
+        start_time = time.time()
+        last_timestamp = None
+        
+        while (time.time() - start_time) < duration:
+            self.readEMG()  # Read one packet from ZMQ
+            packet_count += 1
+            
+            if packet_count % 1000 == 0:
+                current_time = time.time()
+                if last_timestamp:
+                    rate = 1000 / (current_time - last_timestamp)
+                    print(f"Packet {packet_count}: {rate:.1f} Hz")
+                last_timestamp = current_time
+        
+        elapsed = time.time() - start_time
+        actual_rate = packet_count / elapsed
+        
+        print(f"Measured EMG stream rate: {actual_rate:.1f} Hz")
+        print(f"Expected: 1000 Hz, Actual: {actual_rate:.1f} Hz")
+        
+        return actual_rate
+    
     def __del__(self):
         self.shutdown()
 
@@ -113,6 +154,8 @@ class EMG():
         self.synergies = [-1]*self.numSynergies if self.usingSynergies else [-1]*self.numElectrodes
 
     def initFilters(self):
+        print(f"EMGClass sampling frequency: {self.samplingFreq} Hz")
+        # print(f"EMGClass numPackets: {self.numPackets}")
         self.powerLineFilterArray = BesselFilterArr(numChannels=self.numElectrodes, order=8, critFreqs=[58, 62], fs=self.samplingFreq, filtType='bandstop') # remove power line noise and multiples up to 600 Hz
         self.highPassFilters = BesselFilterArr(numChannels=self.numElectrodes, order=4, critFreqs=20, fs=self.samplingFreq, filtType='highpass') # high pass removes motion artifacts and drift
         self.lowPassFilters = BesselFilterArr(numChannels=self.numElectrodes, order=4, critFreqs=3, fs=self.samplingFreq, filtType='lowpass') # smooth the envelope, when not using 'actually' integrated EMG
@@ -256,6 +299,7 @@ class EMG():
 
     ##########################################################################
     # actual calculations
+        
     def readEMG(self):
         try:
             emgPack = self.sock.recv()
@@ -276,12 +320,16 @@ class EMG():
 
     # read multiple EMG packets to save time and processing
     def readEMGPacket(self):
+        import time
+        
+        # Calculate how long reading packets SHOULD take
+        # packets_duration = self.numPackets / 1000.0  # 17/1013.8 ≈ 0.0168s = 16.8ms
+        # read_start_time = time.time()
+        
         for i in range(self.numPackets):
             if self.offlineData is None:
                 emgPack = self.sock.recv()
-
                 emg = struct.unpack('ffffffffffffffffffIIIIf', emgPack)
-
                 self.OS_time = emg[0]
                 self.OS_tick = emg[1]
                 self.rawEMG = emg[2:18]
@@ -290,15 +338,57 @@ class EMG():
                 self.switch2 = emg[20]
                 self.end = emg[21]
                 self.samplingFreq = emg[22]
-
+                
                 self.rawHistory[:, i] = emg[2:18]
             else:
                 self.rawHistory[:, i] = next(self.offlineData)
+        
+        # Ensure we don't read faster than the actual stream rate
+        # read_elapsed = time.time() - read_start_time
+        # if read_elapsed < packets_duration:
+        #     time.sleep(packets_duration - read_elapsed)
+        
+        # Debug
+        # if hasattr(self, 'debug_counter'):
+        #     self.debug_counter += 1
+        #     if self.debug_counter % 100 == 0:
+        #         total_time = time.time() - read_start_time
+        #         print(f"readEMGPacket: {self.numPackets} packets in {total_time*1000:.1f}ms")
+        # else:
+        #     self.debug_counter = 0
+    
+    # def readEMGPacket(self):
+    #     for i in range(self.numPackets):
+    #         if self.offlineData is None:
+    #             emgPack = self.sock.recv()
+# 
+    #             emg = struct.unpack('ffffffffffffffffffIIIIf', emgPack)
+# 
+    #             self.OS_time = emg[0]
+    #             self.OS_tick = emg[1]
+    #             self.rawEMG = emg[2:18]
+    #             self.trigger = emg[18]
+    #             self.switch1 = emg[19]
+    #             self.switch2 = emg[20]
+    #             self.end = emg[21]
+    #             self.samplingFreq = emg[22]
+    #             if i == 0:
+    #                 # print(f"[EMG] streaming sample rate (Hz): {self.samplingFreq}")
+    #                 self.rawHistory[:, i] = emg[2:18]
+    #         else:
+    #             self.rawHistory[:, i] = next(self.offlineData)
 
 
     # calculate integrated emg over multiple packets
     def intEMGPacket(self):
         emg = np.copy(self.rawHistory)
+
+        # print(f"Raw data stats: min={emg.min():.3f}, max={emg.max():.3f}, non-zero samples={np.count_nonzero(emg)}")
+        # print(f"Raw EMG - Channel 0 range: [{emg[0].min():.1f}, {emg[0].max():.1f}]")
+        # print(f"Raw EMG - Channel 1 range: [{emg[1].min():.1f}, {emg[1].max():.1f}]") 
+        # print(f"Raw EMG - All channels mean: {emg.mean():.1f}")
+        # print(f"Raw EMG - Non-zero samples: {np.count_nonzero(emg)}/{emg.size}")
+        
 
         emg = self.powerLineFilterArray.filter(emg)
         emg = self.highPassFilters.filter(emg)
@@ -355,15 +445,60 @@ class EMG():
 
     # full EMG update pipeline
     def pipelineEMG(self):
+        import time
+        
+        # locked_sampling_freq = 1000.0  # Use the measured rate
+        # target_output_rate = locked_sampling_freq / self.numPackets  # Should be ~59.6 Hz
+        # target_period = 1.0 / target_output_rate  # Should be ~0.0168 seconds
+        # 
+        # print(f"EMG pipeline target: {target_output_rate:.1f} Hz ({target_period*1000:.1f}ms period)")
+        # print(f"Locked sampling freq: {locked_sampling_freq} Hz")
+        # 
+        # loop_count = 0
+        # total_sleep_time = 0
+        # total_processing_time = 0
+        # pipeline_start_time = time.time()  # Track total elapsed time
+        
         while not self.exitEvent.is_set():
+            start_time = time.time()
+            
+            # Process one cycle
             self.readEMGPacket()
             self.intEMGPacket()
             self.normEMG()
-            # if self.usingSynergies: self.synergyProd()
-            # self.muscleDynamics()
+            
+            # processing_time = time.time() - start_time
+            # total_processing_time += processing_time
+            # 
+            # # Timing control
+            # sleep_time = target_period - processing_time
+            # if sleep_time > 0:
+            #     time.sleep(sleep_time)
+            #     total_sleep_time += sleep_time
+            # 
+            # loop_count += 1
+            
+            # Debug every 100 loops
+            # if loop_count % 100 == 0:
+            #     total_elapsed = time.time() - pipeline_start_time
+            #     actual_rate = loop_count / total_elapsed  # Correct calculation
+            #     avg_processing = total_processing_time / loop_count * 1000
+            #     avg_sleep = total_sleep_time / loop_count * 1000
+            #     print(f"Loop {loop_count}: {actual_rate:.1f}Hz (target {target_output_rate:.1f}Hz), processing {avg_processing:.1f}ms, sleep {avg_sleep:.1f}ms")
+            
             if self.offlineData is not None:
-                # self.emgHistory = np.concatenate((self.emgHistory, self.iEMG[:, None]), axis=1)
                 self.emgHistory = np.concatenate((self.emgHistory, self.normedEMG), axis=1)
+
+    # def pipelineEMG(self):
+    #     while not self.exitEvent.is_set():
+    #         self.readEMGPacket()
+    #         self.intEMGPacket()
+    #         self.normEMG()
+    #         # if self.usingSynergies: self.synergyProd()
+    #         # self.muscleDynamics()
+    #         if self.offlineData is not None:
+    #             # self.emgHistory = np.concatenate((self.emgHistory, self.iEMG[:, None]), axis=1)
+    #             self.emgHistory = np.concatenate((self.emgHistory, self.normedEMG), axis=1)
 
 
 def plot_emg(emg, min_vals, max_vals, title='EMG'):
@@ -378,7 +513,8 @@ def plot_emg(emg, min_vals, max_vals, title='EMG'):
 if __name__ == '__main__':
     emg_data = np.load('/Users/jg/projects/biomech/DataGen/data/joris/trigger_1/triggered_emg.npy').T
     emg_timestamps = np.load('/Users/jg/projects/biomech/DataGen/data/joris/trigger_1/triggered_emg_timestamps.npy')
-    sf = (emg_data.shape[1] - 1) / (emg_timestamps[-1] - emg_timestamps[0])
+    # sf = (emg_data.shape[1] - 1) / (emg_timestamps[-1] - emg_timestamps[0])
+    sf  = 1000
     emg = EMG(samplingFreq=sf, offlineData=emg_data)
     emg.startCommunication()
     emg.emgThread.join()
@@ -395,7 +531,3 @@ if __name__ == '__main__':
     plot_emg(normalized_emg[:, :], min_vals, max_vals, 'Filtered EMG')
 
     print()
-
-
-
-

@@ -16,9 +16,9 @@ conda create -n PCP python=3.8
 conda activate PCP
 ```
 
-3. Install PyTorch based on your system: [PyTorch website](https://pytorch.org/get-started/locally/)
+3. Install PyTorch based on your system: [PyTorch website](https://pytorch.org/)
 
-4. Install the remaining dependencies from the `requirements.txt` file:
+4. Install the remaining dependencies from the requirements.txt file:
 
 ```bash
 pip install -r requirements.txt
@@ -30,215 +30,158 @@ pip install -r requirements.txt
 pip install -e dynamics
 ```
 
+## Usage Overview
+
+The pipeline enables EMG- and force-aware control of the PSYONIC Ability Hand prosthesis.
+
+The workflow consists of:
+- Patient folder setup
+- Connecting the EMG board
+- Data acquisition (calibration, free-space, interaction)
+- Preprocessing
+- Model training
+- Inference / real-time control
+
+## 1. Patient Folder Setup
+
+1. Copy an existing `<person_id>` folder from `data/` as a template.
+2. This folder contains a `configs/` directory with:
+   - `modular_fs.yaml` (free-space controller config)
+   - `modular_inter.yaml` (interaction controller config)
+3. Rename the folder to the patient's name, pseudonym, or ID.
+4. These config files will be automatically updated during preprocessing.
+
+## 2. Connecting the EMG Board
+
+Two options exist:
+
+**With GUI (Linux/macOS only):** Use the external Biomech_EMG_USB tool (not included in this repo). This shows live EMG readings and helps verify connection quality.
+
+**Without GUI (cross-platform, including Windows):** Run:
+
+```bash
+python s0_emgInterface.py
+```
+
+Check that the printed timestamps are chronological. If they jump around, the connection is unstable and the EMG board must be restarted.
+
+In the GUI, misaligned timestamps also indicate lost connection.
+
+## 3. Data Acquisition
+
+### Calibration Data
+
+1. Run the calibration script:
+
+```bash
+python s1.5_collect_calib_data.py --person_id <person_id> --movement Calibration --hand_side <Left/Right> --calibrate_emg
+```
+
+- **Step 1:** Relaxed baseline EMG for 10s (noise calibration).
+- **Step 2:** Maximal voluntary contraction (MVC) for 10s (muscle activation range).
+- Results are stored in `recordings/calibration/`.
+
+2. Next, record free-space hand poses:
+
+```bash
+python s1.5_collect_calib_data.py --person_id <person_id> --movement <hand_pose> --hand_side <Left/Right>
+```
+
+**`<hand_pose>` options:**
+- `indexFlEx`
+- `mrpFlEx`
+- `fingersFlEx`
+- `handClOp`
+- `thumbAbAd`
+- `thumbFlEx`
+- `indexDigitsFlEx`
+- `pinchClOp`
+
+During the sync iterations (not stored), the patient aligns with the prosthesis trajectory.
+During rec iterations, data is recorded and stored.
+
+### Interaction Data
+
+Run:
+
+```bash
+python s1.5_collect_force_data.py --person_id <person_id> --grip <grip_type> --hand <Left/Right> --gui
+```
+
+**`<grip_type>` options:**
+- `hook`
+- `power_grip`
+- `tripod`
+- `pinch`
+
+**Default:** 60s trial, PID update frequency 100–200 Hz.
+
+**Workflow:**
+1. Hand slowly closes into grip (approach phase).
+2. Place rigid/soft object into hand.
+3. When contact is detected, the PID controller follows the target force trajectory.
+4. Patient modulates grip force via muscle co-contraction, following the moving "tail" in the GUI.
+
+Interaction trials are saved with `_interaction` suffix in the movement name.
+
+## 4. Preprocessing
+
+After acquisition, process all recordings:
+
+```bash
+python s2.5_process_all_data.py --person_id <person_id> --hand_side <Left/Right>
+```
+
+Optionally restrict to one movement:
+
+```bash
+python s2.5_process_all_data.py --person_id <person_id> --hand_side <Left/Right> --movement indexFlEx
+```
+
+This step:
+- Filters and aligns EMG, force, and kinematics
+- Updates `modular_fs.yaml` and `modular_inter.yaml` with used EMG channels, movements, etc.
+- Config files can be edited manually to adjust model architecture.
+
+## 5. Training
+
+Train models using:
+
+```bash
+python s4_train.py --person_dir <person_id> --intact_hand <Left/Right> --controller_mode <free_space|interaction|both> -t -s
+```
+
+Use `-v` instead of `-t -s` to only visualize data.
+
+**Modes:**
+- `--controller_mode free_space` → train free-space only
+- `--controller_mode interaction` → train interaction only
+- `--controller_mode both` → train both models
+
+Models are saved under `data/<person_id>/models/`.
+
+## 6. Inference (Real-Time Control)
+
+Run the online controller:
+
+```bash
+python s5_inference.py -e --person_dir <person_id> \
+    --free_space_model_name <free_space_model_name> \
+    --interaction_model_name <interaction_model_name>
+```
+
+- Requires trained models from step 5.
+- Uses EMG + force feedback in real-time to control the PSYONIC Ability Hand.
+
 ## Scripts
 
-### 0.1. EMG Board Setup
-- Find the port of the emg board:
-```bash
-# create a temp directory
-mkdir temp
-
-# emg board not plugged in:
-ls /dev/ > temp/notPluggedIn.txt
-
-# emg board plugged in:
-ls /dev/ > temp/pluggedIn.txt
-
-# <port> is the entry that contains tty e.g.: tty.usbserial-DO02GBUB
-diff temp/notPluggedIn.txt temp/pluggedIn.txt
-
-# remove the temp directory
-rm -r temp
-```
-
-- Connect to the EMG board:
-```bash
-python s0_emgInterface.py -p /dev/<port>
-```
-e.g.:
-```bash
-python s0_emgInterface.py -p /dev/tty.usbserial-DO02GBUB
-```
-
-
-### 1. Data Collection with `1_collect_data.py`
-
-The `1_collect_data.py` script is used to capture EMG data. To use it first connect the EMG board (see 0.1 EMG Board Setup)
-
-- `--data_dir`: This argument is required. It specifies the output directory where the EMG data will be saved.
-
-- `--dummy_emg`: This argument is optional. If used, the script will generate dummy EMG data for testing purposes
-  without the need for an EMG board.
-
-
-Here is an example of how to run the script:
-
-```bash
-python 1_collect_data.py --data_dir data/test_person/test_data --dummy_emg 
-```
-
-Put the recorded video in the data directory that you specified. The file name of the video is not important, but it should be in the .mp4 format.
-
-### 2. Data Preprocessing with `2_preprocess_data.py`
-
-The `preprocess_data.py` script is used to first display a frame of the video and then crop it in width/height and time.
-EMG data is adapted accordingly.
-
-- `--data_dir`: This argument is required. It specifies the directory where the collected data is stored.
-
-- `--experiment_name`: This argument is required. It specifies the name of the experiment
-  to be used for saving the processed data.
-
-- `--x_start`, `--x_end`, `--y_start`, `--y_end`: These arguments are optional with a default value of 0 and -1. They specify
-  the coordinates for cropping the video when the `--process` argument is used.
-
-- `--start_frame`, `--end_frame`: These arguments are optional with default values of 0 and -1 respectively. They
-  specify the start and end frames for cropping the video when the `--process` argument is used.
-
-- `--trigger_channel`: This argument is required. It specifies the channel number of the trigger signal in the EMG data.
-
-- `--trigger_value`: This argument is required. It specifies the trigger value in the EMG data. Trigger is detected when
-  the absolute value signal crosses the trigger_value.
-
-- `--process`: This argument is optional. If used, the script will process the video. If not used, the script will show the video and the EMG trigger channel
-
-First inspect the Trigger channel and the video to determine the parameters:
-
-```bash
-python 2_preprocess_data.py --data_dir data/test_person/test_recording --experiment_name 1 --trigger_channel 15
-```
-
-Then run the script with the `--process` argument to process the data:
-
-```bash
-python 2_preprocess_data.py --data_dir data/test_person/test_recording --experiment_name 1 --start_frame 400 --end_frame 1000 --trigger_channel 15 --trigger_value 600 --process
-```
-
-### 3. Video Processing with `3_process_video.py`
-
-The `3_process_video.py` script is used to process the video data. It first gets the 2D poses, then raises them to 3D, and
-finally computes the angles and saves them to a dataframe. It has several command line arguments that you can use to
-customize its behavior:
-
-
-- `--data_dir`: This argument is required. It specifies the directory where the video data is stored.
-
-- `--experiment_name`: This argument is required. It specifies the name of the experiment to be used for saving the
-  processed data.
-
-- `--visualize`: This argument is optional with a default value of True. If used, the script will visualize the output.
-
-- `--intact_hand`: This argument is optional, either Right or Left. It specifies the hand that is intact. If not used, the script will run for both hands.
-
-- `--hand_roi_size`: This argument is optional with a default value of 800. It specifies the size of the region of interest
-  around the hand.
-
-- `--plane_frames_start`, `--plane_frames_end`: These arguments are optional with default values of 0 and 20 respectively. They define the range of frames that are used to get the arm lengths in the 0 plane.
-
-- `--video_start`, `--video_end`: This argument is optional with a default value of -1. It specifies the end frame of the video, used to produce "cropped_" files
-
-- `--process`: This argument is optional. If used, the script will process the video. If not used, the script will only
-  display the video and a sample of hand ROIs.
-
-
-First you can run the script without the `--process` argument to determine the hand ROI size and the plane frames:
-```bash
-python 3_process_video.py --data_dir data/test_person/test_recording --experiment_name 1
-```
-
-Then you can run the script with the `--process` argument to process the video:
-```bash
-python 3_process_video.py --data_dir data/test_person/test_recording --experiment_name 1 --visualize --intact_hand Right --hand_roi_size 400 --plane_frames_start 0 --plane_frames_end 40 --process
-```
-
-### 4. Training with `4_train.py`
-
-The `4_train.py` script is used for training a time-series model on EMG data, predicting joint angles. It supports data exploration, hyperparameter search, testing, and saving the trained model. Below are the command-line arguments and usage examples.
-
-#### Command Line Arguments
-
-- `--person_dir`: (Required) Specifies the directory of the person's data.
-- `--intact_hand`: (Required) Specifies the intact hand (Right/Left).
-- `--config_name`: (Required) The name of the training configuration file (YAML format).
-- `-v, --visualize`: (Optional) If used, plots data exploration results.
-- `-hs, --hyperparameter_search`: (Optional) If used, performs a hyperparameter search.
-- `-t, --test`: (Optional) If used, tests the model.
-- `-s, --save_model`: (Optional) If used, saves the trained model.
-
-#### Usage
-
-1. **Data Exploration**
-
-   To visualize the data for exploration, use the `--visualize` argument. This will plot the features and targets for the specified person.
-
-   ```bash
-   python 4_train.py --person_dir A_1 --intact_hand Left --config_name simple_GRU --visualize
-   ```
-
-2. **Hyperparameter Search**
-
-   To perform a hyperparameter search, use the `--hyperparameter_search` argument. This will run a sweep using the configuration specified in the YAML file.
-   ```bash
-   python 4_train.py --person_dir A_1 --intact_hand Left --config_name simple_GRU --hyperparameter_search
-   ```
-
-3. **Testing the Model**
-
-   To test the model, use the --test argument. This will train the model on the training set and evaluate it on the test set.   
-   ```bash
-   python 4_train.py --person_dir A_1 --intact_hand Left --config_name simple_GRU --test
-   ```
-   
-4. **Saving the Model**
-   To save the trained model, use the --save_model argument. This will save the model to the specified directory.
-   ```bash
-   python 4_train.py --person_dir A_1 --intact_hand Left --config_name simple_GRU --save_model
-   ```
-
-
-### 5. Control the Prosthetic Hand
-- Connect to the EMG board (see the 0.1. EMG Board Setup)
-- Connect to the hand:
-```bash
-python 5_inference.py -e --person_dir A_1 --config_name simple_GRU
-```
-- Type `move` to start the hand.
-
-
-### 6. Visualize the model output on the test data with `6_visualize_results.py`
-To visualize the model output on the test data, use the `6_visualize_results.py` script. It will start a pybullet simulation and show the model output on the test data.
-These are the command line arguments that you can use to customize the behavior of the script:
-
-- `--data_dir`: This argument is required. It specifies the directory where the video data is stored.
-- `--experiment_name`: This argument is required. It specifies the name of the experiment to be used for saving the processed data.
-- `--intact_hand`: This argument is optional, either Right or Left. It specifies the hand that is intact (Left/Right).
-- `--model_name`: This argument is optional. It specifies the model name to be used for inference.
-- `--video`: This argument is optional. If used, the script will display the video.
-
-Example:
-```bash
-python 6_visualize_results.py --data_dir data/A_1/recordings/minJerk/pinchCloseOpen --experiment_name 1 --intact_hand Left --model_name simple_GRU
-```
-
-## Data Output
-
-### Angles Explanation
-Available angles: `['indexAng', 'midAng', 'ringAng', 'pinkyAng', 'thumbInPlaneAng', 'thumbOutPlaneAng', 'elbowAngle', 'wristRot', 'wristFlex']`
-
-- `indexAng`: This is the maximum angle between the Index Finger's Proximal Interphalangeal (PIP) joint and Metacarpophalangeal (MCP) joint, and the line between the MCP joint and the wrist. The angle is 0 when the finger is fully extended and increases as the finger is flexed.
-
-- `midAng`: This is the maximum angle between the Middle Finger's PIP joint and MCP joint, and the line between the MCP joint and the wrist. The angle is 0 when the finger is fully extended and increases as the finger is flexed.
-
-- `ringAng`: This is the maximum angle between the Ring Finger's PIP joint and MCP joint, and the line between the MCP joint and the wrist. The angle is 0 when the finger is fully extended and increases as the finger is flexed.
-
-- `pinkyAng`: This is the maximum angle between the Pinky Finger's PIP joint and MCP joint, and the line between the MCP joint and the wrist. The angle is 0 when the finger is fully extended and increases as the finger is flexed.
-
-- `thumbInPlaneAng`: This is the angle between the thumb and the line between the pinky and index fingers in the plane of the palm. The angle is 0 when the thumb is parallel to the line between the pinky and index fingers, and increases when the thumb is pulled towards the pinky in the palm plane.
-
-- `thumbOutPlaneAng`: This is the angle between the thumb and the line between the pinky and index fingers in the plane orthogonal to the palm. The angle is 0 when the thumb is parallel to the line between the pinky and index fingers, and increases when the thumb is pulled towards the pinky in the plane orthogonal to the palm.
-
-- `elbowAngle`: This is the angle between the lower arm and the upper arm at the elbow joint. The angle is 0 when the elbow is fully flexed and increases as the elbow is extended.
-
-- `wristRot`: This is the angle of rotation of the wrist. For the right hand, the angle is 0 when the palm points inwards and increases when the hand turns counterclockwise when viewed from outside. For the left hand, the angle is 0 when the palm points inwards and increases when the hand turns clockwise when viewed from outside.
-
-- `wristFlex`: This is the angle of flexion of the wrist. The angle is 0 when the palm is parallel to the lower arm, increases when the wrist is extended, and decreases when it is flexed.
+- `s0_emgInterface.py` — connect to EMG board (with/without GUI).
+- `s0_emgFilter.py` — filter, rectify, normalize EMG stream.
+- `s1.5_collect_calib_data.py` — collect calibration + free-space trajectories.
+- `s1.5_collect_force_data.py` — collect interaction force trials with PID + GUI.
+- `s2.5_process_all_data.py` — preprocess and align all data, update configs.
+- `s4_train.py` — train free-space/interaction/both models.
+- `s5_inference.py` — run trained models for real-time control.
+- `psyonicControllers.py` — controller class for running trained models on the prosthesis.
+- `EMGClass.py / BCI_Data_Receiver.py` — EMG acquisition and streaming utilities.
+- `predict_utils.py / models.py` — training, datasets, neural network architectures.

@@ -304,7 +304,7 @@ class EMGInterface():
         return 0.0
 
 class EMGStreamer():
-    def __init__(self, socketAddr='tcp://18.27.123.85:1236', port='COM9', baudrate=921600):
+    def __init__(self, socketAddr='tcp://18.27.123.85:1236', port='COM6', baudrate=921600):
         self.port = port
         self.baudrate = baudrate
         self.sensor = EMGInterface(port, baudrate)
@@ -334,10 +334,14 @@ class EMGStreamer():
     def stream(self):
         a = 0
         while not self.quitEvent.is_set():
+            # print("about to start time")
             start = time()
+            # print("Started time")
             self.sensor.updateSensorState()
+            # print("updated sensor")
 
             reading = self.sensor.m_emg.mEMGDataFull
+            # print(f"EMG packet timestamp: {reading.osTime_ms:08d} ms")
             packedData = self.pack(reading)
 
             self.sock.send(packedData)
@@ -419,7 +423,7 @@ if __name__ == "__main__":
     #     raise Exception(f'Wrong number of arguments ({len(sys.argv) - 1})')
 
     parser = argparse.ArgumentParser(description='EMG USB Interface')
-    parser.add_argument('-p', '--port', type=str, default='/dev/ttyUSB0', help='Serial port to use')
+    parser.add_argument('-p', '--port', type=str, default='COM6', help='Serial port to use')
     # parser.add_argument('-a', '--address', type=str, default='tcp://18.27.123.85:1236', help='Socket address to use')
     parser.add_argument('-a', '--address', type=str, default='tcp://127.0.0.1:1236', help='Socket address to use')
     parser.add_argument('-b', '--baudrate', type=int, default=921600, help='Baudrate to use')

@@ -1,5 +1,6 @@
 import wandb
 import torch
+import os
 from torch.utils.data import Dataset, DataLoader
 import random
 from helpers.models import TimeSeriesRegressorWrapper
@@ -7,126 +8,259 @@ from tqdm import tqdm
 from os.path import join
 import numpy as np
 import pandas as pd
+import config
 import matplotlib.pyplot as plt
 import math
 
 def scale_data(data, intact_hand):
-    data.loc[:, (intact_hand, 'thumbInPlaneAng')] = data.loc[:,(intact_hand, 'thumbInPlaneAng')] + math.pi
-    data.loc[:, (intact_hand, 'wristRot')] = (data.loc[:, (intact_hand, 'wristRot')] + math.pi) / 2
-    data.loc[:, (intact_hand, 'wristFlex')] = (data.loc[:, (intact_hand, 'wristFlex')] + math.pi / 2)
-    data = (2 * data - math.pi) / math.pi
-    data = data.clip(-1, 1)
-    return data
+    # # If in-plane thumb angle exists, shift by pi
+    # col = (intact_hand, 'thumbInPlaneAng')
+    # if col in data.columns:
+    #     data.loc[:, col] = data.loc[:, col] + math.pi
+    # col = (intact_hand, 'wristRot')
+    # if col in data.columns:
+    #     data.loc[:, col] = (data.loc[:, col] + math.pi) / 2
+    # col = (intact_hand, 'wristFlex')
+    # if col in data.columns:
+    #     data.loc[:, col] = (data.loc[:, col] + math.pi) / 2
+    # # data.loc[:, (intact_hand, 'thumbInPlaneAng')] = data.loc[:,(intact_hand, 'thumbInPlaneAng')] + math.pi
+    # # data.loc[:, (intact_hand, 'wristRot')] = (data.loc[:, (intact_hand, 'wristRot')] + math.pi) / 2
+    # # data.loc[:, (intact_hand, 'wristFlex')] = (data.loc[:, (intact_hand, 'wristFlex')] + math.pi / 2)
+    # data = (2 * data - math.pi) / math.pi
+    # data = data.clip(-1, 1)
+    # return data
+    scaled = data.copy()
+    # Angles in [0, 120]
+    angle_cols = [
+        (intact_hand, 'index_Pos'),
+        (intact_hand, 'middle_Pos'),
+        (intact_hand, 'ring_Pos'),
+        (intact_hand, 'pinky_Pos'),
+        (intact_hand, 'thumbFlex_Pos'),
+    ]
+    for col in angle_cols:
+        if col in scaled.columns:
+            scaled[col] = (scaled[col] - 60) / 60
+            scaled[col] = scaled[col].clip(-1, 1)
+    # ThumbRot in [-120, 0]
+    col = (intact_hand, 'thumbRot_Pos')
+    if col in scaled.columns:
+        scaled[col] = (scaled[col] + 60) / 60
+        scaled[col] = scaled[col].clip(-1, 1)
+    # Leave EMG columns unchanged!
+    return scaled
 
 def rescale_data(angles_df, intact_hand):
     series = False
     if isinstance(angles_df, pd.Series):
         series = True
         angles_df = angles_df.to_frame().T
-    angles_df = angles_df.clip(-1, 1)
-    angles_df = (angles_df * math.pi + math.pi) / 2
-    angles_df.loc[:, (intact_hand, 'wristFlex')] = angles_df.loc[:, (intact_hand, 'wristFlex')] - math.pi / 2
-    angles_df.loc[:, (intact_hand, 'wristRot')] = (angles_df.loc[:, (intact_hand, 'wristRot')] * 2) - math.pi
-    angles_df.loc[:, (intact_hand, 'thumbInPlaneAng')] = angles_df.loc[:, (intact_hand, 'thumbInPlaneAng')] - math.pi
+
+    df = angles_df.copy()
+
+    # 1) Finger/joint angles originally in [0…120]°
+    angle_cols = [
+        (intact_hand, 'index_Pos'),
+        (intact_hand, 'middle_Pos'),
+        (intact_hand, 'ring_Pos'),
+        (intact_hand, 'pinky_Pos'),
+        (intact_hand, 'thumbFlex_Pos'),
+    ]
+    for col in angle_cols:
+        if col in df.columns:
+            x = df[col]                # x ∈ [–1…+1]
+            deg = 60 * x + 60          # invert (deg−60)/60 → deg = 60x + 60
+            df[col] = deg.clip(0, 120)
+
+    # 2) Thumb rotation originally in [–120…0]°
+    col_tr = (intact_hand, 'thumbRot_Pos')
+    if col_tr in df.columns:
+        x = df[col_tr]                # x ∈ [–1…+1]
+        deg = 60 * x - 60             # invert (deg+60)/60 → deg = 60x − 60
+        df[col_tr] = deg.clip(-120, 0)
+
     if series:
-        return angles_df.iloc[0]
+        return df.iloc[0]
     else:
-        return angles_df
+        return df
 
-def load_data(data_dir, intact_hand, features, perturber=None):
-    angles = pd.read_parquet(join(data_dir, 'cropped_smooth_angles.parquet'))
-    angles.index = range(len(angles))
-    try:
-        emg = np.load(join(data_dir, 'cropped_aligned_emg.npy'))
-    except:
-        emg = np.load(join(data_dir, 'cropped_emg.npy'))
+def load_data(data_dir, intact_hand, features, targets, perturber=None):
+    """
+    Load one experiment's EMG and angle data, build a combined DataFrame.
+    Handles missing features or extra features gracefully.
+    """
+    import os
+    # 1) Load angles
+    angle_path = os.path.join(data_dir, 'aligned_angles.parquet')
+    angles_df = pd.read_parquet(angle_path)
 
-    data = angles.copy()
-    data = scale_data(data, intact_hand)
+    # If this is the aligned_angles.parquet mode, convert any stringified tuple columns back to real tuples
+    if os.path.basename(angle_path) == 'aligned_angles.parquet':
+        import ast
+        def _maybe_tuple(x):
+            if isinstance(x, str) and x.startswith('(') and x.endswith(')'):
+                try:
+                    y = ast.literal_eval(x)
+                    if isinstance(y, tuple):
+                        return y
+                except Exception:
+                    pass
+            return x
+        angles_df.columns = pd.Index([_maybe_tuple(c) for c in angles_df.columns])
 
-    int_features = [int(feature[1]) for feature in features]
-    emg = emg[:, int_features]
+    # 2) Load EMG and timestamps
+    emg_arr = np.load(os.path.join(data_dir, 'aligned_filtered_emg.npy'))  # shape (T_emg, C_emg)
+    ts = np.load(os.path.join(data_dir, 'aligned_timestamps.npy'))        # shape (T_emg,)
+
+    # 3) Determine EMG feature names - only use as many as channels present
+    emg_feature_names = features[:emg_arr.shape[1]]
+
+    # 4) Build DataFrame for EMG
+    df_emg = pd.DataFrame(emg_arr, index=ts, columns=emg_feature_names)
+
+    # 5) Build DataFrame for angles, set index to timestamp for alignment
+    df_angles = angles_df.set_index('timestamp')
+
+    # print("EMG index unique?", df_emg.index.is_unique)
+    # print("Angles index unique?", df_angles.index.is_unique)
+    # print("EMG index sample:", df_emg.index[:10])
+    # print("Angles index sample:", df_angles.index[:10])
+
+
+    # 6) Concatenate EMG and angles on the timestamp index (inner join)
+    data = pd.concat([df_emg, df_angles], axis=1, join='inner')
+
+    # print(f"→ load_data: after concat, {len(data)} rows × {len(data.columns)} columns")
+
+    # 7) Apply perturbation if provided
     if perturber is not None:
-        emg = (perturber @ emg.T).T
+        data = perturber.apply(data)
+    
+    # print("\n--- Before scaling ---")
+    # print("EMG min:", data[features].min().min())
+    # print("EMG max:", data[features].max().max())
+    # print("Angle min:", data[targets].min().min())
+    # print("Angle max:", data[targets].max().max())
 
-    for feature in features:
-        data[tuple(feature)] = emg[:, int_features.index(int(feature[1]))]
+    # 8) Scale data (handle missing columns inside)# 
+    data[targets] = scale_data(data[targets], intact_hand)
+
+    # print("\n--- After scaling ---")
+    # print("EMG min:", data[features].min().min())
+    # print("EMG max:", data[features].max().max())
+    # print("Angle min:", data[targets].min().min())
+    # print("Angle max:", data[targets].max().max())
 
     return data
 
+# def load_data(data_dir, intact_hand, features, perturber=None):
+#     angles = pd.read_parquet(join(data_dir, 'cropped_smooth_angles.parquet'))
+#     angles.index = range(len(angles))
+#     try:
+#         emg = np.load(join(data_dir, 'cropped_aligned_emg.npy'))
+#     except:
+#         emg = np.load(join(data_dir, 'cropped_emg.npy'))
+# 
+#     data = angles.copy()
+#     data = scale_data(data, intact_hand)
+# 
+#     int_features = [int(feature[1]) for feature in features]
+#     emg = emg[:, int_features]
+#     if perturber is not None:
+#         emg = (perturber @ emg.T).T
+# 
+#     for feature in features:
+#         data[tuple(feature)] = emg[:, int_features.index(int(feature[1]))]
+# 
+#     return data
+
 
 def get_data(config, data_dirs, intact_hand, visualize=False, test_dirs=None, perturb_file=None):
+    import numpy as np
+    import pandas as pd
+    import matplotlib.pyplot as plt
 
     trainsets = []
     valsets = []
     testsets = []
     combined_sets = []
+
+    # If a perturbation file was given, load it; otherwise perturber = None
     perturber = np.load(perturb_file) if perturb_file is not None else None
+
+    # ─── LOOP OVER “TRAIN/VAL” DIRECTORIES ────────────────────────────────────────
     for recording_id, data_dir in enumerate(data_dirs):
-        data = load_data(data_dir, intact_hand, config.features, perturber)
+        data = load_data(data_dir, intact_hand, config.features, config.targets, perturber)
+        # print(f"Data length for recording {recording_id} ({data_dir}): {len(data)}")
 
         # temp
         data = data.loc[60:].copy()
 
         if visualize:
-            # axs = data[config.features].plot(subplots=True, ylim=(-0.1, 1.1))
-            # for ax in axs: ax.legend(loc='upper right')
-            # plt.suptitle(f'Features {config.recordings[recording_id]}')
-            # plt.show()
+            # print("get_data debug ")
+            # print("Available DataFrame columns:")
+            # for col in data.columns:
+            #     print("   ", col)
+            # print("Requested targets (config.targets):")
+            # for tgt in config.targets:
+            #     print("   ", tgt)
+            # missing = [t for t in config.targets if t not in data.columns]
+            # print("Missing from DataFrame:", missing)
 
-            # axs = data[config.targets].plot(subplots=True, ylim=(-1.1, 1.1))
-            # for ax in axs: ax.legend(loc='upper right')
-            # plt.suptitle(f'Targets {config.recordings[recording_id]}')
-            # plt.show()
-
-            leftSubplots = len(config.features)
-            rightSubplots = len(config.targets)
-            fig, axs = plt.subplots(max(leftSubplots, rightSubplots), 2, figsize=(15, 16))
-            fig.suptitle(f'{config.recordings[recording_id]}')
-            for i, feature in enumerate(config.features):
-                axs[i, 0].plot(data[feature])
-                # axs[i, 0].set_title(feature)
-                axs[i, 0].set_ylim(-0.1, 1.1)
-                axs[i, 0].set_ylabel(feature[1])
-
-            for i, target in enumerate(config.targets):
-                axs[i, 1].plot(data[target])
-                # axs[i, 1].set_title(target)
-                axs[i, 1].set_ylim(-1.1, 1.1)
-                axs[i, 1].yaxis.set_label_position('right')
-                axs[i, 1].set_ylabel(target[1])
-            plt.tight_layout()
+            # Plot features and targets for visual debugging
+            axs = data[config.features].plot(subplots=True, ylim=(-0.1, 1.1))
+            for ax in axs:
+                ax.legend(loc='upper right')
+            plt.suptitle(f'Features {config.recordings[recording_id]}')
             plt.show()
 
+            axs = data[config.targets].plot(subplots=True, ylim=(-1.1, 1.1))
+            for ax in axs:
+                ax.legend(loc='upper right')
+            plt.suptitle(f'Targets {config.recordings[recording_id]}')
+            plt.show()
 
-        # if test_dirs is None:
-        test_set = data.loc[len(data) // 5 * 4:].copy()
-        train_set = data.loc[:len(data) // 5 * 4].copy()
+        # ─── SPLIT “TRAIN vs. VAL” USING .iloc ─────────────────────────────────────
+        split_idx = len(data) // 5 * 4
+        if split_idx <= 0 or split_idx >= len(data):
+            # If data is too small to form a proper 80/20 split, put everything in train and leave val empty
+            train_set = data.copy()
+            val_set = pd.DataFrame(columns=data.columns)
+        else:
+            train_set = data.iloc[:split_idx].copy()
+            val_set   = data.iloc[split_idx:].copy()
+
         trainsets.append(train_set)
-        valsets.append(test_set)
+        valsets.append(val_set)
         combined_sets.append(data.copy())
-        # else:
-        #     train_set = data.copy()
-        #     trainsets.append(train_set)
-        #     combined_sets.append(train_set)
 
+    # ─── LOOP OVER ANY “TEST” DIRECTORIES ────────────────────────────────────────
     if test_dirs is not None:
         for test_dir in test_dirs:
-            data = load_data(test_dir, intact_hand, config.features, perturber)
-            test_set = data.loc[len(data) // 5 * 4:].copy()
-            train_set = data.loc[: len(data) // 5 * 4].copy()
-            testsets.append(test_set)
-            # combined_sets.append(data)
+            data = load_data(test_dir, intact_hand, config.features, config.targets, perturber)
 
+            split_idx = len(data) // 5 * 4
+            if split_idx <= 0 or split_idx >= len(data):
+                # Too few points → test_set remains empty
+                test_set = pd.DataFrame(columns=data.columns)
+            else:
+                test_set = data.iloc[split_idx:].copy()
+
+            testsets.append(test_set)
 
     return trainsets, valsets, combined_sets, testsets
 
 
+
 def train_model(trainsets, valsets, testsets, device, wandb_mode, wandb_project, wandb_name, config=None, person_dir='test'):
-    with wandb.init(mode=wandb_mode, project=wandb_project, name=wandb_name, config=config):
+    # with wandb.init(mode=wandb_mode, project=wandb_project, name=wandb_name, config=config):
+    with wandb.init(mode=wandb_mode, project=wandb_project, name=wandb_name, config=config.to_dict()):
         config = wandb.config
 
-        model = TimeSeriesRegressorWrapper(device=device, input_size=len(config.features), output_size=len(config.targets), **config)
+        # weight_decay = getattr(config, "weight_decay", 0.0)
+        # model = TimeSeriesRegressorWrapper(device=device, input_size=len(config.features), output_size=len(config.targets), weight_decay=config.weight_decay,  **config)
+        model = TimeSeriesRegressorWrapper(device=device, input_size=len(config.features), output_size=len(config.targets),  **config)
+
         model.to(device)
 
         dataset = TSDataset(trainsets, config.features, config.targets, seq_len=config.seq_len, device=device)
@@ -147,6 +281,7 @@ def train_model(trainsets, valsets, testsets, device, wandb_mode, wandb_project,
                     for param in model.model.joint_model.parameters():
                         param.requires_grad = False if epoch < config.joint_model['n_freeze_epochs'] else True
 
+                print(f"\nStarting epoch {epoch}...")
                 train_loss = model.train_one_epoch(dataloader)
 
                 val_loss, test_loss, val_losses = evaluate_model(model, valsets, testsets, device, config)
@@ -154,11 +289,15 @@ def train_model(trainsets, valsets, testsets, device, wandb_mode, wandb_project,
                     best_val_loss = val_loss
                     wandb.run.summary['best_epoch'] = epoch
                     wandb.run.summary['best_val_loss'] = best_val_loss
+                    # Save best model
+                    model.save(join('data', person_dir, 'models', f'{wandb_name}_best.pt'))
                 if test_loss < wandb.run.summary.get('best_test_loss', float('inf')):
                     wandb.run.summary['best_test_loss'] = test_loss
                     wandb.run.summary['best_test_epoch'] = epoch
                     model.save('/tmp/bestWeights.pt')
                 wandb.run.summary['used_epochs'] = epoch
+
+                print(f"Epoch {epoch} validation loss: {val_loss}, test loss: {test_loss}")
 
                 lr = model.scheduler.get_last_lr()[0]
                 if epoch > 15: # todo
@@ -182,30 +321,123 @@ def train_model(trainsets, valsets, testsets, device, wandb_mode, wandb_project,
 
 
 def evaluate_model(model, valsets, testsets, device, config):
-    warmup_steps = config.warmup_steps # todo
-    # warmup_steps = config.seq_len - 1
+    warmup_steps = config.warmup_steps  # todo
     val_losses = []
     for set_id, val_set in enumerate(valsets):
+        # print(f"Evaluating val_set {set_id}: length = {len(val_set)}")
+        # Print first few rows or shape to inspect data
+        # print(f"val_set columns: {val_set.columns.tolist()}")
+        # print(f"val_set head:\n{val_set.head()}")
+
+        # Predict
         val_pred = model.predict(val_set, config.features, config.targets).squeeze(0)
-        loss = model.criterion(val_pred[warmup_steps:],
-                                    torch.tensor(val_set[config.targets].values, dtype=torch.float32)[
-                                    warmup_steps:].to(device))
+        # print(f"val_pred shape: {val_pred.shape}")# 
+
+        # Calculate loss
+        target_tensor = torch.tensor(val_set[config.targets].values, dtype=torch.float32).to(device)
+        # print(f"target_tensor shape: {target_tensor.shape}")
+
+        loss = model.criterion(val_pred[warmup_steps:], target_tensor[warmup_steps:])
         loss = float(loss.to('cpu').detach())
         val_losses.append(loss)
+
     total_val_loss = sum(val_losses) / len(val_losses)
 
     test_losses = []
     for set_id, test_set in enumerate(testsets):
+        # print(f"Evaluating test_set {set_id}: length = {len(test_set)}")
+        # print(f"test_set columns: {test_set.columns.tolist()}")
+        # print(f"test_set head:\n{test_set.head()}")
+
         test_pred = model.predict(test_set, config.features, config.targets).squeeze(0)
-        loss = model.criterion(test_pred[warmup_steps:],
-                                    torch.tensor(test_set[config.targets].values, dtype=torch.float32)[
-                                    warmup_steps:].to(device))
+        # print(f"test_pred shape: {test_pred.shape}")
+
+        target_tensor = torch.tensor(test_set[config.targets].values, dtype=torch.float32).to(device)
+        # print(f"target_tensor shape: {target_tensor.shape}")
+
+        loss = model.criterion(test_pred[warmup_steps:], target_tensor[warmup_steps:])
         loss = float(loss.to('cpu').detach())
         test_losses.append(loss)
+
     total_test_loss = sum(test_losses) / len(test_losses)
 
     return total_val_loss, total_test_loss, val_losses + test_losses
 
+def simplified_enhanced_loss(outputs, targets, muscle_activations, force_data, warmup_steps):
+    """
+    Simplified combined loss for interaction model training (no material classification)
+    
+    Args:
+        outputs: (batch, seq_len, output_size) - predicted joint positions
+        targets: (batch, seq_len, output_size) - target joint positions  
+        muscle_activations: (batch, seq_len, 12) - predicted muscle activations
+        force_data: (batch, seq_len, 5) - force feedback data
+        warmup_steps: int - steps to skip at beginning
+    """
+    # 1. Standard position loss
+    position_loss = torch.nn.functional.mse_loss(
+        outputs[:, warmup_steps:], 
+        targets[:, warmup_steps:]
+    )
+    
+    # 2. Muscle physiology loss (only after warmup)
+    if muscle_activations is not None and force_data is not None:
+        physiology_loss = simplified_muscle_physiology_loss(
+            muscle_activations[:, warmup_steps:], 
+            force_data[:, warmup_steps:],
+            outputs.device
+        )
+        
+        # Combine losses with weighting
+        total_loss = position_loss + 0.3 * physiology_loss
+        
+        return total_loss, position_loss.item(), physiology_loss.item()
+    else:
+        return position_loss, position_loss.item(), 0.0
+
+def simplified_muscle_physiology_loss(muscle_activations, force_feedback, device):
+    """
+    Simplified physiologically informed muscle activation loss (no material classification)
+    
+    Args:
+        muscle_activations: (batch, seq_len, 12) - muscle activation values
+        force_feedback: (batch, seq_len, 5) - force values per finger
+        device: torch device
+    """
+    # Force magnitude across all fingers
+    force_magnitude = torch.norm(force_feedback, dim=-1)  # (batch, seq_len)
+    
+    # 1. Activation Level Loss
+    # Expected activation should scale with force magnitude
+    expected_activation_level = torch.sigmoid(force_magnitude - 0.5)  # Threshold at 0.5
+    actual_activation_level = torch.mean(muscle_activations, dim=-1)   # Average across all muscles
+    
+    activation_level_loss = torch.nn.functional.mse_loss(actual_activation_level, expected_activation_level) * 0.2
+    
+    # 2. Co-contraction Loss
+    # During contact, antagonist muscles should co-contract for stability
+    cocontraction_loss = torch.tensor(0.0, device=device)
+    
+    if muscle_activations.shape[-1] >= 12:  # Ensure we have enough muscle activations
+        # Reshape to (batch, seq_len, 6_DOF, 2_muscles_per_DOF)
+        muscle_pairs = muscle_activations.reshape(
+            muscle_activations.shape[0], muscle_activations.shape[1], 6, 2
+        )
+        
+        # Contact mask: where force is significant
+        contact_mask = (force_magnitude > 0.5).float()  # (batch, seq_len)
+        
+        for pair_idx in range(6):
+            agonist = muscle_pairs[:, :, pair_idx, 0]      # (batch, seq_len)
+            antagonist = muscle_pairs[:, :, pair_idx, 1]   # (batch, seq_len)
+            
+            # Co-contraction: minimum activation of both muscles
+            both_active = torch.minimum(agonist, antagonist)
+            
+            # Only penalize/reward co-contraction during contact
+            cocontraction_loss += torch.mean(both_active * contact_mask) * 0.1
+    
+    return activation_level_loss + cocontraction_loss
 
 class EarlyStopper:
     def __init__(self, patience=1, min_delta=0):
@@ -267,8 +499,12 @@ class TSDataset(Dataset):
                 break
             set_idx += 1
         idx = idx - self.starts[set_idx]
+        start_idx = idx * self.seq_len + self.index_shift
+        end_idx = (idx + 1) * self.seq_len + self.index_shift
+        # print(f"Fetching idx: {idx}, set_idx: {set_idx}, slice: {start_idx}:{end_idx}")
         x = torch.tensor(self.data_sources[set_idx].loc[idx * self.seq_len + self.index_shift: (idx + 1) * self.seq_len + self.index_shift - 1, self.features].values, dtype=torch.float32, device=self.device)
         y = torch.tensor(self.data_sources[set_idx].loc[idx * self.seq_len + self.index_shift: (idx + 1) * self.seq_len + self.index_shift - 1, self.targets].values, dtype=torch.float32, device=self.device)
+        # print(f"x shape: {x.shape}, y shape: {y.shape}")
         if self.dummy_labels:
             l = torch.ones_like(y, dtype=torch.float32, device=self.device)
             return x, y, l
@@ -279,6 +515,56 @@ class TSDataset(Dataset):
     def set_index_shift(self, shift):
         self.index_shift = shift
 
+class SimplifiedEnhancedTSDataset(TSDataset):
+    def __init__(self, data_sources, features, targets, seq_len, device, 
+                 force_features=None, index_shift=0, dummy_labels=False):
+        """
+        Simplified enhanced dataset (no material labels)
+        
+        Args:
+            force_features: List of force feature names
+        """
+        super().__init__(data_sources, features, targets, seq_len, device, index_shift, dummy_labels)
+        self.force_features = force_features or []
+        
+    def __getitem__(self, idx):
+        # Get standard EMG and position data
+        x, y = super().__getitem__(idx)[:2]
+        
+        # Get force data if available
+        force_data = None
+        if self.force_features:
+            # Determine which data source this sample comes from
+            set_idx = self._get_set_idx(idx)
+            local_idx = idx - self.starts[set_idx]
+            start_idx = local_idx * self.seq_len + self.index_shift
+            end_idx = start_idx + self.seq_len
+            
+            try:
+                force_data = torch.tensor(
+                    self.data_sources[set_idx].loc[start_idx:end_idx-1, self.force_features].values,
+                    dtype=torch.float32, device=self.device
+                )
+            except KeyError:
+                # Force features not found - create dummy zeros
+                force_data = torch.zeros((self.seq_len, len(self.force_features)), 
+                                       dtype=torch.float32, device=self.device)
+        
+        if force_data is not None:
+            return x, y, force_data
+        else:
+            return x, y
+    
+    def _get_set_idx(self, idx):
+        """Determine which data source a given index belongs to"""
+        set_idx = 0
+        for i, start in enumerate(self.starts[1:], 1):  # Skip first start (always 0)
+            if idx < start:
+                set_idx = i - 1
+                break
+        else:
+            set_idx = len(self.starts) - 1  # Last data source
+        return set_idx
 
 class OLDataset(Dataset):
     def __init__(self, data_sources, features, targets, device):

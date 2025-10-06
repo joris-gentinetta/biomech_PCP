@@ -1,3 +1,6 @@
+# Run $env:KMP_DUPLICATE_LIB_OK="TRUE" in terminal to solve OMP error
+
+
 import os
 
 import serial
@@ -16,15 +19,134 @@ from os.path import join
 
 sys.path.append('/home/haptix/haptix/haptix_controller/handsim/src')
 
+
 from helpers.EMGClass import EMG
 from helpers.BesselFilter import BesselFilterArr
 from helpers.ExponentialFilter import ExponentialFilterArr
 from helpers.psyonicControllers import psyonicControllers
+from helpers.psyonicControllers import create_controllers
 from helpers.predict_utils import Config
 import numpy as np
+from scipy import signal
+from collections import deque
+
+class SimplifiedForceProcessor:
+    """
+    Simplified force processing:
+    - Zeroing of force sensors when entering free space
+    - Baseline drift correction only during free space
+    """
+    
+    def __init__(self, sampling_freq=60.0):
+        self.sampling_freq = sampling_freq
+        self.finger_names = ['index', 'middle', 'ring', 'pinky', 'thumb']
+        
+        # Simple drift tracking (moving average during free space)
+        self.drift_window_size = 150  # 2.5 seconds at 60Hz
+        self.drift_buffers = [deque(maxlen=self.drift_window_size) for _ in range(5)]
+        self.current_drift = np.zeros(5)
+        
+        # Force normalization constants (same as training)
+        self.max_forces_per_finger = np.array([12.0, 12.0, 12.0, 12.0, 12.0])
+        
+        print("SimplifiedForceProcessor initialized")
+    
+    def extract_finger_forces_from_sensors(self, sensors_dict, touchNames):
+        """
+        Extract per-finger forces from sensor dictionary using touchNames order
+        """
+        finger_forces = np.zeros(5)
+        
+        for finger_idx, finger in enumerate(touchNames):
+            finger_total = 0.0
+            sensors_found = 0
+            
+            for sensor_idx in range(6):
+                sensor_name = f'{finger}{sensor_idx}_Force'
+                if sensor_name in sensors_dict:
+                    value = sensors_dict[sensor_name]
+                    if value != -1:  # Valid sensor reading
+                        finger_total += value
+                        sensors_found += 1
+            
+            if sensors_found > 0:
+                finger_forces[finger_idx] = finger_total
+            # else: finger_forces[finger_idx] remains 0
+        
+        return finger_forces
+	
+    def reset_baseline_immediately(self, current_forces):
+        """
+        zeroing baseline when entering free space mode
+        """
+        self.current_drift = current_forces.copy()
+        
+        # Clear drift buffers and start fresh
+        for buffer in self.drift_buffers:
+            buffer.clear()
+        
+        print(f"Forces immediately zeroed - new baseline: {self.current_drift}")
+    
+    def update_drift_baseline(self, finger_forces):
+        """Update drift baseline during free space mode"""
+        for finger_idx in range(5):
+            self.drift_buffers[finger_idx].append(finger_forces[finger_idx])
+            
+            # Update current drift estimate (median of recent values)
+            if len(self.drift_buffers[finger_idx]) > 10:
+                self.current_drift[finger_idx] = np.median(
+                    list(self.drift_buffers[finger_idx])
+                )
+    
+    def process_runtime_force(self, sensors_dict, touchNames, in_interaction_mode, mode_just_changed=False):
+        """
+        Process forces with immediate zeroing on free space entry
+        
+        Args:
+            mode_just_changed: True if we just switched modes this cycle
+        """
+        # 1. Extract raw per-finger forces
+        raw_forces = self.extract_finger_forces_from_sensors(sensors_dict, touchNames)
+        
+        # 2. Mode-based processing with immediate zeroing
+        if in_interaction_mode:
+            # INTERACTION MODE: Use RAW forces 
+            processed_forces = np.maximum(raw_forces, 0.0)
+            neural_network_forces = processed_forces  # Raw forces to neural network
+            
+        else:
+            # FREE SPACE MODE
+            if mode_just_changed:
+                # JUST ENTERED FREE SPACE: Immediately zero forces
+                self.reset_baseline_immediately(raw_forces)
+            else:
+                # CONTINUING IN FREE SPACE: Update drift correction
+                self.update_drift_baseline(raw_forces)
+            
+            # Apply drift correction for mode switching
+            corrected_forces = raw_forces - self.current_drift
+            corrected_forces = np.maximum(corrected_forces, 0.0)
+            processed_forces = corrected_forces
+            neural_network_forces = np.zeros_like(corrected_forces)  # Neural network gets zeros
+        
+        # 3. Normalize for neural network
+        normalized_forces = np.clip(neural_network_forces / self.max_forces_per_finger, 0.0, 1.0)
+        
+        # 4. Calculate aggregates for mode switching
+        total_force = np.sum(processed_forces)
+        max_finger_force = np.max(processed_forces)
+        
+        return {
+            'raw': raw_forces,
+            'processed': processed_forces,
+            'normalized': normalized_forces,      # For NN
+            'total_force': total_force,            
+            'max_finger_force': max_finger_force,  # For mode switching
+            'current_drift': self.current_drift.copy()
+        }
 
 class psyonicArm():
-	def __init__(self, hand='right', usingEMG=False, stuffing=False, baud=460800, plotSocketAddr='tcp://127.0.0.1:1240'):
+	def __init__(self, hand='right', usingEMG=False, stuffing=False, baud=460800, plotSocketAddr='tcp://127.0.0.1:1240', dummy=False):
 		self.baud = baud
 		self.hand = hand
 		self.stuffing = stuffing
@@ -35,7 +157,7 @@ class psyonicArm():
 
 		# initialize hand state
 		# define control mode format headers
-		self.replyVariant = 2 # one of [0, 1, 2], which corresponds to index in the lists below
+		self.replyVariant = 0 # one of [0, 1, 2], which corresponds to index in the lists below
 		self.controlMode = 'position'
 		self.controlModeHeaders = {'position': [0x10, 0x11, 0x12], 'velocity': [0x20, 0x21, 0x22], 'torque': [0x30, 0x31, 0x32], 'voltage': [0x40, 0x41, 0x42], 'readOnly': [0xA0, 0xA1, 0xA2]}
 		self.controlModeResponse = {1: 'position', 2: 'velocity', 3: 'torque', 4: 'voltage', 10: 'readOnly'} # achieved by rightshifting the format header by 4
@@ -51,7 +173,7 @@ class psyonicArm():
 		self.volConversion = 3.3/4096
 		self.resConversion = 33000
 		self.resAdd = 10000
-		self.forceResConversion = [121591.0, 0.878894] # These are not accurate
+		self.forceResConversion = [121591.0, 0.878894] # I need to do this
 		self.radToDeg = lambda rad: 180*rad/3.14159
 		self.torqueConstant = 1.49 # mNm/A torque constant
 		self.voltLimit = 3546
@@ -69,7 +191,8 @@ class psyonicArm():
 		self.handCom = self.curPos
 
 		# setup communication with arm (serial port)
-		self.serialSet = self.setupSerial(passedPort='/dev/psyonicHand')
+		# self.serialSet = self.setupSerial(passedPort='/dev/psyonicHand')
+		self.serialSet = self.setupSerial(passedPort='COM7')
 		if not self.serialSet:
 			sys.exit('Error: Serial Port not found')
 
@@ -106,23 +229,45 @@ class psyonicArm():
 		self.exitEvent = threading.Event()
 		self.replyChangedFlag = False
 
+		# Force processing at 60Hz
+		self.force_processing_counter = 0
+		self.last_processed_forces = {}  # Cache last processed force values
+		for finger in self.touchNames:
+			for site in range(6):
+				sensor_name = f'{finger}{site}_Force'
+				self.last_processed_forces[sensor_name] = 0.0
+
 		# neural net control loop rate
 		self.Hz = 60
 		self.loopRate = 10 # this is how much faster this should run than the neural net
 
 		# lowpass filter joint commands
-		self.lowpassCommands = BesselFilterArr(numChannels=self.numMotors, order=4, critFreqs=[0.33], fs=self.Hz, filtType='lowpass')
+		self.lowpassCommands = BesselFilterArr(numChannels=self.numMotors, order=4, critFreqs=0.33, fs=self.Hz, filtType='lowpass')
 		# self.lowpassCommands = ExponentialFilterArr(numChannels=self.numMotors, smoothingFactor=0.9, defaultValue=0)
 
 		# exponential filter the force sensor readings
 		self.filterForce = ExponentialFilterArr(numChannels=self.numForce, smoothingFactor=0.8, defaultValue=0) # todo
 
+		self.simplified_force_processor = SimplifiedForceProcessor(sampling_freq=self.Hz)
 
 		# store prior commands for some reason
 		self.lastPosCom = -1*np.ones(self.numMotors)
 		self.lastVelCom = -1*np.ones(self.numMotors)
 		self.lastTorCom = -1*np.ones(self.numMotors)
 		self.lastVolCom = -1*np.ones(self.numMotors)
+
+		# 2 Mode Controller
+		self.in_interaction_mode = False
+		self.enter_timer = None
+		self.exit_timer = None
+		self.blend_start_time = None
+		self.blend_duration = 0.20  # 200ms blending
+		
+		# Thresholds for mode switching
+		self.ENTER_THRESHOLD = 0.8   # N
+		self.EXIT_THRESHOLD = 0.6    # N  
+		self.ENTER_DEBOUNCE = 0.10   # seconds
+		self.EXIT_DEBOUNCE = 0.15    # seconds
 
 		# for byte stuffing
 		self.frameChar = 0x7E
@@ -144,11 +289,11 @@ class psyonicArm():
 
 	# Search for Serial Port to use
 	def setupSerial(self, passedPort=None):
-		# if passedPort is not None:
-		# 	self.ser = serial.Serial(str(Path(passedPort).resolve()), self.baud, timeout=0.02, write_timeout=0.02)
-		# 	assert self.ser.is_open, 'Failed to open serial port'
-		# 	print(f'Connected to port {self.ser.name}')
-		# 	return True
+		if passedPort is not None:
+			self.ser = serial.Serial(passedPort, self.baud, timeout=0.02, write_timeout=0.02)
+			assert self.ser.is_open, 'Failed to open serial port'
+			print(f'Connected to port {self.ser.name}')
+			return True
 
 		print('Searching for serial ports...')
 		com_ports_list = list(list_ports.comports())
@@ -348,7 +493,7 @@ class psyonicArm():
 		response = list(struct.unpack(f'<{len(responseRaw)}B', responseRaw))
 		
 		if len(response) == 0:
-			# print('response length 0')
+		# 	print('response length 0')
 			return # sometimes this happens idk
 
 		# validate the checksum
@@ -356,8 +501,10 @@ class psyonicArm():
 		assert self.calcChecksum(response[:-1]) == response[-1], f'Checksum failed - expected {hex(self.calcChecksum(response[:-1]))}, got {hex(response[-1])}'
 
 		# make sure the response is the right length
-		if self.replyVariant in [0, 1] and not len(response) == 72: return # assert len(response) == 72, f'Response is not the correct length for variant {self.replyVariant} - expected 72, got {len(response)}'
-		elif self.replyVariant == 2 and not len(response) == 29: return # assert len(response) == 39, f'Response is not the correct length for variant 2 - expected 39, got {len(response)}'
+		if self.replyVariant in [0, 1] and not len(response) == 72:  assert len(response) == 72, f'Response is not the correct length for variant {self.replyVariant} - expected 72, got {len(response)}'
+		elif self.replyVariant == 2 and not len(response) == 29:  assert len(response) == 39, f'Response is not the correct length for variant 2 - expected 39, got {len(response)}'
+
+		print(f'Current replyVariant: {self.replyVariant}: response length:  {len(response)}')
 
 		# get the format header
 		if not (response[0] >> 4) in self.controlModeResponse.keys(): return
@@ -371,20 +518,32 @@ class psyonicArm():
 		# 	print(f'Limitation status: {limitBitStatus}')
 		# 	raise Exception('Limitation status detected')
 
+		process_forces_this_cycle = (self.force_processing_counter % self.loopRate == 0)
+		self.force_processing_counter += 1
+
 		# unpack the force sensor readings all at once, then store them properly
 		# unpacking 12 bit values from 8 bit bytearray to store as 16 bit integers
 		if self.replyVariant in [0, 1]:
-			forceBytes = response[25:70]
+			if process_forces_this_cycle:
 
-			Ds = [0]*self.numForce
-			
-			for bitIdx in range(self.numForce * 12 - 4, -1, -4):
-					dIdx = bitIdx // 12  # Calculate the index in the output list
-					byteIdx = bitIdx // 8   # Calculate the byte index in the input array
-					shiftVal = bitIdx % 8 # Calculate the shift value for bit extraction
-					
-					# Extract 4 bits, adjust them based on their position, and store in the output list
-					Ds[dIdx] |= ((forceBytes[byteIdx] >> shiftVal) & 0x0F) << (bitIdx % 12)
+				forceBytes = response[25:70]
+
+				Ds = [0]*self.numForce
+				
+				for bitIdx in range(self.numForce * 12 - 4, -1, -4):
+						dIdx = bitIdx // 12  # Calculate the index in the output list
+						byteIdx = bitIdx // 8   # Calculate the byte index in the input array
+						shiftVal = bitIdx % 8 # Calculate the shift value for bit extraction
+						
+						# Extract 4 bits, adjust them based on their position, and store in the output list
+						Ds[dIdx] |= ((forceBytes[byteIdx] >> shiftVal) & 0x0F) << (bitIdx % 12)
+			else:
+				# Skip sensor processing and use cached values
+				for finger in self.touchNames:
+					for site in range(6):
+						sensor_name = f'{finger}{site}_Force'
+						self.sensors[sensor_name] = self.last_processed_forces[sensor_name]
+
 			
 		# unpack the bytes finger by finger
 		for motor in range(self.numMotors):
@@ -417,7 +576,7 @@ class psyonicArm():
 
 			# touch sensors - there are 6 sites for each of 5 fingers (the thumb would otherwise be double counted)
 			# each site takes a byte and a half, so these need to be converted appropriately as 12 bit unsigned integers
-			if self.replyVariant in [0, 1] and (motor < self.numMotors - 1):
+			if self.replyVariant in [0, 1] and (motor < self.numMotors - 1) and process_forces_this_cycle:
 				thisFingerTouch = Ds[motor*6:(motor + 1)*6]
 				
 				for site in range(6):
@@ -426,14 +585,25 @@ class psyonicArm():
 					V = D*self.volConversion # voltage
 					R = (self.resConversion/V) + self.resAdd if V > 0 else float('inf') # resistance
 					F = (self.forceResConversion[0]/R) + self.forceResConversion[1] # force
-					self.sensors[f'{self.touchNames[motor]}{site}_Force'] = max(F - self.sensorForceOffsets[f'{self.touchNames[motor]}{site}_Force'], 0)
+
+					sensor_name = f'{self.touchNames[motor]}{site}_Force'
+					processed_force = max(F - self.sensorForceOffsets[sensor_name], 0)
+
+					# self.sensors[f'{self.touchNames[motor]}{site}_Force'] = max(F - self.sensorForceOffsets[f'{self.touchNames[motor]}{site}_Force'], 0)
 					# self.sensors[f'{self.touchNames[motor]}{site}_Force'] = int(max([D - self.sensorForceOffsets[f'{self.touchNames[motor]}{site}_Force'], 0]))
-					if self.sensorForceOffsets[f'{self.touchNames[motor]}{site}_Force'] != 0:
+					if self.sensorForceOffsets[sensor_name] != 0:
 						# self.sensors[f'{self.touchNames[motor]}{site}_Force'] = int(self.filterForce.filterByIndex(self.sensors[f'{self.touchNames[motor]}{site}_Force'], motor*6 + site)[0])
-						self.sensors[f'{self.touchNames[motor]}{site}_Force'] = self.filterForce.filterByIndex(self.sensors[f'{self.touchNames[motor]}{site}_Force'], motor*6 + site)[0]
+						# self.sensors[f'{self.touchNames[motor]}{site}_Force'] = self.filterForce.filterByIndex(self.sensors[f'{self.touchNames[motor]}{site}_Force'], motor*6 + site)[0]
+						processed_force = self.filterForce.filterByIndex(processed_force, motor*6 + site)[0]
 
 						if D == 0:
 							self.filterForce.resetFilterByIndex(motor*6 + site)
+
+					
+					self.sensors[sensor_name] = processed_force
+					# Cache the processed value for next cycles
+					self.last_processed_forces[sensor_name] = processed_force
+
 
 	def sendToPlots(self):
 		# send the commanded and actual arm position for plotting
@@ -584,7 +754,14 @@ class psyonicArm():
 
 		start = time.time()
 		forceSensorReadings = []
+		
+		# Store original counter and force processing during zeroing
+		original_counter = self.force_processing_counter
+		
 		while (time.time() - start) < 2:
+			# Force processing every cycle during zeroing
+			self.force_processing_counter = 0  # This ensures forces are always processed
+			
 			# write the same message over and over again
 			bytesWritten = self.ser.write(msg)
 			assert bytesWritten == len(msg), f'zeroJoints(): Not all bytes sent - expected {len(msg)}, sent {bytesWritten}'
@@ -597,20 +774,93 @@ class psyonicArm():
 			if time.time() - start > 1:
 				theseReadings = [self.sensors[site] for site in self.sensorForce]
 				forceSensorReadings.append(theseReadings)
+		
+		# Restore original counter
+		self.force_processing_counter = original_counter
 
 		# now average the readings
 		avgReadings = np.mean(forceSensorReadings, axis=0)
 		self.sensorForceOffsets = dict(zip(self.sensorForce, avgReadings))
 
+		per_finger_baselines = np.zeros(5)
+		for finger_idx in range(5):
+			start_idx = finger_idx * 6
+			end_idx = start_idx + 6
+			per_finger_baselines[finger_idx] = np.sum(avgReadings[start_idx:end_idx])
+		
+		# old:
+		# Set per-finger offsets in the adaptive filter
+		# if hasattr(self, 'adaptive_force_filter'):
+		#     self.adaptive_force_filter.set_static_offsets(per_finger_baselines)
+		#     print(f"Zero joints completed. Set {len(self.sensorForceOffsets)} sensor offsets.")
+		#     print(f"Per-finger baselines: {per_finger_baselines}")
+		# else:
+		#     print("Warning: adaptive_force_filter not initialized")
+		
+		# new:
+		# Set per-finger offsets in the simplified force processor
+		if hasattr(self, 'simplified_force_processor'):
+			self.simplified_force_processor.current_drift = per_finger_baselines.copy()
+			print(f"Zero joints completed. Set {len(self.sensorForceOffsets)} sensor offsets.")
+			print(f"Per-finger baselines: {per_finger_baselines}")
+			print(f"SimplifiedForceProcessor baseline set: {self.simplified_force_processor.current_drift}")
+		else:
+			print("Warning: simplified_force_processor not initialized")
+
+		# Force one more reading to test the zeroing
+		self.force_processing_counter = 0  # Force processing
 		bytesWritten = self.ser.write(msg)
 		assert bytesWritten == len(msg), f'zeroJoints(): Not all bytes sent - expected {len(msg)}, sent {bytesWritten}'
 
 		response = self.ser.read(self.responseBufferSize(self.replyVariant))
 		# if len(response) > 0: 
 		self.unpackResponse(response)
+		
+		# Test the zeroing effectiveness
+		test_force_data = self.simplified_force_processor.process_runtime_force(
+			self.sensors,
+			self.touchNames,
+			in_interaction_mode=False,  # Force free space mode
+			mode_just_changed=True      # Force immediate zeroing
+		)
+		print(f"After zeroing - Total force: {test_force_data['total_force']:.3f}N")
 
 		self.setControlMode(curMode)
 		self.setReplyVariant(curReply)
+
+	def get_all_raw_force_data(self):
+		"""
+		Get all 30 raw force sensor readings in the correct order
+		Returns numpy array of shape (30,)
+		"""
+		raw_forces = np.zeros(self.numForce)
+		
+		for i, sensor_name in enumerate(self.sensorForce):
+			if i < self.numForce:
+				raw_forces[i] = self.sensors.get(sensor_name, 0.0)
+		
+		return raw_forces
+
+	def sum_forces_per_finger(self, all_forces):
+		"""
+		Sum the 6 sensor readings per finger into 5 finger totals
+		
+		Args:
+			all_forces: numpy array of shape (30,) with all sensor readings
+		
+		Returns:
+			finger_forces: numpy array of shape (5,) with [index, middle, ring, pinky, thumb]
+		"""
+		finger_forces = np.zeros(5)
+		
+		# Each finger has 6 sensors (0-5, 6-11, 12-17, 18-23, 24-29)
+		for finger_idx in range(5):
+			start_idx = finger_idx * 6
+			end_idx = start_idx + 6
+			if end_idx <= len(all_forces):
+				finger_forces[finger_idx] = np.sum(all_forces[start_idx:end_idx])
+		
+		return finger_forces
 
 	def getCurControlMode(self):
 		return self.controlMode
@@ -706,7 +956,7 @@ class psyonicArm():
 				# EMG control
 				elif emg is not None:
 					# interpolate between outputs from the neural net model
-					handCom = (self.NetCom - self.lastposCom)/self.loopRate*interpCount + self.lastposCom
+					handCom = (self.NetCom - self.lastPosCom)/self.loopRate*interpCount + self.lastPosCom
 					handCom = np.clip(handCom, [self.jointRoM[joint][0] for joint in self.jointNames], [self.jointRoM[joint][1] for joint in self.jointNames])
 
 				# sinusoidal control
@@ -913,27 +1163,317 @@ class psyonicArm():
 			# elif self.controlMode == 'voltage':
 			# 	self.handCom = [0]*self.numMotors
 
+	
+	def get_processed_force_data(self, mode_just_changed=False):
+		"""
+		Get processed force data using simplified approach
+		"""
+		return self.simplified_force_processor.process_runtime_force(
+			self.sensors, 
+			self.touchNames, 
+			self.in_interaction_mode,
+			mode_just_changed=mode_just_changed
+			)
+
+	def update_interaction_mode(self, force_data, current_time):
+		"""
+		Handle mode switching with proper hysteresis and debouncing
+		
+		Args:
+			force_data: dict from get_processed_force_data()
+			current_time: current timestamp
+			
+		Returns:
+			bool: True if mode changed
+		"""
+		total_force = force_data['total_force']
+		mode_changed = False
+		
+		if not self.in_interaction_mode:
+			# Try to enter interaction mode
+			if total_force >= self.ENTER_THRESHOLD:
+				if self.enter_timer is None:
+					self.enter_timer = current_time
+					print(f"Enter timer started: force={total_force:.3f}N")
+				elif (current_time - self.enter_timer) >= self.ENTER_DEBOUNCE:
+					# Transition to interaction mode
+					self.in_interaction_mode = True
+					self.enter_timer = None
+					self.exit_timer = None
+					self.blend_start_time = current_time
+					mode_changed = True
+					print(f"→ INTERACTION MODE (force: {total_force:.3f}N)")
+			else:
+				# Reset enter timer if force drops
+				if self.enter_timer is not None:
+					print(f"Enter timer reset: force={total_force:.3f}N")
+				self.enter_timer = None
+		
+		else:
+			# Try to exit interaction mode  
+			if total_force <= self.EXIT_THRESHOLD:
+				if self.exit_timer is None:
+					self.exit_timer = current_time
+					print(f"Exit timer started: force={total_force:.3f}N")
+				elif (current_time - self.exit_timer) >= self.EXIT_DEBOUNCE:
+					# Transition to free space mode
+					self.in_interaction_mode = False
+					self.exit_timer = None
+					self.enter_timer = None
+					self.blend_start_time = current_time
+					mode_changed = True
+					print(f"→ FREE SPACE MODE (force: {total_force:.3f}N)")
+			else:
+				# Reset exit timer if force rises
+				if self.exit_timer is not None:
+					print(f"Exit timer reset: force={total_force:.3f}N")
+				self.exit_timer = None
+		
+		return mode_changed
+
+	def blend_controller_commands(self, cmd_free, cmd_interaction, current_time):
+		"""
+		Blend between controller commands during transitions
+		
+		Args:
+			cmd_free: free space controller command
+			cmd_interaction: interaction controller command  
+			current_time: current timestamp
+			
+		Returns:
+			blended command
+		"""
+		if self.blend_start_time is None:
+			# No active blend - use current mode
+			return cmd_interaction if self.in_interaction_mode else cmd_free
+		
+		# Calculate blend factor
+		blend_elapsed = current_time - self.blend_start_time
+		if blend_elapsed >= self.blend_duration:
+			# Blend complete
+			self.blend_start_time = None
+			return cmd_interaction if self.in_interaction_mode else cmd_free
+		
+		# Active blending
+		alpha = np.clip(blend_elapsed / self.blend_duration, 0.0, 1.0)
+		
+		if self.in_interaction_mode:
+			# Blending TO interaction mode
+			cmd = (1 - alpha) * np.array(cmd_free) + alpha * np.array(cmd_interaction)
+		else:
+			# Blending TO free space mode  
+			cmd = alpha * np.array(cmd_free) + (1 - alpha) * np.array(cmd_interaction)
+		
+		return cmd
+
+	def reset_force_drift_baseline(self):
+		"""
+		Reset the drift baseline (call this when you want to recalibrate)
+		"""
+		for buffer in self.simplified_force_processor.drift_buffers:
+			buffer.clear()
+		self.simplified_force_processor.current_drift = np.zeros(5)
+		print("Force drift baseline reset")
+
 	# Run the neural net at self.Hz, allowing faster command interpolation to be sent to the arm
-	def runNetForward(self, controller):
-		T = time.time()
-		self.NetCom = self.getCurPos()
-		# controller.resetModel() # todo biophysical model
+	def runNetForward(self, free_space_controller, interaction_controller):
+		"""
+		Simplified neural network control loop using the new force processor
+		"""
+		import time
+
+		if self.replyVariant == 2:
+			self.setReplyVariant(0)  # Force position mode for this controller
+		
+		# Initialize timing
+		target_period = 1.0 / self.Hz  # 1/60 = 0.0167 seconds
+		last_time = time.monotonic()
+		
+		print(f"Controller target: {self.Hz}Hz ({target_period*1000:.1f}ms)")
+		print("Using simplified force processing approach")
+		
+		# Initialize state
+		self.NetCom = np.array(self.getCurPos())
+		previous_mode = False # Tracking previous mode
+		
+		# Cached commands for blending
+		cached_fs_command = None
+		cached_int_command = None
+		
+		# Debug counters
+		loop_count = 0
+		slow_loop_count = 0
+		
 		while not self.exitEvent.is_set():
-			newT = time.time()
-			time.sleep(max(1/(self.loopRate*self.Hz) - (newT - T), 0))
-			T = time.time()
+			loop_start = time.monotonic()
+			
+			try:
+				# 1. TIMING MANAGEMENT
+				now = time.monotonic()
+				dt = now - last_time
+				dt = min(max(dt, 0.004), 0.020)  # Clamp to 50-250 Hz
+				last_time = now
+				
+				# 2. Detecting mode changes
+				mode_just_changed = (self.in_interaction_mode != previous_mode)
+				if mode_just_changed:
+					mode_str = "INTERACTION" if self.in_interaction_mode else "FREE_SPACE"
+					print(f"Mode change: {mode_str}")
 
-			self.lastposCom = self.NetCom
-			# posCom = controller.forwardDynamics() # todo biophysical model
-			posCom = controller.runModel()
-			# self.NetCom = posCom
-			self.NetCom = np.asarray(self.lowpassCommands.filter(np.asarray([posCom]).T).T[0])
+				# 3. Force data processing (with zeroing)
+				force_data = self.simplified_force_processor.process_runtime_force(
+					self.sensors,
+					self.touchNames,
+					self.in_interaction_mode,
+					mode_just_changed=mode_just_changed
+				)
 
+
+				# 4. MODE SWITCHING
+				if not mode_just_changed:
+					mode_changed = self.update_interaction_mode(force_data, now)
+				
+				# 5. CONTROLLER EXECUTION
+				try:
+					if self.in_interaction_mode:
+						# Use force data for interaction controller
+						normalized_forces = force_data['normalized']
+						cmd_interaction = interaction_controller.runModel(force_data=normalized_forces)
+						cmd_free = cached_fs_command if cached_fs_command is not None else self.NetCom
+					else:
+						# Free space controller (EMG only) - forces are automatically 0
+						cmd_free = free_space_controller.runModel()
+						cmd_interaction = cached_int_command if cached_int_command is not None else self.NetCom
+					
+					# Cache commands for smooth transitions
+					if self.in_interaction_mode:
+						cached_int_command = cmd_interaction.copy() if hasattr(cmd_interaction, 'copy') else cmd_interaction
+					else:
+						cached_fs_command = cmd_free.copy() if hasattr(cmd_free, 'copy') else cmd_free
+					
+				except Exception as e:
+					print(f"Controller error: {e}")
+					# Safe fallback - hold current position
+					cmd_free = self.NetCom
+					cmd_interaction = self.NetCom
+				
+				# 6. COMMAND BLENDING
+				blended_command = self.blend_controller_commands(cmd_free, cmd_interaction, now)
+				
+				# 6. SAFETY CHECKS AND CLAMPING
+				posCom = np.asarray(blended_command, dtype=float)
+				
+				# Validate command
+				if not np.isfinite(posCom).all():
+					print("ERROR: Command contains NaN/inf - using safe fallback")
+					posCom = self.NetCom  # Hold current position
+				
+				# Joint limit clamping
+				mins = np.array([self.jointRoM[j][0] for j in self.jointNames], dtype=float)
+				maxs = np.array([self.jointRoM[j][1] for j in self.jointNames], dtype=float)
+				posCom = np.clip(posCom, mins, maxs)
+				
+				# Rate limiting 
+				if hasattr(self, 'lastPosCom') and self.lastPosCom is not None:
+					max_change_per_step = 2.0  # degrees per timestep (adjust as needed)
+					change = posCom - self.lastPosCom
+					change = np.clip(change, -max_change_per_step, max_change_per_step)
+					posCom = self.lastPosCom + change
+				
+				# APPLY COMMAND FILTERING
+				self.NetCom = np.asarray(self.lowpassCommands.filter(np.asarray([posCom]).T).T[0])
+				self.lastPosCom = posCom
+
+				# update mode tracking
+				previous_mode = self.in_interaction_mode
+				
+				# DEBUG OUTPUT (every 2 seconds)
+				loop_count += 1
+				if loop_count % (2 * self.Hz) == 0:
+					mode_str = "INTERACTION" if self.in_interaction_mode else "FREE_SPACE"
+					total_force = force_data['total_force']
+					drift_info = force_data['current_drift']
+					print(f"Mode: {mode_str} | Force: {total_force:.3f}N | "
+						f"Drift: [{drift_info[0]:.2f}, {drift_info[1]:.2f}, ...] | "
+						f"Loops: {loop_count} | Slow: {slow_loop_count}")
+				
+				# TIMING CONTROL with monitoring
+				processing_time = time.monotonic() - loop_start
+				sleep_time = target_period - processing_time
+				
+				if sleep_time > 0:
+					time.sleep(sleep_time)
+				elif processing_time > target_period * 1.5:
+					slow_loop_count += 1
+					if slow_loop_count % 10 == 1:  # No spam
+						print(f"SLOW LOOP: {processing_time*1000:.1f}ms > {target_period*1000:.1f}ms")
+				
+			except Exception as e:
+				print(f"CRITICAL ERROR in control loop: {e}")
+				# Emergency safe state
+				self.NetCom = np.array(self.getCurPos())
+				time.sleep(target_period)
+			
 			if self.exitEvent.is_set():
 				break
+		
+		print("Neural network control loop exited")
 
-	def runNetThread(self, controller):
-		self.netThread = threading.Thread(target=self.runNetForward, args=[controller], name='runNetForward')
+# 	def runNetForward(self, free_space_controller, interaction_controller):
+# 		T = time.time()
+# 		self.NetCom = self.getCurPos()
+# 
+# 		ENTER_FORCE_THRESHOLD = 0.8
+# 		EXIT_FORCE_THRESHOLD = 0.3
+# 		INTERACTION_MODE_DEBOUNCE_TIME = 0.1  # seconds
+# 
+# 		self.in_interaction_mode = False
+# 		exit_mode_start_time = None  # Track when force dropped below exit threshold
+# 
+# 		while not self.exitEvent.is_set():
+# 			loop_start = time.time()
+# 			# newT = time.time()
+# 			target_period = 1.0 / self.Hz  # 1/60 = 0.0167 seconds
+# 			sleep_time = target_period - (time.time() - loop_start)
+# 			if sleep_time > 0:
+# 				time.sleep(sleep_time)
+# 			# time.sleep(max(1/(self.loopRate*self.Hz) - (newT - T), 0))
+# 			T = time.time()
+# 
+# 			force_data = np.array([self.sensors[key] for key in self.sensorForce])
+# 			max_finger_force = np.max(force_data)
+# 			current_time = time.time()
+# 
+# 			if not self.in_interaction_mode:
+# 				if max_finger_force > ENTER_FORCE_THRESHOLD:
+# 					self.in_interaction_mode = True
+# 					exit_mode_start_time = None
+# 					print("Entered interaction mode")
+# 			else:
+# 				if max_finger_force < EXIT_FORCE_THRESHOLD:
+# 					if exit_mode_start_time is None:
+# 						exit_mode_start_time = current_time
+# 					elif (current_time - exit_mode_start_time) > INTERACTION_MODE_DEBOUNCE_TIME:
+# 						self.in_interaction_mode = False
+# 						exit_mode_start_time = None
+# 						print("Exited interaction mode")
+# 				else:
+# 					exit_mode_start_time = None  # Reset if force rises above exit threshold
+# 
+# 			self.lastposCom = self.NetCom
+# 			if self.in_interaction_mode:
+# 				posCom = interaction_controller.runModel()
+# 			else:
+# 				posCom = free_space_controller.runModel()
+# 
+# 			self.NetCom = np.asarray(self.lowpassCommands.filter(np.asarray([posCom]).T).T[0])
+# 
+# 			if self.exitEvent.is_set():
+# 				break
+
+
+	def runNetThread(self, free_space_controller, interaction_controller):
+		self.netThread = threading.Thread(target=self.runNetForward, args=(free_space_controller, interaction_controller), name='runNetForward')
 		self.netThread.daemon = True
 		self.netThread.start()
 
@@ -983,6 +1523,21 @@ class psyonicArm():
 	
 		else:
 			return 0
+		
+	def set_force_filtering_enabled(self, enabled):
+		"""Enable/disable adaptive force filtering"""
+		self.adaptive_force_filter.set_enabled(enabled)
+
+	def get_force_filter_status(self):
+		"""Get current filter status and debug info"""
+		return self.adaptive_force_filter.get_debug_info()
+
+	def reset_adaptive_baselines(self):
+		"""Reset adaptive baselines (force recalibration)"""
+		self.adaptive_force_filter.current_baselines = np.zeros(5)
+		for buffer in self.adaptive_force_filter.baseline_buffers:
+			buffer.clear()
+		print("Adaptive baselines reset")
 
 
 ###################################################################
@@ -999,216 +1554,292 @@ def saveThread(saveLocation, filename, data):
 	# np.savetxt('/home/haptix/haptix/psyonic/logs/' + filename + '.csv', dataToSave, delimiter='\t', fmt='%s')
 	np.savetxt(f'{saveLocation}/{filename}.csv', dataToSave, delimiter='\t', fmt='%s')
 
-def main(arm, emg=None, saveLocation=''):
-	# connect to EMG board
-	if emg is not None:
-		print('Connecting to EMG board...')
-		emg = EMG(usedChannels=[0, 1, 2, 4, 10, 11, 12, 13])
-		emg.startCommunication()
-		print('Connected.')
+def main(arm, emg=None, saveLocation='', channels=None, free_space_controller=None, interaction_controller=None):
+    """
+    Updated main function to handle dual controllers
+    """
+    # Load calibration data
+    calib_path = os.path.join('data', args.person_dir, 'recordings', 'Calibration', 'experiments', '1', 'scaling.yaml')
+    with open(calib_path, 'r') as f:
+        data = yaml.safe_load(f)
+    noiseLevels = np.array(data['noiseLevels'], dtype=np.float32)
+    maxVals = np.array(data['maxVals'], dtype=np.float32)
 
-		# setup the controller class
-		# controller = psyonicControllers(numMotors=arm.numMotors, arm=arm, freq_n=3, emg=emg)
+    if emg is not None:
+        print('Connecting to EMG board...')
+        emg = EMG(noiseLevel=noiseLevels, maxVals=maxVals, usedChannels=channels)
 
-		# start the neural net thread
-		# arm.runNetThread(controller)
+        print(f"Used channels: {emg.usedChannels}")
+        print(f"YAML maxVals length: {len(maxVals)}")
+        print(f"YAML noiseLevel length: {len(noiseLevels)}")
+        print(f"EMG maxVals (first 8): {emg.maxVals[:8]}")
+        print(f"EMG noiseLevel (first 8): {emg.noiseLevel[:8]}")
 
-	# set up case/switch for arm using an input/callback structure -- this allows the behavior of the arm to be controlled without stopping this code
-	try:
-		while True:
-			run = callback()
-			if run == 'move':
-				print(f'\n\nRunning arm...')
-				if emg is not None:
-					arm.mainControlLoop(emg=emg)
-				else:
-					arm.mainControlLoop()
+        emg.startCommunication()
+        print('Connected.')
 
-				# set recording to false, regardless of whether you have been recording
-				if arm.recording:
-					filename = input('Enter a .csv filename: ')
-					if not filename == 'exit':
-						# dataToSave = np.array(arm.recordedData)
-						# np.savetxt('/home/haptix/haptix/psyonic/logs/' + filename + '.csv', dataToSave, delimiter='\t', fmt='%s')
-						thread = threading.Thread(target=saveThread, args=[saveLocation, filename, arm.recordedData], name='saveThread')
-						thread.start()
-						arm.resetRecording()
+        # If controllers are provided, start the neural net thread
+        if free_space_controller is not None and interaction_controller is not None:
+            if not args.dummy:
+                print('Starting dual controller neural net thread...')
+                arm.runNetThread(free_space_controller, interaction_controller)
 
-				arm.recording = False
+    # Set up case/switch for arm control
+    try:
+        while True:
+            run = callback()
+            if run == 'move':
+                print(f'\n\nRunning arm...')
+                if emg is not None:
+                    arm.mainControlLoop(emg=emg)
+                else:
+                    arm.mainControlLoop()
 
-			elif run == 'record':
-				print('\n\nRecording next arm movement...')
-				arm.recording = True
-				arm.resetRecording()
+                # Set recording to false, regardless of whether you have been recording
+                if arm.recording:
+                    filename = input('Enter a .csv filename: ')
+                    if not filename == 'exit':
+                        thread = threading.Thread(target=saveThread, args=[saveLocation, filename, arm.recordedData], name='saveThread')
+                        thread.start()
+                        arm.resetRecording()
 
-			elif run == 'play':
-				validFilename = False
-				while not validFilename:
-					filename = input('Enter a .csv filename to replay: ')
-					try:
-						loadedData = pd.read_csv(filename, delimiter='\t', header=0)
-						if filename == "exit": break
-						validFilename = True
+                arm.recording = False
 
-					except Exception as e:
-						print(f'Invalid filename with error {e}\n')
+            elif run == 'record':
+                print('\n\nRecording next arm movement...')
+                arm.recording = True
+                arm.resetRecording()
 
-				if validFilename:
-					positionColTitles = ['index_PosCom', 'middle_PosCom', 'ring_PosCom', 'pinky_PosCom', 'thumbFlex_PosCom', 'thumbRot_PosCom']
-					loadedPositions = loadedData[positionColTitles].values
-					fullMove = arm.playbackRecording(loadedPositions)
-					arm.mainControlLoop(posDes=fullMove)
+            elif run == 'play':
+                validFilename = False
+                while not validFilename:
+                    filename = input('Enter a .csv filename to replay: ')
+                    try:
+                        loadedData = pd.read_csv(filename, delimiter='\t', header=0)
+                        if filename == "exit": break
+                        validFilename = True
+                    except Exception as e:
+                        print(f'Invalid filename with error {e}\n')
 
-			elif run == 'zero':
-				print('\n\nZeroing joints...')
-				posDes = [0]*arm.numMotors
-				curMode = arm.getCurControlMode()
-				arm.setControlMode('position')
-				arm.mainControlLoop(posDes=np.asarray(posDes))
-				arm.setControlMode(curMode)
+                if validFilename:
+                    positionColTitles = ['index_PosCom', 'middle_PosCom', 'ring_PosCom', 'pinky_PosCom', 'thumbFlex_PosCom', 'thumbRot_PosCom']
+                    loadedPositions = loadedData[positionColTitles].values
+                    fullMove = arm.playbackRecording(loadedPositions)
+                    arm.mainControlLoop(posDes=fullMove)
 
-			elif run == 'manual':
-				print('\n\nAccepting manual input...')
-				while True:
-					print('Enter: [indexPos, middlePos, ringPos, pinkyPos, thumbFlex, thumbRot]')
-					posRaw = input() # Take input
-					if (posRaw == 'exit'): # Escape valve
-						return
+            elif run == 'zero':
+                print('\n\nZeroing joints...')
+                posDes = [0]*arm.numMotors
+                curMode = arm.getCurControlMode()
+                arm.setControlMode('position')
+                arm.mainControlLoop(posDes=np.asarray(posDes))
+                arm.setControlMode(curMode)
 
-					try: # Turn input into array of floats
-						posDes = [float(x) for x in posRaw.split()]
-					except: # Uh-oh! Formatting wrong
-						posDes = []
+            elif run == 'manual':
+                print('\n\nAccepting manual input...')
+                while True:
+                    print('Enter: [indexPos, middlePos, ringPos, pinkyPos, thumbFlex, thumbRot]')
+                    posRaw = input()
+                    if (posRaw == 'exit'):
+                        break
 
-					if not arm.isValidCommand(posDes): # repeat if not valid
-						print('Input formatted incorrectly. Enter 6 valid joint positions.\n')
-					else: # Otherwise exit
-						break
+                    try:
+                        posDes = [float(x) for x in posRaw.split()]
+                    except:
+                        posDes = []
 
-				# curMode = arm.getCurControlMode()
-				# arm.setControlMode('position')
-				arm.mainControlLoop(posDes=np.asarray(posDes))
-				# arm.setControlMode(curMode)
+                    if not arm.isValidCommand(posDes):
+                        print('Input formatted incorrectly. Enter 6 valid joint positions.\n')
+                    else:
+                        break
 
-			elif run == 'set':
-				print('\n\nChanging settings...')
-				while True:
-					print('Enter: [c (controlMode), r (replyVariant)]')
-					setRaw = input()
-					if (setRaw == 'exit'):
-						break
+                arm.mainControlLoop(posDes=np.asarray(posDes))
 
-					if setRaw in ['c', 'controlMode', 'control']:
-						while True:
-							print('Enter: [pos, vel, tor, vol, imp, read]')
-							setControl = input()
-							if setControl not in ['pos', 'vel', 'tor', 'vol', 'imp', 'read']:
-								print('Invalid setting. Enter a valid setting.\n')
-								continue
-							
-							break
+            elif run == 'set':
+                print('\n\nChanging settings...')
+                while True:
+                    print('Enter: [c (controlMode), r (replyVariant)]')
+                    setRaw = input()
+                    if (setRaw == 'exit'):
+                        break
 
-						controlDict = {'pos': 'position', 'vel': 'velocity', 'tor': 'torque', 'vol': 'voltage', 'imp': 'impedance', 'read': 'readOnly'}
-						setControl = controlDict[setControl]
-						arm.setControlMode(setControl)
-						break
+                    if setRaw in ['c', 'controlMode', 'control']:
+                        while True:
+                            print('Enter: [pos, vel, tor, vol, imp, read]')
+                            setControl = input()
+                            if setControl not in ['pos', 'vel', 'tor', 'vol', 'imp', 'read']:
+                                print('Invalid setting. Enter a valid setting.\n')
+                                continue
+                            break
 
-					elif setRaw in ['r', 'replyVariant', 'reply']:
-						while True:
-							print('Enter: [0, 1, 2]')
-							setReply = input()
-							if setReply not in ['0', '1', '2']:
-								print('Invalid setting. Enter a valid setting.\n')
-								continue
+                        controlDict = {'pos': 'position', 'vel': 'velocity', 'tor': 'torque', 'vol': 'voltage', 'imp': 'impedance', 'read': 'readOnly'}
+                        setControl = controlDict[setControl]
+                        arm.setControlMode(setControl)
+                        break
 
-							break
+                    elif setRaw in ['r', 'replyVariant', 'reply']:
+                        while True:
+                            print('Enter: [0, 1, 2]')
+                            setReply = input()
+                            if setReply not in ['0', '1', '2']:
+                                print('Invalid setting. Enter a valid setting.\n')
+                                continue
+                            break
 
-						arm.setReplyVariant(int(setReply))
-						break
+                        arm.setReplyVariant(int(setReply))
+                        break
 
-					else:
-						print('Invalid setting. Enter a valid setting.\n')
-						continue
+                    else:
+                        print('Invalid setting. Enter a valid setting.\n')
+                        continue
 
-			elif run == 'print':
-				print('\n\nPrinting sensor states...')
-				arm.printSensors()
+            elif run == 'print':
+                print('\n\nPrinting sensor states...')
+                arm.printSensors()
 
-			elif run == 'exit':
-				print('Exiting.')
-				break
+            elif run == 'exit':
+                print('Exiting.')
+                break
 
-			else:
-				print(f'Invalid command {run}')
+            else:
+                print(f'Invalid command {run}')
 
-	except KeyboardInterrupt:
-		pass
+    except KeyboardInterrupt:
+        pass
 
-	print('Shutting Down.')
-	if emg is not None:
-		emg.exitEvent.set()
-		arm.netThread.join()
+    print('Shutting Down.')
+    if emg is not None:
+        emg.exitEvent.set()
+        if hasattr(arm, 'netThread') and arm.netThread.is_alive():
+            arm.netThread.join()
 
-	arm.movingEvent.set()
+    if hasattr(arm, 'movingEvent'):
+        arm.movingEvent.set()
+
 
 # Check the args and run
 if __name__ == '__main__':
-	# Define all arguments
-	parser = argparse.ArgumentParser(description='Psyonic Ability Hand Command Line Interface')
-	parser.add_argument('-t', '--tracker', help='Using the MediaPipe hand tracker?', action='store_true')
-	parser.add_argument('-e', '--emg', help='Using EMG control?', action='store_true')
-	parser.add_argument('-l', '--laterality', type=str, help='Handedness', default='left')
-	parser.add_argument('-s', '--stuffing', help='Using byte stuffing?', action='store_true')
-	parser.add_argument('--person_dir', type=str, required=True, help='Person directory')
-	parser.add_argument('--config_name', type=str, required=True, help='Training configuration')
-	parser.add_argument('--model_path', type=str, required=True, help='Model path')
+    parser = argparse.ArgumentParser(description='Psyonic Ability Hand Command Line Interface')
+    parser.add_argument('-t', '--tracker', help='Use MediaPipe hand tracker?', action='store_true')
+    parser.add_argument('-e', '--emg', help='Use EMG control?', action='store_true')
+    parser.add_argument('-l', '--laterality', type=str, help='Handedness (left or right)', default='left')
+    parser.add_argument('-s', '--stuffing', help='Use byte stuffing?', action='store_true')
+    parser.add_argument('--person_dir', type=str, required=True, help='Person directory')
+    parser.add_argument('--free_space_model_name', type=str, required=True, help='Filename of free space model')
+    parser.add_argument('--interaction_model_name', type=str, required=True, help='Filename of interaction model')
+    parser.add_argument('--dummy', action='store_true', help='Run in dummy mode without connecting to real hand')
 
-	args = parser.parse_args()
+    args = parser.parse_args()
 
-	emg = None
+    # Construct full model paths
+    fs_model_path = os.path.join('data', args.person_dir, 'models', args.free_space_model_name)
+    inter_model_path = os.path.join('data', args.person_dir, 'models', args.interaction_model_name)
 
-	# instantiate arm class
-	arm = psyonicArm(hand=args.laterality, stuffing=args.stuffing, usingEMG=args.emg)
-	strInsert = ', byte stuffing' if args.stuffing else ', no byte stuffing'
+    emg = None
 
-	if args.emg:
-		with open(join('data', args.person_dir, 'configs', args.config_name), 'r') as file:
-			wandb_config = yaml.safe_load(file)
-			config = Config(wandb_config)
-		channels = [int(feature[1]) for feature in config.features]
+    if not args.dummy:
+        print("Connecting to Psyonic Hand")
+        arm = psyonicArm(hand=args.laterality, stuffing=args.stuffing, usingEMG=args.emg)
+    else:
+        print("Running in Dummy Mode")
+        arm = None
 
-		emg = EMG(usedChannels=channels)
-		emg.startCommunication()
-		print(f'Starting Psyonic Hand (EMG control{strInsert})...')
+    # EMG Setup
+    if args.emg:
+        # Load both configs to get features
+        free_space_config_path = join('data', args.person_dir, 'configs', 'modular_fs.yaml')
+        interaction_config_path = join('data', args.person_dir, 'configs', 'modular_inter.yaml')
+        
+        # Verify both config files exist
+        if not os.path.exists(free_space_config_path):
+            raise FileNotFoundError(f"Free space config not found: {free_space_config_path}")
+        if not os.path.exists(interaction_config_path):
+            raise FileNotFoundError(f"Interaction config not found: {interaction_config_path}")
+        
+        # Load free space config to extract EMG channels
+        with open(free_space_config_path, 'r') as file:
+            fs_wandb_config = yaml.safe_load(file)
+            fs_config = Config(fs_wandb_config)
+        
+        # Load interaction config
+        with open(interaction_config_path, 'r') as file:
+            inter_wandb_config = yaml.safe_load(file)
+            inter_config = Config(inter_wandb_config)
+        
+        # Extract only EMG channels (filter out force channels if present)
+        channels = [int(feature[1]) for feature in fs_config.features if feature[0] == 'emg']
 
-		# model_name = args.config_name.split('.')[0]
-		# model_path = join('data', args.person_dir, 'models', f'{model_name}.pt')
-		model_path = args.model_path
+        print(f"Free space config - Features: {len(fs_config.features)} (EMG only)")
+        print(f"Interaction config - Features: {len(inter_config.features)} (EMG + Force)")
+        print(f"Output targets: {len(fs_config.targets)} DOF")
+        print(f"EMG channels: {channels}")
 
-		controller = psyonicControllers(numMotors=arm.numMotors, arm=arm, freq_n=3, emg=emg, config=config, model_path=model_path)
-		arm.runNetThread(controller)
+        # Load calibration values
+        calib_path = os.path.join('data', args.person_dir, 'recordings', 'Calibration', 'experiments', '1', 'scaling.yaml')
+        with open(calib_path, 'r') as f:
+            data = yaml.safe_load(f)
+        noiseLevels = np.array(data['noiseLevels'], dtype=np.float32)
+        maxVals = np.array(data['maxVals'], dtype=np.float32)
+        
+        emg = EMG(usedChannels=channels, noiseLevel=noiseLevels, maxVals=maxVals)
 
-	elif args.tracker:
-		trackerAddr = 'tcp://127.0.0.1:1239'
+        # Measure actual stream rate
+        print("Measuring EMG hardware rate...")
+        actual_rate = emg.measure_actual_stream_rate(duration=5)
+        print(f"Measured hardware rate: {actual_rate:.1f} Hz")
+       		
+        emg.samplingFreq = actual_rate
+        print(f"Updated EMG sampling frequency to measured rate: {actual_rate} Hz")
+        
+        emg.startCommunication()
+        print(f"EMG thread running: {emg.emgThread.is_alive()}")
+        print(f"EMG numPackets: {emg.numPackets}")
+        print(f"Expected output rate: {emg.samplingFreq / emg.numPackets} Hz")
+        
+        # Create both controllers with their respective configs
+        free_space_controller, interaction_controller = create_controllers(
+            emg=emg,
+            arm=arm,
+            config_free_space=fs_config,
+            config_interaction=inter_config,
+            free_space_model_path=fs_model_path,
+            interaction_model_path=inter_model_path
+        )
 
-		print(f'Starting Psyonic Hand (tracker control{strInsert})...')
+        if not args.dummy:
+            print('Initializing sensor readings...')
+            arm.initSensors()
+            print('Sensors initialized.')
+            arm.startComms()
 
-		ctx = zmq.Context()
-		trackerSock = ctx.socket(zmq.SUB)
-		trackerSock.connect(trackerAddr)
-		trackerSock.subscribe('') # Subscribe to all topics
+        # Call main with both controllers
+        main(arm, emg, saveLocation=f'data/{args.person_dir}/logs', channels=channels,
+             free_space_controller=free_space_controller, interaction_controller=interaction_controller)
 
-		try:
-			while True:
-				arm.handCom = trackerSock.recv_pyobj()
-	
-		except KeyboardInterrupt:
-			arm.stopEvent.set()
-			sys.exit()
+    elif args.tracker:
+        if args.dummy:
+            raise ValueError("Tracker mode requires real hardware connection. Cannot run in dummy mode.")
 
-	print('Initializing sensor readings...')
-	arm.initSensors()
-	print('Sensors initialized.')
+        trackerAddr = 'tcp://127.0.0.1:1239'
+        print('Starting Psyonic Hand (tracker control)...')
 
-	arm.startComms()
-	main(arm, emg, saveLocation=f'data/{args.person_dir}/logs')
+        ctx = zmq.Context()
+        trackerSock = ctx.socket(zmq.SUB)
+        trackerSock.connect(trackerAddr)
+        trackerSock.subscribe('')
+
+        try:
+            while True:
+                arm.handCom = trackerSock.recv_pyobj()
+        except KeyboardInterrupt:
+            arm.stopEvent.set()
+            sys.exit()
+
+        print('Initializing sensor readings...')
+        arm.initSensors()
+        print('Sensors initialized.')
+        arm.startComms()
+        main(arm, emg, saveLocation=f'data/{args.person_dir}/logs')
+
+    else:
+        raise ValueError("Please specify either --emg or --tracker mode.")

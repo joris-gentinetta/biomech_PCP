@@ -73,5 +73,3 @@ if __name__ == '__main__':
     print(f'EMG Shape: {emg.shape}\n')
     print(f'EMG Sampling Rate: {len(emg_timestamps) * 10**6 / (emg_timestamps[-1] - emg_timestamps[0])}')
     print('########################################################')
-
-

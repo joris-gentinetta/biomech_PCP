@@ -11,14 +11,30 @@ class BesselFilterArr():
         if filtType not in ['bandstop', 'lowpass', 'highpass']:
             raise ValueError(f"Invalid filter type {filtType} provided (options are 'lowpass’, ‘highpass’, ‘bandpass’, ‘bandstop’).")
 
-        if type(critFreqs) is int:
-            freqs = [critFreqs]*numChannels
-        elif len(critFreqs) == 1: # a 2D array or a single number, repeat them
-            freqs = numChannels*critFreqs
-        elif len(critFreqs) == 2 and not numChannels == 2: # a 2 element array for a bandstop, repeat it
-            freqs = [critFreqs for _ in range(numChannels)]
+        # if type(critFreqs) is int:
+        #     freqs = [critFreqs]*numChannels
+        # elif len(critFreqs) == 1: # a 2D array or a single number, repeat them
+        #     freqs = numChannels*critFreqs
+        # elif len(critFreqs) == 2 and not numChannels == 2: # a 2 element array for a bandstop, repeat it
+        #     freqs = [critFreqs for _ in range(numChannels)]
+        # else:
+        #     freqs = critFreqs
+
+        # Always make freqs a list of per-channel Wn values (scalar or 2-element list)
+        if isinstance(critFreqs, (int, float)):
+            # Scalar: repeat for each channel (good for highpass/lowpass)
+            freqs = [critFreqs] * numChannels
+        elif isinstance(critFreqs, (list, tuple, np.ndarray)) and len(critFreqs) == 2 and (filtType == "bandstop" or filtType == "bandpass"):
+            # For bandstop/bandpass: repeat the 2-element list for each channel
+            freqs = [list(critFreqs)] * numChannels
+        elif isinstance(critFreqs, (list, tuple, np.ndarray)) and len(critFreqs) == numChannels:
+            # Per-channel custom values
+            freqs = list(critFreqs)
         else:
-            freqs = critFreqs
+            raise ValueError(f"critFreqs must be a scalar, a 2-element list (for bandstop/bandpass), or length == numChannels.")
+
+        assert len(freqs) == numChannels, f'critFreqs input size ({len(freqs)}) does not match number of channels ({numChannels})'
+
 
         assert len(freqs) == numChannels, f'critFreqs input size ({len(freqs)}) does not match number of channels ({numChannels})'
 
